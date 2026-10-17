@@ -268,6 +268,28 @@ static bool trace_word(uint32_t va,bool privileged,uint32_t *out)
     for(unsigned i=0;i<4;++i){uint8_t byte;if(!trace_byte(va+i,privileged,&byte))return false;value|=(uint32_t)byte<<(8*i);}
     *out=value;return true;
 }
+/* The OS still receives its documented machine-type query through ByteV.
+ * This test-only passive decoder neither completes the SWI nor keeps pointers. */
+static bool status_query(const ArcRpcObservation *e)
+{
+    return e->kind==ARC_RPC_OBS_SWI && (e->swi&~0x20000u)==6 &&
+        e->registers[0]==0 && e->registers[1]==1 && e->registers[2]==0 &&
+        e->registers[4]==0x53435241u && e->registers[5]==64;
+}
+static void trace_status(const ArcRpcObservation *e,ArcRpcObservationTrace *t)
+{
+    uint32_t at=e->registers[3],w[16];
+    if((at&3) || at>UINT32_MAX-63)return;
+    for(unsigned i=0;i<16;++i)if(!trace_word(at+4*i,e->privileged,&w[i]))return;
+    if(w[0]!=0x53435241u || w[1]!=1 || w[2]!=64 || w[3]>1 || w[3]!=e->registers[6] ||
+        !w[9] || w[12] || w[13] || w[14] || w[15])return;
+    uint64_t token=w[4]|((uint64_t)w[5]<<32),epoch=w[6]|((uint64_t)w[7]<<32);
+    if(w[3]==0 ? token || epoch || w[8]<1 || w[8]>7 :
+        !token || !epoch || w[8]<1 || w[8]>15)return;
+    t->status_valid=true;t->status_role=w[3];t->status_event=w[8];
+    t->status_sequence=w[9];t->status_detail[0]=w[10];t->status_detail[1]=w[11];
+    t->status_token=token;t->status_epoch=epoch;
+}
 static ArcRpcInspectStatus trace_path(uint32_t va,bool privileged,char *out,size_t bound)
 {
     out[0]=0;
@@ -288,7 +310,8 @@ static bool trace_swi_selected(uint32_t swi)
 static bool trace_selected(const ArcRpcObservation *e)
 {
     return (trace.selection.classes&e->kind) &&
-        (e->kind!=ARC_RPC_OBS_SWI || trace_swi_selected(e->swi));
+        (e->kind!=ARC_RPC_OBS_SWI || (trace_swi_selected(e->swi) &&
+            (!trace.selection.authored_status || (e->swi&~0x20000u)!=6 || status_query(e))));
 }
 static void trace_loss(const ArcRpcObservation *e)
 {
@@ -315,6 +338,7 @@ static void trace_event(const ArcRpcObservation *e)
     ArcRpcObservationTrace t={.event=*e,.inspection=ARC_RPC_INSPECT_OK};
     uint16_t mask=e->kind==ARC_RPC_OBS_SWI?trace_mask(e->swi,e->registers[0]):
         e->kind==ARC_RPC_OBS_CONTINUATION?1:0;
+    if(status_query(e)){mask=7;trace_status(e,&t);}
     t.event.register_mask=(uint16_t)(mask|0x6000u);
     for(unsigned i=0;i<13;++i)if(!(mask&(1u<<i)))t.event.registers[i]=0;
     if(e->kind==ARC_RPC_OBS_SWI && (e->swi&~0x20000u)==7 && e->registers[0]==21){
@@ -442,7 +466,11 @@ static bool swi_wanted(uint32_t opcode)
 static bool selected_swi(uint32_t opcode)
 {
     ArcRpcObservation e=event(ARC_RPC_OBS_SWI,0x3f);
-    e.swi=opcode&0xffffffu;trace_event(&e);
+    e.swi=opcode&0xffffffu;
+#if defined(ARCDROID_TEST_FAULTS)
+    if(status_query(&e))e.registers[6]=arm.reg[6];
+#endif
+    trace_event(&e);
 #if defined(ARCDROID_TEST_FAULTS)
     uint32_t normalized=e.swi&~0x20000u;
     if(trace.status.enabled && (trace.selection.classes&ARC_RPC_OBS_CONTINUATION) && trace_swi_selected(e.swi) && watch_eligible(e.mode,e.mode) &&

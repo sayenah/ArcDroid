@@ -74,7 +74,7 @@ static void receipt_store(void) {
         assert(arc_riscpc_hd_population_io_step(s, &done));
         budget(s, ops, meta, ns, bytes);
     }
-    ArcRpcHdReceipt r = {.files = 7, .bytes = 6470};
+    ArcRpcHdReceipt r = {.files = 7, .bytes = 6470, .receipt_revision=1, .populator_revision=1, .authored_revision=2};
     memset(r.packages, 0x82, 64);
     assert(arc_riscpc_hd_population_receipt(s, &r));
     done = false;
@@ -112,6 +112,40 @@ static void fix_crc(TestFile *f) {
     uint32_t crc = arc_crc32(f->data, f->size - 4);
     for (unsigned i = 0; i < 4; ++i)
         f->data[f->size - 4 + i] = (uint8_t)(crc >> (i * 8));
+}
+static void revision_matrix(void) {
+    for(unsigned r=0;r<4;++r)for(unsigned pop=0;pop<4;++pop)for(unsigned a=0;a<4;++a){
+        restore();TestFile *f=&files[manifest()];
+        f->data[24328]=r;f->data[24332]=pop;f->data[24336]=a;fix_crc(f);
+        uint8_t before[32],after[32];disk_digest(before);uint64_t ns=namespace_calls;
+        ArcRpcHdStore *s;bool admitted=r==1&&pop==1&&(a==1||a==2);
+        assert(open_steps(&s)==(admitted?ARC_RPC_HD_RECEIPTED:ARC_RPC_HD_UNSUPPORTED));
+        ArcRpcHdReceipt receipt;
+        assert(arc_riscpc_hd_receipt(s,&receipt)==admitted);
+        if(admitted){assert(receipt.receipt_revision==r && receipt.populator_revision==pop && receipt.authored_revision==a);
+            uint8_t block[131072]={0};
+            for(unsigned j=0;j<10;++j){assert(arc_riscpc_hd_write(s,1400,256,block));idle(s);}
+            ArcRpcHdStats stats;arc_riscpc_hd_stats(s,&stats);assert(stats.checkpoints);
+            arc_riscpc_hd_close(s);assert(open_steps(&s)==ARC_RPC_HD_RECEIPTED);
+            ArcRpcHdReceipt preserved;assert(arc_riscpc_hd_receipt(s,&preserved));assert(!memcmp(&receipt,&preserved,sizeof(receipt)));
+        }else{assert(namespace_calls==ns);}
+        arc_riscpc_hd_close(s);disk_digest(after);
+        if(!admitted)assert(!memcmp(before,after,32));
+        test_vfs_no_open_handles();
+    }
+    /* The other slot's unsupported authenticated root cannot be bypassed.
+     * No journal binding is interpreted and no fallback cleanup is allowed. */
+    for(unsigned slot=0;slot<2;++slot){
+        restore();TestFile *a=&files[manifest()];
+        char name[1100];snprintf(name,sizeof(name),"/save/arcdroid/hd-riscpc/%s/manifest.b",id);
+        int b=find(name,true);assert(b>=0);files[b].size=a->size;files[b].data=malloc(a->size);assert(files[b].data);
+        memcpy(files[b].data,a->data,a->size);files[b].data[88]=1;fix_crc(&files[b]);
+        TestFile *bad=slot?&files[b]:a;bad->data[24336]=99;fix_crc(bad);
+        uint8_t before[32],after[32];disk_digest(before);uint64_t ns=namespace_calls;
+        ArcRpcHdStore *s;assert(open_steps(&s)==ARC_RPC_HD_UNSUPPORTED);assert(namespace_calls==ns);
+        arc_riscpc_hd_close(s);disk_digest(after);assert(!memcmp(before,after,32));
+    }
+    restore();
 }
 static void outcomes(void) {
     const unsigned offsets[] = {24328, 24332, 24336, 8, 0, 16, 24448};
@@ -308,7 +342,7 @@ static void publish_cancellation(void) {
         assert(arc_riscpc_hd_population_begin(s));
         uint8_t payload[512];memset(payload,0x59,sizeof(payload));
         assert(arc_riscpc_hd_population_write(s,1000,1,payload));
-        ArcRpcHdReceipt r={.files=23,.bytes=512};memset(r.packages,0x45,64);
+        ArcRpcHdReceipt r={.files=23,.bytes=512,.receipt_revision=1,.populator_revision=1,.authored_revision=2};memset(r.packages,0x45,64);
         assert(arc_riscpc_hd_population_receipt(s,&r));
         assert(arc_riscpc_hd_population_seal(s));bool done=false;
         for(unsigned i=0;i<cut;++i){
@@ -405,6 +439,7 @@ static void overlapping_records(void) {
 int main(void) {
     fresh_files();
     receipt_store();
+    revision_matrix();
     outcomes();
     future_envelopes();
     carryovers();

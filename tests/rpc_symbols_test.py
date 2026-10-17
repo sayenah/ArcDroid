@@ -195,3 +195,64 @@ for name in ('arc_error_box', 'arc_disc_request', 'arc_launch_outcome', 'arc_boo
         except ValueError as error: assert 'process termination reference' in str(error)
         else: raise AssertionError((name,'shared termination was accepted'))
 print('rpc-symbol-guard: process termination rejected in all four shared observers')
+
+# Census import policy is independent of the ordinary-core service policy.
+# Compile real platform objects (also run with the MinGW compiler), including
+# a Windows-only allocator/import-pointer route and QA's POSIX realpath escape.
+def census_check(sources, rejected=(), sanitized=False, flags=()):
+    with tempfile.TemporaryDirectory(prefix='arc-census-symbols-') as temp:
+        directory = Path(temp)
+        for name, source in sources.items():
+            c = directory / (name + '.c')
+            c.write_text(source)
+            subprocess.run([compiler, '-fno-common', *flags, '-c', str(c),
+                            '-o', str(directory / (name + '.c.o'))], check=True)
+        errors = []
+        guard.verify_census([directory], nm, sanitized, errors, policy)
+        if rejected:
+            assert all(any(name in e and 'allocation census bypass:' in e for e in errors)
+                       for name in rejected), errors
+        else:
+            assert not errors, errors
+
+census_check({'caller': 'extern void internal(void); void call(void) { internal(); }',
+              'callee': 'void internal(void) {}'})
+census_check({'caller': 'extern void arc_rpc_missing(void); void call(void) { arc_rpc_missing(); }'},
+             ('arc_rpc_missing',))
+for allocator in ('malloc', 'calloc', 'realloc', 'free'):
+    source = '#include <stdlib.h>\nvoid *p; void probe(void) { ' + {
+        'malloc': 'p = malloc(1);', 'calloc': 'p = calloc(1,1);',
+        'realloc': 'p = realloc(p,1);', 'free': 'free(p);'}[allocator] + ' }'
+    census_check({'caller': source}, (allocator,))
+    census_check({'arc_alloc_census': source})
+    census_check({'arc_alloc_census_extra': source}, (allocator,))
+# The bridge exemption is restricted to the four instrumented primitives.
+for allocator in ('realpath', 'strdup', 'asprintf', 'HeapAlloc', '_strdup'):
+    census_check({'arc_alloc_census': 'extern void ' + allocator + '(void); '
+                  'void probe(void) { ' + allocator + '(); }'}, (allocator,))
+census_check({'platform': '#ifdef _WIN32\n'
+              '__declspec(dllimport) char *_strdup(const char *);\n'
+              'char *probe(void) { return _strdup("leak"); }\n'
+              '#else\n#include <stdlib.h>\n'
+              'char *probe(void) { return realpath("/", 0); }\n#endif\n'},
+             ('_strdup' if 'mingw' in compiler.lower() or sys.platform == 'win32' else 'realpath',))
+census_check({'caller': 'extern void __asan_report_load1(void); '
+              'void probe(void) { __asan_report_load1(); }'}, ('__asan_report_load1',))
+census_check({'caller': 'extern void __asan_report_load1(void); '
+              'void probe(void) { __asan_report_load1(); }'}, sanitized=True)
+print('rpc-symbol-guard: census allowlist rejects unknown/internal-prefix/allocator/bridge-lookalike imports; realpath or Windows _strdup rejected')
+
+# The census must retain ELF sanitizer imports for its finite allowlist even
+# though the ordinary backend checker accepts compiler runtime families.
+with tempfile.TemporaryDirectory(prefix='arc-census-elf-') as temp:
+    directory = Path(temp); (directory / 'probe.o').write_bytes(b'\x7fELF')
+    for name, accepted in [('__asan_report_load4_noabort', True),
+                           ('__ubsan_handle_type_mismatch_v1_abort', True),
+                           ('__asan_unknown_allocator', False),
+                           ('__ubsan_unknown_allocator', False),
+                           ('__realpath_chk', False), ('__memcpy_chk', True)]:
+        with patch.object(guard.subprocess, 'check_output', return_value=name + ' U\n'):
+            errors = []
+            guard.verify_census([directory], nm, True, errors, policy)
+            assert bool(errors) != accepted, (name, errors)
+print('rpc-symbol-guard: census ELF sanitizer and fortified imports checked against finite service names')

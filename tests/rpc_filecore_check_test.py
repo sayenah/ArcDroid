@@ -66,6 +66,9 @@ def vectors():
     r = Reader(read)
     r.extents = [(2, 32, 48, 2, MAP), (0, 512, 528, 2, 0)]
     expect_bad(r.walk, '78 entries')
+    r = Reader(read, guest=True)
+    r.extents = [(2, 32, 48, 2, MAP), (0, 512, 528, 2, 0)]
+    expect_bad(r.walk, '78 entries')
     from rpc_filecore_check import filename
     expect_bad(lambda: filename(b'ABCDEFGHIJK'), 'name length')
     if filename(b'ABCDEFGHIJ') != 'ABCDEFGHIJ':
@@ -107,6 +110,62 @@ def blank(exe):
                     if start <= at and at + n <= start + len(data):
                         return data[at - start:at - start + n]
                 return read(at, n)
+            # Each guest mutation alone, then combined. Checksums are repaired
+            # independently; strict admission must still reject the changed bytes.
+            initial = (bytes(boot), bytes(maps), bytes(root))
+            def valid_checks():
+                maps[0] = zone_checksum(maps[:512])
+                root[2047] = directory_checksum(root, 0)
+            def changed_id():
+                maps[24:26] = b'\x61\x92'
+            def changed_sequence():
+                root[0] = root[2042] = 0x8f
+            def stale_end():
+                root[6:120] = bytes(range(114))
+            mutations = (changed_id, changed_sequence, stale_end)
+            for changes in (*[(x,) for x in mutations], mutations):
+                boot[:], maps[:], root[:] = initial
+                for change in changes: change()
+                valid_checks()
+                check(overridden, guest=True)
+                try: check(overridden)
+                except Invalid: pass
+                else: raise RuntimeError('strict accepted guest mutation')
+                # A neighbouring sequence/check/map-copy corruption is refused
+                # by both modes, even when all tolerated changes are present.
+                for where, at in ((root, 2042), (root, 2047), (maps, 25)):
+                    where[at] ^= 1
+                    if at == 2042: root[2047] = directory_checksum(root, 0)
+                    for guest in (False, True):
+                        try: check(overridden, guest=guest)
+                        except Invalid: pass
+                        else: raise RuntimeError('guest integrity corruption accepted')
+                    where[at] ^= 1
+                    if at == 2042: root[2047] = directory_checksum(root, 0)
+            # Rechecksummed adjacent disc-name corruption is not a mutable ID.
+            maps[26] ^= 1
+            maps[0] = zone_checksum(maps[:512])
+            expect_bad(lambda: check(overridden, guest=True), 'disc-record copies')
+            boot[:], maps[:], root[:] = initial
+            for padding in (b'\0'*9, b' '*9, b'\r'+b'garbage!'):
+                root[:] = directory([('A', 0, 0)])
+                root[6:15] = padding
+                root[2047] = directory_checksum(root, 1)
+                assert '$.A' in check(overridden, guest=True).tree
+                expect_bad(lambda: check(overridden), 'name')
+                # All four tolerances together still preserve integrity.
+                changed_id();changed_sequence()
+                root[32:120] = bytes(range(88))  # beyond the zero terminator
+                maps[0] = zone_checksum(maps[:512])
+                root[2047] = directory_checksum(root, 1)
+                assert '$.A' in check(overridden, guest=True).tree
+                expect_bad(lambda: check(overridden), 'disc-record')
+                root[2042] ^= 1
+                root[2047] = directory_checksum(root, 1)
+                for guest in (False, True):
+                    expect_bad(lambda: check(overridden, guest=guest), 'sequence' if guest else 'disc-record')
+                boot[:], maps[:], root[:] = initial
+            boot[:], maps[:], root[:] = initial
             root[2047] ^= 1
             expect_bad(lambda: check(overridden), 'directory checksum')
             root[2047] ^= 1

@@ -684,6 +684,43 @@ static void number_subscriptions(CPUModel model)
 }
 
 #ifndef ARC_RPC_OBSERVERS_TEST
+static void status_transport(CPUModel model)
+{
+    for(unsigned narrow=0;narrow<2;++narrow)for(unsigned n=0;n<27;++n){
+        fixture(model,16,0x100);arc_rpc_observer_trace(true,false);
+        ArcRpcTraceSelection selection={.classes=ARC_RPC_OBS_SWI,.capacity=32,.authored_status=narrow!=0};
+        assert(arc_rpc_observer_trace_select(&selection));
+        uint32_t w[16]={0x53435241u,1,64,0,0,0,0,0,1,1,123,456,0,0,0,0};
+        bool valid=n==0 || n==1 || n==25;
+        if(n==1 || n==15 || n==16 || n==24){w[3]=1;w[5]=2;w[7]=3;w[8]=15;}
+        switch(n){
+        case 2:w[0]=0;break;case 3:w[1]=2;break;case 4:w[2]=60;break;
+        case 5:w[3]=2;w[5]=2;w[7]=3;break;case 6:w[4]=1;break;case 7:w[6]=1;break;
+        case 8:w[8]=0;break;case 9:w[8]=8;break;case 10:w[9]=0;break;
+        case 11:case 12:case 13:case 14:w[n+1]=1;break;
+        case 15:w[5]=0;break;case 16:w[7]=0;break;
+        case 24:w[8]=16;break;case 25:w[8]=7;break;case 26:w[5]=1;break;
+        }
+        memcpy(ram00+0x100/4,w,sizeof(w));
+        arm.reg[0]=0;arm.reg[1]=1;arm.reg[2]=0;arm.reg[3]=0x10000100;
+        arm.reg[4]=0x53435241u;arm.reg[5]=64;arm.reg[6]=w[3];
+        if(n==17)arm.reg[6]=1;if(n==18)arm.reg[4]=0;if(n==19)arm.reg[5]=60;
+        if(n==20)arm.reg[0]=1;if(n==21)arm.reg[1]=0;if(n==22)arm.reg[2]=1;
+        if(n==23){memcpy(rom+0x1000/4,w,sizeof(w));arm.reg[3]=0x1000;}
+        assert(!arc_rpc_observe_swi_at(0xef020006,0x100,rom));
+        ArcRpcObservationTrace row;
+        if(narrow && n>=18 && n<=22){assert(arc_rpc_observer_trace_read(&row,1)==0);continue;}
+        assert(arc_rpc_observer_trace_read(&row,1)==1);
+        assert(row.status_valid==valid && !row.path[0]);
+        for(unsigned reg=3;reg<13;++reg)assert(!row.event.registers[reg]);
+        assert(row.status_token==(valid?(uint64_t)w[4]|((uint64_t)w[5]<<32):0));
+        assert(row.status_epoch==(valid?(uint64_t)w[6]|((uint64_t)w[7]<<32):0));
+        assert(row.status_role==(valid?w[3]:0) && row.status_event==(valid?w[8]:0));
+        assert(row.status_sequence==(valid?w[9]:0));
+        assert(row.status_detail[0]==(valid?w[10]:0) && row.status_detail[1]==(valid?w[11]:0));
+    }
+}
+
 int main(int argc,char **argv)
 {
     arm_init();protected=1;if(setjmp(boundary)){fputs("Unexpected observation component fault\n",stderr);return 1;}
@@ -696,7 +733,7 @@ int main(int argc,char **argv)
         }
         arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;
     }
-    for(unsigned model=0;model<4;++model){number_subscriptions((CPUModel)model);interpreter_equivalence((CPUModel)model);cheap_events((CPUModel)model);watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
+    for(unsigned model=0;model<4;++model){number_subscriptions((CPUModel)model);interpreter_equivalence((CPUModel)model);cheap_events((CPUModel)model);watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);status_transport((CPUModel)model);}
     for(unsigned model=0;model<4;++model)cheap_fault((CPUModel)model);
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observation: four CPUs, events, inspector values/purity, completion, generations, queue and trace");return 0;
 }

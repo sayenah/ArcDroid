@@ -123,6 +123,10 @@ typedef struct {
     ArcRpcObservation event;
     ArcRpcInspectStatus inspection;
     bool scalar_valid; uint32_t scalar;
+    /* Validated ARCS scalars only; no block pointer or byte dump. */
+    bool status_valid;
+    uint32_t status_role, status_event, status_sequence, status_detail[2];
+    uint64_t status_token, status_epoch;
     char path[ARC_RPC_COPY_LIMIT];
     uint64_t lost, lost_end_ns;
 } ArcRpcObservationTrace;
@@ -130,6 +134,7 @@ typedef struct { unsigned count; uint64_t lost, integer_attempts; bool enabled, 
 typedef struct {
     unsigned classes, capacity, swi_count;
     uint32_t swis[64];
+    bool authored_status; /* Suppress untagged OS_Byte traffic only. */
 } ArcRpcTraceSelection;
 RETRO_API bool arc_rpc_observer_trace_select(const ArcRpcTraceSelection *);
 typedef bool (*ArcRpcTraceSink)(void *, const ArcRpcObservationTrace *);

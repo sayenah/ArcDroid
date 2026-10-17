@@ -12,13 +12,16 @@ mutants = {
     'zone-order': ('first = 2 if identity == 2 else identity // 254', 'first = 0'),
     'directory-checksum': ('data[2047] == directory_checksum(data, count)', 'True'),
     'free-link': ('free = 8 + free if free else 0', 'free = 0'),
-    'boot-consistency': ("data[4:64] == record", 'True'),
+    'boot-consistency': ("map_record == record", 'True'),
     'metadata': ('attr=attr, size=size, sha256=h.hexdigest()', 'attr=0, size=size, sha256=h.hexdigest()'),
     'unshared-alias': ('len({e[3] for e in neighbours}) <= 1 or\n                all(e[6] & 255 for e in neighbours)', 'True'),
     'share-size': ('record[40] == 0', 'True'),
     'big-directory': ('record[41] == 0', 'True'),
     'high-zone-count': ('record[42] == 0', 'True'),
     'format-version': ('integer(record, 44) == 0', 'True'),
+    'guest-id': ('map_record[:20] == record[:20] and map_record[22:] == record[22:]', 'True'),
+    'guest-sequence': ('data[0] == data[2042]', 'True'),
+    'guest-terminator': ('data[5 + count * 26] == 0', 'True'),
     'overlap': ('all(at + count <= lo or hi <= at for lo, hi, *_ in self.used)', 'True'),
 }
 with tempfile.TemporaryDirectory(prefix='arcdroid-filecore-mutants-') as tmp:
