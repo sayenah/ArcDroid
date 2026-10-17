@@ -65,7 +65,7 @@ def atoms(code,lo,hi):
 def inventory(root):
  rows=[]
  for relative,(group,whole) in SCOPE.items():
-  text=(root/relative).read_text();code=masked(text)
+  text=(root/relative).read_text(encoding='utf-8');code=masked(text)
   diff=subprocess.check_output(['git','diff','--unified=0','efafff9','--',relative],cwd=root,text=True)
   changed=set()
   for h in re.finditer(r'^@@ .*?\+(\d+)(?:,(\d+))? @@',diff,re.M):
@@ -113,10 +113,26 @@ def transitions(root):
   ('core/rpc_launch_attempt.c','attempt',[(r'a->(?:delivery|outcome|live|resume_allowed)\s*=(?!=)[^;]+;', '(void)0;'),(r'case ARC_RPC_EVENT_\w+:','case -1:')]),
   ('libretro/rpc_launch_record_store.c','publisher',[(r's->phase\s*=(?!=)[^;]+;','(void)0;')]),
   ('core/rpc_launch_controller.c','controller',[(r'notify\(&a,ARC_RPC_STATUS_\w+\);','(void)0;')])):
-  source=(root/relative).read_text()
+  source=(root/relative).read_text(encoding='utf-8')
   for pattern,replacement in patterns:
    for m in re.finditer(pattern,source):rows.append(dict(source=relative,group=group,function='state transition',line=source.count('\n',0,m.start())+1,start=m.start(),end=m.end(),expression=m[0],replacement=replacement))
  return rows
+
+def source_hash(path):
+ # Git's Windows checkout conversion must not invalidate a text-source pin.
+ # Preserve every other byte, including whitespace and standalone CR bytes.
+ return hashlib.sha256(path.read_bytes().replace(b'\r\n',b'\n')).hexdigest()
+
+def write_inventory(root,path,entries):
+ path.write_text(json.dumps({'license':'GPL-2.0-only','sources':{s:source_hash(root/s) for s in SCOPE},'predicates':entries,'equivalent':{}},indent=2)+'\n',encoding='utf-8')
+
+def checked_inventory(root):
+ audited=json.loads((root/'tests/rpc_launch_predicates.json').read_text(encoding='utf-8'));entries=audited['predicates']
+ for source,digest in audited['sources'].items():
+  if source_hash(root/source)!=digest:raise RuntimeError('refresh mutation audit after source change: '+source)
+ for e in entries:
+  if (root/e['source']).read_text(encoding='utf-8')[e['start']:e['end']]!=e['expression']:raise RuntimeError('stale mutation offset: '+e['source'])
+ return entries
 
 def main():
  p=argparse.ArgumentParser();p.add_argument('build',type=Path);p.add_argument('root',type=Path);p.add_argument('fixtures',type=Path)
@@ -129,18 +145,14 @@ def main():
  if a.inventory:
   entries=inventory(root)
   entries+=transitions(root)
-  a.inventory.write_text(json.dumps({'license':'GPL-2.0-only','sources':{s:hashlib.sha256((root/s).read_bytes()).hexdigest() for s in SCOPE},'predicates':entries,'equivalent':{}},indent=2)+'\n')
+  write_inventory(root,a.inventory,entries)
  else:
-  audited=json.loads((root/'tests/rpc_launch_predicates.json').read_text());entries=audited['predicates']
-  for source,digest in audited['sources'].items():
-   if hashlib.sha256((root/source).read_bytes()).hexdigest()!=digest:raise RuntimeError('refresh mutation audit after source change: '+source)
-  for e in entries:
-   if (root/e['source']).read_text()[e['start']:e['end']]!=e['expression']:raise RuntimeError('stale mutation offset: '+e['source'])
+  entries=checked_inventory(root)
  if not a.results:return
  audit_files=[Path(__file__).resolve(),*sorted((root/'tests').glob('rpc_*audit.inc')),
   *[root/'tests'/name for name in ('rpc_launch_publication_test.py','rpc_launch_controller_guest.py','rpc_orchestration_test.c','core_tests.c','rpc_observers_frontend_test.c','rpc_launch_product_test.c','rpc_launch_test.c','rpc_launch_record_store_test.c')]]
- audit_hashes={str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in audit_files}
- cache=(build/'CMakeCache.txt').read_text();ninja=next(l.split('=',1)[1] for l in cache.splitlines() if l.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
+ audit_hashes={str(f):source_hash(f) for f in audit_files}
+ cache=(build/'CMakeCache.txt').read_text(encoding='utf-8');ninja=next(l.split('=',1)[1] for l in cache.splitlines() if l.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
  commands=[x['command'] for x in json.loads(subprocess.check_output([ninja,'-C',str(build),'-t','compdb','-x'],text=True))]
  parsed=[split_command(s,os.name=='nt') for c in commands for s in c.split('&&') if ' -o ' in s]
  suffix='.dll' if os.name=='nt' else '.dylib' if sys.platform=='darwin' else '.so'
@@ -155,8 +167,8 @@ def main():
    pc=next(r.copy() for r in parsed if '-c' in r and same_path(r[r.index('-c')+1],prep,build,os.name=='nt') and any(same_path(x,r[r.index('-o')+1],build,os.name=='nt') for x in hl if x.endswith(('.o','.obj'))))
    original_p=pc[pc.index('-o')+1];original_h=hc[hc.index('-o')+1]
    ps=tmp/'audit_preparation.c';hs=tmp/'audit_orchestration.c';po=tmp/'audit_preparation.o';ho=tmp/'audit_orchestration.o';binary=tmp/('audit'+exe_suffix)
-   ps.write_text(source_text+'\n#include "'+str(root/'tests/rpc_launch_binding_audit.inc')+'"\n')
-   text=test.read_text();anchor='ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED);'
+   ps.write_text(source_text+'\n#include "'+str(root/'tests/rpc_launch_binding_audit.inc')+'"\n',encoding='utf-8')
+   text=test.read_text(encoding='utf-8');anchor='ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED);'
    assert text.count(anchor)==1
    text=text.replace('static unsigned notices','extern void arc_predicate_binding_audit(ArcRpcPreparation *);\nextern void arc_predicate_reset_before(ArcRpcPreparation *);\nextern void arc_predicate_reset_after(ArcRpcPreparation *);\nstatic unsigned notices',1).replace(anchor,anchor+'arc_predicate_binding_audit(p);')
    for name,hook in (('reset_drive0','arc_predicate_reset_before'),('reset_rebind','arc_predicate_reset_after')):
@@ -166,7 +178,7 @@ def main():
    assert text.count(marker)==1;text=text.replace(marker,marker+'assert(a.resume_allowed==!failure);')
    marker='assert(arc_engine_active() && arc_engine_is_rpc());'
    assert text.count(marker)==1;text=text.replace(marker,marker+'assert(!arc_riscpc_preparation_execution_allowed(current));')
-   hs.write_text(text)
+   hs.write_text(text,encoding='utf-8')
    for command,source,obj in ((pc,ps,po),(hc,hs,ho)):
     command[command.index('-c')+1]=str(source);command[command.index('-o')+1]=str(obj)
     command+=['-I',str(prep.parent),'-I',str(test.parent)]
@@ -182,7 +194,7 @@ static unsigned audit_input_count;
 void arc_predicate_input_proxy(void){++audit_input_count;arc_rpc_observers_attempt_input();}
 unsigned arc_predicate_input_calls(void){return audit_input_count;}
 '''
-   es.write_text('#define arc_rpc_observers_attempt_input arc_predicate_input_proxy\n'+(engine.read_text() if engine_source is None else engine_source)+proxy)
+   es.write_text('#define arc_rpc_observers_attempt_input arc_predicate_input_proxy\n'+(engine.read_text(encoding='utf-8') if engine_source is None else engine_source)+proxy,encoding='utf-8')
    ec[ec.index('-c')+1]=str(es);ec[ec.index('-o')+1]=str(eo);ec+=['-I',str(engine.parent)]
    if '-MF' in ec:ec[ec.index('-MF')+1]=str(eo)+'.d'
    subprocess.run(ec,cwd=build,check=True,capture_output=True)
@@ -193,8 +205,8 @@ unsigned arc_predicate_input_calls(void){return audit_input_count;}
   def carrier_supplement(obj):
    source=root/'tests/rpc_launch_controller_test.c';hc,hl=rebuild_commands(commands,source,'rpc_launch_controller_test',build,os.name=='nt')
    old=hc[hc.index('-o')+1];hs=tmp/'carrier_audit.c';ho=tmp/'carrier_audit.o'
-   text=source.read_text().replace('int main(int argc,char **argv)','\n#include "'+str(root/'tests/rpc_carrier_audit.inc')+'"\nint main(int argc,char **argv)')
-   text=text.replace('    ArcRpcLaunchPlan p=','    arc_carrier_audit();\n    ArcRpcLaunchPlan p=',1);hs.write_text(text)
+   text=source.read_text(encoding='utf-8').replace('int main(int argc,char **argv)','\n#include "'+str(root/'tests/rpc_carrier_audit.inc')+'"\nint main(int argc,char **argv)')
+   text=text.replace('    ArcRpcLaunchPlan p=','    arc_carrier_audit();\n    ArcRpcLaunchPlan p=',1);hs.write_text(text,encoding='utf-8')
    hc[hc.index('-c')+1]=str(hs);hc[hc.index('-o')+1]=str(ho);hc+=['-I',str(source.parent)]
    if '-MF' in hc:hc[hc.index('-MF')+1]=str(ho)+'.d'
    subprocess.run(hc,cwd=build,check=True,capture_output=True)
@@ -205,8 +217,8 @@ unsigned arc_predicate_input_calls(void){return audit_input_count;}
    source=root/'tests/rpc_launch_product_test.c';hc,hl=rebuild_commands(commands,source,'rpc_launch_product_test',build,os.name=='nt')
    filecore=root/'core/rpc_boot_filecore.c';fc=next(r.copy() for r in parsed if '-c' in r and same_path(r[r.index('-c')+1],filecore,build,os.name=='nt'))
    fs=tmp/'filecore_audit.c';fo=tmp/'filecore_audit.o';hs=tmp/'product_audit.c';ho=tmp/'product_audit.o';old=hc[hc.index('-o')+1]
-   fs.write_text(source_text+'\n#include "'+str(root/'tests/rpc_filecore_audit.inc')+'"\n')
-   hs.write_text(source.read_text().replace('int main(void)','extern void arc_predicate_filecore_audit(const uint8_t *,const uint8_t *);\nint main(void)').replace('    prepare();ArcLaunchDiscovery d;','    prepare();arc_predicate_filecore_audit(boot,maps);ArcLaunchDiscovery d;',1))
+   fs.write_text(source_text+'\n#include "'+str(root/'tests/rpc_filecore_audit.inc')+'"\n',encoding='utf-8')
+   hs.write_text(source.read_text(encoding='utf-8').replace('int main(void)','extern void arc_predicate_filecore_audit(const uint8_t *,const uint8_t *);\nint main(void)').replace('    prepare();ArcLaunchDiscovery d;','    prepare();arc_predicate_filecore_audit(boot,maps);ArcLaunchDiscovery d;',1),encoding='utf-8')
    for command,copy,obj in ((hc,hs,ho),(fc,fs,fo)):
     command[command.index('-c')+1]=str(copy);command[command.index('-o')+1]=str(obj);command+=['-I',str(filecore.parent),'-I',str(source.parent)]
     if '-MF' in command:command[command.index('-MF')+1]=str(obj)+'.d'
@@ -230,7 +242,7 @@ static void arc_predicate_tail(ArcMediaEntry *,bool);
 static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePolicy,char *,size_t);
 '''
    source_text=source_text[:at]+prototypes+body+source_text[end:]
-   fs.write_text(prefix+source_text+'\n#include "'+str(root/'tests/rpc_frontend_audit.inc')+'"\n')
+   fs.write_text(prefix+source_text+'\n#include "'+str(root/'tests/rpc_frontend_audit.inc')+'"\n',encoding='utf-8')
    fc[fc.index('-c')+1]=str(fs);fc[fc.index('-o')+1]=str(fo);fc+=['-I',str(source.parent)]
    if '-MF' in fc:fc[fc.index('-MF')+1]=str(fo)+'.d'
    subprocess.run(fc,cwd=build,check=True,capture_output=True)
@@ -239,11 +251,11 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
    subprocess.run(fl,cwd=build,check=True,capture_output=True)
    test=root/'tests/rpc_observers_frontend_test.c';hc,hl=rebuild_commands(commands,test,'rpc_observers_frontend_test',build,os.name=='nt')
    old=hc[hc.index('-o')+1];hs=tmp/'frontend_harness.c';ho=tmp/'frontend_harness.o';binary=tmp/('frontend_harness'+exe_suffix)
-   text=test.read_text();marker='    vfs.read=counted_read;'
+   text=test.read_text(encoding='utf-8');marker='    vfs.read=counted_read;'
    assert text.count(marker)==1
    text=text.replace(marker,'    void (*predicate_audit)(void);LOAD(predicate_audit,"arc_predicate_frontend_audit");\n'+marker)
    marker='        unload();vfs_assert_no_open_handles();';assert text.count(marker)>=1
-   hs.write_text(text.replace(marker,'        predicate_audit();unload();vfs_assert_no_open_handles();'))
+   hs.write_text(text.replace(marker,'        predicate_audit();unload();vfs_assert_no_open_handles();'),encoding='utf-8')
    hc[hc.index('-c')+1]=str(hs);hc[hc.index('-o')+1]=str(ho);hc+=['-I',str(test.parent)]
    if '-MF' in hc:hc[hc.index('-MF')+1]=str(ho)+'.d'
    subprocess.run(hc,cwd=build,check=True,capture_output=True)
@@ -254,7 +266,7 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
    source=root/'tests/core_tests.c';compile,link=rebuild_commands(commands,source,'core_tests',build,os.name=='nt')
    old=compile[compile.index('-o')+1];harness=tmp/'core_audit.c';ho=tmp/'core_audit.o'
    if not ho.exists():
-    text=source.read_text();anchor='int main(int argc, char **argv)\n{'
+    text=source.read_text(encoding='utf-8');anchor='int main(int argc, char **argv)\n{'
     supplement='''
    assert(argc>=2);
    size_t audit_size;uint8_t *audit_data=read_fixture(argv[1],"arcdroid-application-l.adl",&audit_size);
@@ -264,7 +276,7 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
    assert(arc_launch_discover(audit_data,audit_size,&audit_info,NULL,&audit_disc) && audit_disc.readable && !audit_disc.application_count);
    assert(!arc_launch_discover(NULL,0,NULL,NULL,&audit_disc));free(audit_data);
 '''
-    assert text.count(anchor)==1;harness.write_text(text.replace(anchor,anchor+supplement))
+    assert text.count(anchor)==1;harness.write_text(text.replace(anchor,anchor+supplement),encoding='utf-8')
     compile[compile.index('-c')+1]=str(harness);compile[compile.index('-o')+1]=str(ho);compile+=['-I',str(source.parent)]
     if '-MF' in compile:compile[compile.index('-MF')+1]=str(ho)+'.d'
     subprocess.run(compile,cwd=build,check=True,capture_output=True)
@@ -299,16 +311,16 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
    if group=='preparation':command=[sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(binary),str(fixtures),'launch']
    if group in ('frontend','binding','engine'):command=[sys.executable,'-B',str(root/'tests/rpc_launch_publication_test.py'),str(build/('rpc_runner'+exe_suffix)),str(binary),str(build/('rpc_launch_controller_test'+exe_suffix)),str(fixtures)]
    if group=='generation':command=[sys.executable,'-B',str(root/'tests/rpc_cmos_plan_test.py'),str(build/('rpc_cmos_plan_test'+exe_suffix)),str(binary),str(build/('rpc_runner'+exe_suffix)),str(build/('arcdroid_libretro'+suffix)),str(fixtures),'0','full','full']
-   original=source.read_text()
+   original=source.read_text(encoding='utf-8')
    if group not in baselines:
-    copy.write_text(original);subprocess.run(compile,cwd=build,check=True,capture_output=True);subprocess.run(link,cwd=build,check=True,capture_output=True)
+    copy.write_text(original,encoding='utf-8');subprocess.run(compile,cwd=build,check=True,capture_output=True);subprocess.run(link,cwd=build,check=True,capture_output=True)
     r=subprocess.run(command,cwd=build,capture_output=True,timeout=180)
     if r.returncode:raise RuntimeError('baseline '+group+': '+r.stderr.decode(errors='replace')[-2000:])
     if group=='binding':
      r=binding_supplement(original)
      if r.returncode:raise RuntimeError('binding supplement baseline: '+r.stderr.decode(errors='replace')[-2000:])
     if group=='engine':
-     r=binding_supplement((root/'libretro/rpc_preparation.c').read_text(),original)
+     r=binding_supplement((root/'libretro/rpc_preparation.c').read_text(encoding='utf-8'),original)
      if r.returncode:raise RuntimeError('engine supplement baseline: '+r.stderr.decode(errors='replace')[-2000:])
     if group=='carrier':
      r=carrier_supplement(obj)
@@ -330,9 +342,9 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
     baselines.add(group)
    if a.baseline:continue
    for truth in (('negate',) if a.operator=='negation' else ('false','true')):
-    if any(hashlib.sha256(Path(f).read_bytes()).hexdigest()!=digest for f,digest in audit_hashes.items()):raise RuntimeError('test inputs changed during mutation run; repeat on a frozen audit')
+    if any(source_hash(Path(f))!=digest for f,digest in audit_hashes.items()):raise RuntimeError('test inputs changed during mutation run; repeat on a frozen audit')
     replacement=e.get('replacement') or ('!('+e['expression']+')' if truth=='negate' else '('+e['expression']+','+truth+')')
-    copy.write_text(original[:e['start']]+replacement+original[e['end']:])
+    copy.write_text(original[:e['start']]+replacement+original[e['end']:],encoding='utf-8')
     subprocess.run(compile,cwd=build,check=True,capture_output=True);subprocess.run(link,cwd=build,check=True,capture_output=True)
     try:
      if a.policy_only and group=='frontend':r=frontend_supplement(original[:e['start']]+replacement+original[e['end']:])
@@ -356,7 +368,7 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
      if status=='SURVIVED' and group=='product':
       r=product_supplement(obj);status='killed' if r.returncode else 'SURVIVED'
      if status=='SURVIVED' and group=='engine':
-      r=binding_supplement((root/'libretro/rpc_preparation.c').read_text(),original[:e['start']]+replacement+original[e['end']:]);status='killed' if r.returncode else 'SURVIVED'
+      r=binding_supplement((root/'libretro/rpc_preparation.c').read_text(encoding='utf-8'),original[:e['start']]+replacement+original[e['end']:]);status='killed' if r.returncode else 'SURVIVED'
      if status=='SURVIVED' and group=='carrier':
       r=carrier_supplement(obj);status='killed' if r.returncode else 'SURVIVED'
      if status=='SURVIVED' and group=='filecore':

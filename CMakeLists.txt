@@ -2939,6 +2939,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-launch-mutation-inventory COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_predicates.py"
     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}")
+  add_test(NAME rpc-launch-mutation-checkouts COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_predicates_test.py")
+  set_tests_properties(rpc-launch-mutation-checkouts PROPERTIES TIMEOUT 60)
   add_dependencies(rpc_launch_test test-fixtures)
   target_link_libraries(rpc_launch_test PRIVATE arcdroid_core)
   target_compile_options(rpc_launch_test PRIVATE -UNDEBUG -Wall -Wextra)
