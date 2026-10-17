@@ -84,12 +84,17 @@ def objects(build,target):
     return result
 
 
-def compare_objects(left,right,readobj,label,constants=False,relocs=False):
+def compare_objects(left,right,readobj,label,constants=False,relocs=False,allow_changed=None):
     if left.keys()!=right.keys():raise RuntimeError(label+': object set differs')
-    checked=0
+    checked=0; allowed=0
     for relative,a in sorted(left.items()):
         b=right[relative]
         if code(a,readobj,constants)!=code(b,readobj,constants):
+            if allow_changed and relative.name in (allow_changed+'.c.o',allow_changed+'.c.obj'):
+                allowed+=1
+                if allowed>1:raise RuntimeError(label+': ambiguous allow-listed object')
+                print(label+': allowed changed object '+str(relative))
+                continue
             raise RuntimeError(label+': code/constants differ: '+str(relative))
         if relocs and relocations(a,readobj)!=relocations(b,readobj):
             raise RuntimeError(label+': relocations differ: '+str(relative))
@@ -137,12 +142,13 @@ def main():
     p.add_argument('--base',type=Path,required=True);p.add_argument('--candidate',type=Path,required=True)
     p.add_argument('--readobj',default=shutil.which('llvm-readobj'))
     p.add_argument('--objdump',default=shutil.which('llvm-objdump'))
+    p.add_argument('--allow-changed-object',choices=('rpc_mem_timing',),help='L1: permit exactly this object basename in base/candidate code comparison only')
     p.add_argument('--test-loops',action='store_true',help='also run the separate R-e0-1 TEST_FAULTS loop proof')
     args=p.parse_args()
     if not args.readobj:raise RuntimeError('llvm-readobj is required')
     if args.test_loops and not args.objdump:raise RuntimeError('llvm-objdump is required for the TEST_FAULTS loop proof')
     for target in ('arcdroid_libretro_arculator','arcdroid_libretro_rpc','arcdroid_libretro','arcdroid_core','arcdroid_zlib'):
-        compare_objects(objects(args.base,target),objects(args.candidate,target),args.readobj,'AC-5(a) '+target)
+        compare_objects(objects(args.base,target),objects(args.candidate,target),args.readobj,'AC-5(a) '+target,allow_changed=args.allow_changed_object if target=='arcdroid_libretro_rpc' else None)
     commands=json.loads((args.candidate/'compile_commands.json').read_text())
     flags=[]
     for target in ('arcdroid_libretro_rpc','arcdroid_rpcmeasure_libretro_rpc'):
@@ -157,9 +163,12 @@ def main():
     right={k:v for k,v in measurement.items() if k.name.removesuffix('.obj').removesuffix('.o') in names}
     if len(left)!=4:raise RuntimeError('missing named hot objects')
     compare_objects(left,right,args.readobj,'AC-5(b) three loops, service/access, translation/fetch, inline callers',True,True)
-    with tempfile.TemporaryDirectory(prefix='arcdroid-1a0-layout-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='arcdroid-l1-layout-',dir=args.candidate) as tmp:
+        base=layout(args.base,'arcdroid_libretro_rpc',args.readobj,Path(tmp))
         a=layout(args.candidate,'arcdroid_libretro_rpc',args.readobj,Path(tmp))
         b=layout(args.candidate,'arcdroid_rpcmeasure_libretro_rpc',args.readobj,Path(tmp))
+        if base!=a:raise RuntimeError('base/candidate timing layout differs: '+str([(f,x,y) for f,x,y in zip(LAYOUT_FIELDS,base,a) if x!=y]))
+        print(f'AC-7 base/candidate m, Cache, Tag, ArcRpcMemFast, Packet: {len(a)} layout values identical')
         if a!=b:raise RuntimeError('shared timing layouts differ: '+str([(f,x,y) for f,x,y in zip(LAYOUT_FIELDS,a,b) if x!=y]))
         print(f'AC-5(b) ArcRpcMemFast, timing state, Cache, Tag, Packet: {len(a)} size/alignment/offset values identical')
         outer=layout(args.candidate,'arcdroid_rpcmeasure_libretro',args.readobj,Path(tmp),True)

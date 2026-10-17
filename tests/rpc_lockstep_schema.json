@@ -9371,7 +9371,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9393,7 +9393,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9415,7 +9415,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9437,7 +9437,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9459,7 +9459,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9481,7 +9481,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9503,7 +9503,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9525,7 +9525,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9547,7 +9547,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9569,7 +9569,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9591,7 +9591,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9613,7 +9613,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9635,7 +9635,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9657,7 +9657,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9679,7 +9679,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9701,7 +9701,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9723,7 +9723,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9745,7 +9745,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9767,7 +9767,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9789,7 +9789,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9811,7 +9811,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9833,7 +9833,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9855,7 +9855,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9877,7 +9877,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9899,7 +9899,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9921,7 +9921,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:125",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -9943,7 +9943,7 @@
       ],
       "condition": true,
       "exclusion_reason": "\u00a72.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:541",
+      "citation": "engine/rpc/rpc_mem_timing.c:663",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "meaning": "SHA-256/64 identity of immutable input/table, not host address"
@@ -9962,7 +9962,7 @@
       ],
       "condition": true,
       "exclusion_reason": "\u00a72.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:550",
+      "citation": "engine/rpc/rpc_mem_timing.c:682",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "meaning": "SHA-256/64 identity of immutable input/table, not host address"
@@ -19217,7 +19217,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:162; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -19236,7 +19236,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:162; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -19255,7 +19255,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:162; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -19274,7 +19274,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:163; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19293,7 +19293,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:163; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19340,7 +19340,7 @@
       "name": "rpc_mem_timing.arc_rpc_exercise.values",
       "group": "session",
       "type": "u64",
-      "count": 168,
+      "count": 173,
       "class": "host-only/excluded",
       "phases": [
         0,
@@ -19350,7 +19350,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:126; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19359,7 +19359,7 @@
       "name": "rpc_mem_timing.interval_exercise_start.values",
       "group": "session",
       "type": "u64",
-      "count": 168,
+      "count": 173,
       "class": "host-only/excluded",
       "phases": [
         0,
@@ -19369,7 +19369,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:154; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19378,7 +19378,7 @@
       "name": "rpc_mem_timing.interval_exercise_end.values",
       "group": "session",
       "type": "u64",
-      "count": 168,
+      "count": 173,
       "class": "host-only/excluded",
       "phases": [
         0,
@@ -19388,7 +19388,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:154; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19407,7 +19407,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:127; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned"
@@ -19426,7 +19426,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19445,7 +19445,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19464,7 +19464,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -19483,7 +19483,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -19502,7 +19502,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -19521,7 +19521,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -19768,6 +19768,139 @@
       "source": "engine/rpc/rpc_crosscheck.c",
       "mode_exclusions": {},
       "c_type": "char"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.keys",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint32_t"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.hints",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint8_t"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.gate",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.keys",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint32_t"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.hints",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint8_t"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.gate",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned"
+    },
+    {
+      "name": "rpc_mem_timing.l1_poison_state",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint32_t"
     }
   ],
   "inventory": [
@@ -20596,7 +20729,7 @@
       "root": "rpc_mem_timing.interval",
       "classification": "contents-compared",
       "ruling": "\u00a72.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58"
+      "citation": "engine/rpc/rpc_mem_timing.c:125"
     },
     {
       "category": "static-root",
@@ -20605,7 +20738,7 @@
       "root": "rpc_mem_timing.cycle.simple",
       "classification": "immutable-input identity",
       "ruling": "\u00a72.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:541"
+      "citation": "engine/rpc/rpc_mem_timing.c:663"
     },
     {
       "category": "static-root",
@@ -20614,7 +20747,7 @@
       "root": "rpc_mem_timing.cycle.pc",
       "classification": "immutable-input identity",
       "ruling": "\u00a72.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:550"
+      "citation": "engine/rpc/rpc_mem_timing.c:682"
     },
     {
       "category": "static-root",
@@ -22561,7 +22694,7 @@
       "root": "rpc_mem_timing.endpoint_mode",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:162; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22570,7 +22703,7 @@
       "root": "rpc_mem_timing.previous_valid",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:162; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22579,7 +22712,7 @@
       "root": "rpc_mem_timing.pending_end",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:162; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22588,7 +22721,7 @@
       "root": "rpc_mem_timing.previous_completion",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:163; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22597,7 +22730,7 @@
       "root": "rpc_mem_timing.end_completion",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:163; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22606,7 +22739,7 @@
       "root": "rpc_mem_timing.arc_rpc_exercise",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:126; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22615,7 +22748,7 @@
       "root": "rpc_mem_timing.interval_exercise_start",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:154; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22624,7 +22757,7 @@
       "root": "rpc_mem_timing.interval_exercise_end",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:154; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22633,7 +22766,7 @@
       "root": "rpc_mem_timing.arc_rpc_exercise_path",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:127; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22642,7 +22775,7 @@
       "root": "rpc_mem_timing.exercise_batch",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -22706,6 +22839,33 @@
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "l1_instruction",
+      "root": "rpc_mem_timing.l1_instruction",
+      "classification": "excluded with ruling",
+      "ruling": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "l1_data",
+      "root": "rpc_mem_timing.l1_data",
+      "classification": "excluded with ruling",
+      "ruling": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "l1_poison_state",
+      "root": "rpc_mem_timing.l1_poison_state",
+      "classification": "excluded with ruling",
+      "ruling": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2"
     }
   ],
   "object_symbols": {
@@ -22950,7 +23110,10 @@
           "rpc_mem_timing.interval_exercise_start",
           "rpc_mem_timing.interval_exercise_end",
           "rpc_mem_timing.arc_rpc_exercise_path",
-          "rpc_mem_timing.exercise_batch"
+          "rpc_mem_timing.exercise_batch",
+          "rpc_mem_timing.l1_instruction",
+          "rpc_mem_timing.l1_data",
+          "rpc_mem_timing.l1_poison_state"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -24700,61 +24863,61 @@
     {
       "field": "rpc_mem_timing.arc_rpc_exercise.values",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:126; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.interval_exercise_start.values",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:154; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.interval_exercise_end.values",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:154; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.arc_rpc_exercise_path",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:127; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.start",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.integer",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.services",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.live",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.integral",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.batched",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:128; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
@@ -24774,6 +24937,48 @@
       "class": "host-only/excluded",
       "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.keys",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.hints",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.gate",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.keys",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.hints",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.gate",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_poison_state",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
     }
   ],
   "cross_quota_projections": {

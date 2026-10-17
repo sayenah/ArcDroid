@@ -55,6 +55,73 @@ static struct {
     ArcRpcMemStats stats;
 } m;
 ArcRpcMemFast arc_rpc_mem_fast;
+/* D-200 / R-L1-4: derived host state, outside the raw canonical snapshot.
+ * Four hint entries per set; each is only a way in THAT cache's set. */
+typedef struct {
+    uint32_t keys[512];
+    uint8_t hints[512];
+    unsigned gate;
+} LookupSide;
+static LookupSide l1_instruction, l1_data;
+#if defined(ARCDROID_RPC_L1_POISON) && defined(ARCDROID_TEST_FAULTS)
+static uint32_t l1_poison_state;
+#endif
+static LookupSide *lookup_side(Cache *c)
+{ return c == &m.data ? &l1_data : &l1_instruction; }
+static unsigned hint_index(const Cache *c, uint32_t line)
+{ return (line & (c->sets-1u))*4u + ((line/c->sets)&3u); }
+static unsigned lookup_gate(const Cache *c)
+{
+    unsigned gate = c->ways >= 64 ? 2u : 0u;
+    /* Frozen SA fallback is linear until Fable records selection. */
+#if defined(ARCDROID_RPC_L1_SA_GATE)
+    if (c->sets == 16 && c->ways == 32) gate = ARCDROID_RPC_L1_SA_GATE;
+#endif
+#if defined(ARCDROID_RPC_L1_GATE)
+    gate = ARCDROID_RPC_L1_GATE;
+#endif
+    return gate;
+}
+static void lookup_reset(void)
+{
+    memset(&l1_instruction, 0, sizeof(l1_instruction));
+    memset(&l1_data, 0, sizeof(l1_data));
+    memset(l1_instruction.keys, 0xff, sizeof(l1_instruction.keys));
+    memset(l1_data.keys, 0xff, sizeof(l1_data.keys));
+    memset(l1_instruction.hints, 0xff, sizeof(l1_instruction.hints));
+    memset(l1_data.hints, 0xff, sizeof(l1_data.hints));
+#if defined(ARCDROID_RPC_L1_POISON) && defined(ARCDROID_TEST_FAULTS)
+    l1_poison_state = 0x61a20001u;
+#endif
+}
+/* Tag writers update the exact mirror. Dirty-only changes preserve the key.
+ * Arbitrary-slot tests use this same path, without advancing a victim. */
+static void tag_write(Cache *c, unsigned slot, Tag tag)
+{
+    c->tags[slot] = tag;
+    lookup_side(c)->keys[slot] = tag.valid ? tag.va : UINT32_MAX;
+    if (tag.valid) lookup_side(c)->hints[hint_index(c,tag.va)] = (uint8_t)(slot%c->ways);
+}
+#if defined(ARCDROID_RPC_CROSSCHECK)
+static void lookup_integrity(Cache *c, unsigned first, unsigned count)
+{
+    for (unsigned i=first;i<first+count;++i)
+        if (lookup_side(c)->keys[i] != (c->tags[i].valid ? c->tags[i].va : UINT32_MAX))
+            fatal("RPC L1 mirror integrity");
+}
+/* Independent retained pre-L1 scan, deliberately without lookup_count calls. */
+static Tag *lookup_reference(Cache *c, uint32_t va)
+{
+    if (!c->populated) return NULL;
+    uint32_t line = va >> c->shift;
+    unsigned base = (line & (c->sets - 1u)) * c->ways;
+    for (unsigned way = 0; way < c->ways; ++way) {
+        Tag *t = &c->tags[base + way];
+        if (t->valid && t->va == line) return t;
+    }
+    return NULL;
+}
+#endif
 #if defined(ARCDROID_TEST_FAULTS)
 ArcRpcExercise arc_rpc_exercise;
 unsigned arc_rpc_exercise_path;
@@ -309,24 +376,73 @@ static Tag *lookup(Cache *c, uint32_t va
 #if defined(ARCDROID_TEST_FAULTS)
         lookup_count(maintenance,0,0,0);
 #endif
+#if defined(ARCDROID_RPC_CROSSCHECK)
+        unsigned expected[2]={c==&m.data,lookup_reference(c,va)?1u:0u};
+        unsigned actual[2]={c==&m.data,0};
+        arc_rpc_crosscheck_field("lookup.cache_slot",expected,actual,sizeof(expected));
+#endif
         return NULL;
     }
     uint32_t line = va >> c->shift;
     unsigned base = (line & (c->sets - 1u)) * c->ways;
-    for (unsigned way = 0; way < c->ways; ++way) {
-        Tag *t = &c->tags[base + way];
-        if (t->valid && t->va == line) {
-#if defined(ARCDROID_TEST_FAULTS)
-            lookup_count(maintenance,2,way+1,way);
+    LookupSide *side = lookup_side(c);
+    Tag *result = NULL;
+    if (side->gate) {
+        unsigned index = hint_index(c,line);
+#if defined(ARCDROID_RPC_L1_POISON) && defined(ARCDROID_TEST_FAULTS)
+        l1_poison_state = l1_poison_state*1664525u + 1013904223u;
+        side->hints[index] = (uint8_t)(l1_poison_state >> 24);
 #endif
-            return t;
+        unsigned way = side->hints[index];
+        /* Stable B-1/X contract: bounds, valid, line, current cache and set. */
+        if (way < c->ways && c->tags[base+way].valid && c->tags[base+way].va == line) {
+            result = &c->tags[base+way];
+            ARC_RPC_COUNT(l1_hint_accepted,1);
+        } else {
+            ARC_RPC_COUNT(l1_hint_rejected,1);
+            if (side->gate == 2) {
+                ARC_RPC_COUNT(l1_mirror_search,1);
+                uint64_t matches = 0;
+                for (unsigned n=0;n<c->ways;++n)
+                    if (side->keys[base+n] == line) matches |= UINT64_C(1) << n;
+                /* Never apply ctz to zero; ARM610 requires all 64 bits. */
+                if (matches) {
+                    unsigned first = 0;
+                    while (!(matches & (UINT64_C(1) << first))) ++first;
+                    Tag *t = &c->tags[base+first];
+                    if (t->valid && t->va == line) result = t;
+                    else { ARC_RPC_COUNT(l1_mirror_recheck_failed,1); }
+                }
+            } else {
+                ARC_RPC_COUNT(l1_linear_fallback,1);
+                for (unsigned n=0;n<c->ways;++n) {
+                    Tag *t = &c->tags[base+n];
+                    if (t->valid && t->va == line) { result=t; break; }
+                }
+            }
+        }
+    } else {
+        ARC_RPC_COUNT(l1_linear_fallback,1);
+        for (unsigned way = 0; way < c->ways; ++way) {
+            Tag *t = &c->tags[base + way];
+            if (t->valid && t->va == line) { result=t; break; }
         }
     }
-#if defined(ARCDROID_TEST_FAULTS)
-    lookup_count(maintenance,1,c->ways,0);
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    Tag *reference = lookup_reference(c,va);
+    /* Normalised identity is (cache id, slot+1), with zero denoting NULL. */
+    unsigned expected[2] = {c==&m.data, reference ? (unsigned)(reference-c->tags)+1u : 0u};
+    unsigned actual[2] = {c==&m.data, result ? (unsigned)(result-c->tags)+1u : 0u};
+    arc_rpc_crosscheck_field("lookup.cache_slot",expected,actual,sizeof(expected));
 #endif
-    return NULL;
+#if defined(ARCDROID_TEST_FAULTS)
+    unsigned way = result ? (unsigned)(result-c->tags)-base : 0;
+    lookup_count(maintenance,result?2:1,result?way+1:c->ways,way);
+#endif
+    if (side->gate && result) side->hints[hint_index(c,line)] = (uint8_t)((result-c->tags)%c->ways);
+    return result;
 }
+
 static Packet *append(unsigned kind)
 {
     arc_rpc_mem_fast.pending = true;
@@ -360,7 +476,11 @@ static void castout(Tag *t)
 void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
 {
     memset(&m, 0, sizeof(m)); memset(&arc_rpc_mem_fast, 0, sizeof(arc_rpc_mem_fast));
+    /* Unconditional G-13 reset, including unbind and failed start. */
+    lookup_reset();
 #if defined(ARCDROID_RPC_CROSSCHECK)
+    lookup_integrity(&m.instruction,0,512);
+    lookup_integrity(&m.data,0,512);
     arc_rpc_crosscheck_reset();
 #endif
 #if defined(ARCDROID_TEST_FAULTS)
@@ -384,6 +504,8 @@ void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
     m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 64;
     m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : 4;
     m.data.shift = 5; m.data.sets = 16; m.data.ways = 32;
+    l1_instruction.gate = lookup_gate(&m.instruction);
+    l1_data.gate = lookup_gate(&m.data);
     arc_rpc_mem_control(0);
     next_base(0);
 }
@@ -546,7 +668,17 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
         if (m.model == 2 && !fetch && t->valid) castout(t);
         if (!t->valid) ++c->populated;
         memo_clear();
-        *t = (Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0};
+        /* Uniqueness: allocation only follows a miss; locked SWP cannot
+         * allocate a duplicate. Hints/mirror may therefore return any hit. */
+#if defined(ARCDROID_RPC_CROSSCHECK)
+        for (unsigned n=0;n<c->ways;++n)
+            if (c->tags[set*c->ways+n].valid && c->tags[set*c->ways+n].va == line)
+                fatal("RPC L1 duplicate valid line");
+#endif
+        tag_write(c,set*c->ways+way,(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0});
+#if defined(ARCDROID_RPC_CROSSCHECK)
+        lookup_integrity(c,set*c->ways+way,1);
+#endif
         c->victim[set] = (uint8_t)((way + 1) % c->ways);
         Packet *p = append(DEMAND); p->fill = true; p->fetch = fetch;
         for (unsigned n = 0; n < (1u << c->shift) / 4; ++n) word(p, t->physical + n * 4, 4, false);
@@ -593,7 +725,13 @@ arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes, bool write, b
 #endif
 static void invalidate(Cache *c)
 {
-    for (unsigned i = 0; i < c->sets * c->ways; ++i) c->tags[i].valid = c->tags[i].dirty = 0;
+    for (unsigned i = 0; i < c->sets * c->ways; ++i) {
+        Tag tag=c->tags[i]; tag.valid=tag.dirty=0;
+        tag_write(c,i,tag);
+    }
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    lookup_integrity(c,0,c->sets*c->ways);
+#endif
     c->populated = 0;
     memo_clear();
 }
@@ -611,7 +749,15 @@ void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t
         Tag *t = LOOKUP(&m.data, va, true);
         if (t) {
             if (crm == 10) castout(t);
-            else { t->valid = t->dirty = 0; --m.data.populated; memo_clear(); }
+            else {
+                unsigned slot=(unsigned)(t-m.data.tags);
+                Tag tag=*t; tag.valid=tag.dirty=0;
+                tag_write(&m.data,slot,tag);
+#if defined(ARCDROID_RPC_CROSSCHECK)
+                lookup_integrity(&m.data,slot,1);
+#endif
+                --m.data.populated; memo_clear();
+            }
         }
     } else if (opc2 == 4 && crm == 10) append(DRAIN);
 }
@@ -1017,5 +1163,20 @@ size_t arc_rpc_mem_observation_snapshot(void *out,size_t capacity)
     size_t n=sizeof(m)+sizeof(arc_rpc_mem_fast);
     if(!out || capacity<n)return n;
     memcpy(out,&m,sizeof(m));memcpy((uint8_t *)out+sizeof(m),&arc_rpc_mem_fast,sizeof(arc_rpc_mem_fast));return n;
+}
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* White-box lifecycle accessor. Seeding changes hints only, never tags/keys;
+ * it is safe even at time zero, where the test-rate rebind is admissible. */
+bool arc_rpc_mem_l1_state(bool seed_hint)
+{
+    if(seed_hint)l1_instruction.hints[0]=l1_data.hints[0]=0;
+    if(l1_instruction.gate!=(m.clock?lookup_gate(&m.instruction):0) ||
+       l1_data.gate!=(m.clock?lookup_gate(&m.data):0))return false;
+    for(unsigned i=0;i<512;++i)
+        if(l1_instruction.keys[i]!=UINT32_MAX || l1_data.keys[i]!=UINT32_MAX ||
+           l1_instruction.hints[i]!=255 || l1_data.hints[i]!=255)return false;
+    return true;
 }
 #endif

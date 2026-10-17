@@ -435,3 +435,86 @@ The ranking counts lookups per access caller, not per SA-110 cache (I and D are 
 3. **SA-110 (16×32, I and D): selected by measurement** among linear, hint-only and hint plus mirror. **Selection workloads:** 031 (deciding gain) and the SA-110 way-0 synthetics warm and ldm-stm8 (regression guards). **Selection run:** the 1a-0 AC-8 procedure (two six-run orders, measurement core, Odin3) on these three workloads only, with variant cores built per finding 4, **separate from the confirmation run**. **Rule:** choose the configuration with the largest 031 p50 gain beyond its A/A band (band₅₀) such that neither warm nor ldm-stm8 regresses beyond its band at p50 or p95 in either order. **Tie** (031 gains within each other's band₅₀): the configuration with fewer mechanisms. **Fallback:** if no configuration gains beyond band₅₀ on 031, SA-110 stays linear.
 4. **Confirmation:** after selection, a fresh AC-8 run of the chosen configuration on every frozen workload (hot, the four synthetics, 031) decides merge under the frozen benefit rule (gain on 031, no regression elsewhere), and D-180 is rechecked on hot and 031 with observers genuinely off; the selection data is not reused.
 5. The gate is computed at bind from the bound `sets` and `ways` (finding 15), not from the model name.
+
+
+## L1 implementation design (Sol, 2026-10-17; accepted rulings applied)
+
+This records D-200's adjudicated choices, not a new gate decision. The final
+Astra adjudication and frozen table above supersede the draft: SA-110 ships
+linear pending Fable's selection; ARM710/ARM7500 stay linear; ARM610 uses both
+mechanisms. Variant measurement cores use independent build definitions, never
+TEST_FAULTS, for SA linear/hint/mirror and the all-geometries forced-off leg.
+
+Each canonical Cache has its own file-scope `l1_instruction` or `l1_data`
+side state, outside `m` and `arc_rpc_mem_fast`. Each holds 512 exact mirror keys,
+512 hint bytes (four direct-mapped hint entries per set, keyed by line within
+that set), and a gate. The fixed bound is 5,128 bytes for both side states on
+hosts with four-byte unsigned. A hint is exclusively a way index in the current
+cache's selected set: bounds, validity and line equality are checked before
+acceptance. No unvalidated or negative reuse is permitted. Hits never move the
+cyclic victim cursor or reorder tags. At most one valid copy of a line exists
+per set; allocation only follows a miss. Every tag identity/validity writer
+updates the mirror through `tag_write`; dirty-only writers need no key update.
+The invalid key is UINT32_MAX, outside the 28-bit line domain. Mirror search
+builds a 64-bit mask, tests zero before selecting its first bit with a portable scan, and retains a
+redundant tag recheck. Removing that recheck is equivalent with an exact mirror
+(AS-L1-7); mirror-writer mutants instead fail explicit integrity assertions.
+
+Bind resets both side states unconditionally before the null-clock return,
+then derives gates from bound sets/ways after the unchanged geometry lines.
+Any future restore of canonical timing state must reset or rebuild side state.
+The hot-test-only mem_l1_state/test_l1_state services expose a boolean pristine
+check and seed stale hints (never keys) for real reset, stop, failed-start,
+rate-rebind, model-change and engine-switch tests. Both names are registered
+in rpc_namespace.h and backend-symbols.json, absent from measurement/shipping.
+Test helpers write arbitrary slots without moving cursors, maintaining mirrors;
+lookup counter fixtures use bound caches rather than foreign shipping caches.
+The test-only poison stream (`l1_poison_state`) corrupts hints only, including
+out-of-range ways. The retained cross-check scan reads canonical tags only,
+changes no counters or side state, and compares cache identity and slot index.
+Cross-check fills assert uniqueness; bind and each tag writer assert integrity
+of the mirror slots they changed. The retained linear scan still runs on every
+lookup, including empty returns.
+
+New scalar counts append after rational_cheap: l1_hint_accepted,
+l1_hint_rejected, l1_mirror_search, l1_mirror_recheck_failed,
+l1_linear_fallback. Existing probe/way counters describe the linear reference's
+work, derived from the returned slot. Mirror recheck failures are structural
+zeros with an exact mirror. Counter ABI revision 3 plus structure-size checks
+protect exercise, interval-exercise, ranking and profile snapshots before any
+copy. Profile JSON remains schema 2, compatible by name only. Runner and core
+must come from the same revision; predecessor comparisons use two runner/core
+pairs. No M2b emitter is assumed or backported.
+
+The independent model runs fixed seeds over three unified caches and SA I/D,
+using the real access allocation path. It compares every tag's validity, valid
+VA/physical and dirty halves, all victim cursors, geometry, populated count,
+separate stats.hits/fetch_hits, fills, dirty castouts and memo after each mixed
+operation. Requests are drained through the ordinary timing service between
+operations so no command ring exceeds its bound. Invalid tag addresses remain
+excluded under section 2.2. The model independently asserts uniqueness.
+
+Risks to report: shrinking unobserved time increases the D-180 ratio even if
+observer absolute cost stays constant (the prototype would lift +2.20% to about
++2.6%, leaving about 0.4 percentage points for S1). Fable reports before/after
+031 ratios and remaining margin. Full invalidation also writes mirror keys;
+c7-heavy cost must be reported. The gate-table histograms predict SA way-0
+risk on warm/ldm-stm8 and benefit on 031; ARM610 streaming is miss dominated.
+031's sourced lookup rate is the frozen table at 38eae49; with 32-way searches,
+hit/miss probe work is about 87%/13%, replacing the draft's 90%/10% estimate.
+AC-1 goldens, calibrations and observation plans retain post-P0i anchor evidence
+(A-31); forced-on/off execution includes Mac arm64 and Fable's Odin3 leg.
+
+D-200's inventory exclusion ruling applies individually to `l1_instruction`,
+`l1_data` and test-only `l1_poison_state`: host-only derived lookup hints, exact
+keys, gate and poison PRNG state; no guest state, reset at every G-13 bind.
+The schema and independent reviewed policy pin each exclusion. These metadata
+additions do not alter M2b's wire-compatibility contract.
+
+
+The primary sanitizer suite uses its actual Debug cores. The secondary full
+L1 gate corpus also exercises sanitized RPC objects and the unchanged firmware hash helper at -O2, retaining every
+preprocessor, ABI and sanitizer flag and all assertions. This supplies a second
+optimization level while avoiding five repetitions of the 485-million-attempt
+Debug SA calibration. These temporary correctness cores are never measurement
+cores and never decide benefit.

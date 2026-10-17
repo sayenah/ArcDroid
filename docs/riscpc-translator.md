@@ -422,7 +422,8 @@ rebind and backend switching all retire the timing binding. New ranking counters
 their cumulative reporting and their existing lifecycle epoch/reset semantics. Neither class participates in guest
 or measurement comparisons. No counter reads guest memory or performs I/O.
 
-Counter units are unsigned integer occurrences (probes count examined ways,
+Counter units are unsigned integer occurrences (probes count ways the linear
+reference would examine,
 fills count packets, instructions count attempts including aborted fetches).
 Rates use the reported instruction-attempt denominator; ratios retain numerator
 and denominator separately. Mean probes/hit uses hit-probes/hits, never all
@@ -526,3 +527,19 @@ RPC inline headers apply the same hot-part condition in every translation unit
 see the same shared timing layout as the measurement RPC objects. Prefix
 reference runs set the existing quota-one API; they introduce no additional
 unarmed quota mechanism.
+
+
+L1 counter ABI (D-200): revision 3 appends l1_hint_accepted, l1_hint_rejected,
+l1_mirror_search, l1_mirror_recheck_failed and l1_linear_fallback. Acceptance
+requires an in-range way and a valid equal line in the current cache/set.
+Rejection includes uninitialised and seeded-poison hints. Mirror searches count
+once per rejected hint with gate 2; linear fallbacks count nonempty gate-0 calls
+and rejected gate-1 hints. Recheck failures are structural zeros with the exact
+mirror; their diagnostic increment is tested by explicit white-box corruption.
+Empty returns do not enter any L1 mechanism. Reference probe counts derive from
+the returned slot, never the hint. The scalar name order is append-only; both
+histogram offsets and sizeof(ArcRpcExercise) move when scalars are appended.
+Profile JSON remains schema 2 and is compatible by name only. Every exercise,
+ranking, interval-exercise and profile snapshot uses a versioned v3 symbol plus
+revision/size arguments, refusing mismatches before writing output. Always use
+a runner/core pair from the same revision; baseline comparisons use two pairs.

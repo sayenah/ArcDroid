@@ -4,7 +4,7 @@
 #include "rpc_profile.h"
 static void count_equal(void)
 {
-    ArcRpcProfile p;arc_rpc_profile_snapshot(&p);
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));
     assert(!memcmp(&p.ranking,&arc_rpc_exercise,sizeof(arc_rpc_exercise)));
     assert(p.ranking_attempts==p.attempts);
     assert(p.ranking_fetched==p.fetched);
@@ -84,11 +84,11 @@ static void endpoint_execution(CPUModel model)
 static void ranking_reset(void)
 {
     arc_rpc_profile_configure(0,NULL);arc_rpc_mem_bind(NULL,0,0);
-    ArcRpcProfile p;arc_rpc_profile_snapshot(&p);assert(p.ranking_epoch==1);
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.ranking_epoch==1);
     arc_rpc_exercise_add(ARC_RPC_COUNT_integer_unobserved,9);
     arc_rpc_profile_fetched(NULL,0xe2800001,true);
-    arc_rpc_profile_snapshot(&p);assert(p.al==1 && p.ranking_fetched==1);
-    arc_rpc_mem_bind(NULL,0,0);arc_rpc_profile_snapshot(&p);assert(p.ranking_epoch==2 && !p.ranking_attempts && !p.ranking_fetched && !p.al);
+    arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.al==1 && p.ranking_fetched==1);
+    arc_rpc_mem_bind(NULL,0,0);arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.ranking_epoch==2 && !p.ranking_attempts && !p.ranking_fetched && !p.al);
     for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)assert(!p.ranking.values[i] && !arc_rpc_exercise.values[i]);
 }
 static void service_continuation(CPUModel model)
