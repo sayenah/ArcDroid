@@ -60,16 +60,39 @@ ArcRpcMemFast arc_rpc_mem_fast;
 typedef struct {
     uint32_t keys[512];
     uint8_t hints[512];
-    unsigned gate;
+    unsigned gate, set_mask, set_shift, way_mask, way_shift;
 } LookupSide;
 static LookupSide l1_instruction, l1_data;
 #if defined(ARCDROID_RPC_L1_POISON) && defined(ARCDROID_TEST_FAULTS)
 static uint32_t l1_poison_state;
 #endif
-static LookupSide *lookup_side(Cache *c)
+static LookupSide *lookup_side(const Cache *c)
 { return c == &m.data ? &l1_data : &l1_instruction; }
 static unsigned hint_index(const Cache *c, uint32_t line)
-{ return (line & (c->sets-1u))*4u + ((line/c->sets)&3u); }
+{
+    const LookupSide *side = lookup_side(c);
+    return ((line & side->set_mask) << 2) + ((line >> side->set_shift) & 3u);
+}
+static void lookup_geometry(Cache *c)
+{
+    /* Run B: all supported/mutated geometries are powers of two. Assert at
+     * bind through the contained fatal path, never a shipping libc assert. */
+    if (!c->sets || (c->sets & (c->sets-1u)) ||
+        !c->ways || (c->ways & (c->ways-1u))) fatal("RPC L1 non-power-of-two geometry");
+    LookupSide *side = lookup_side(c);
+    side->set_mask = c->sets-1u; side->way_mask = c->ways-1u;
+    side->set_shift = side->way_shift = 0;
+    for (unsigned n=c->sets;n>1;n>>=1) ++side->set_shift;
+    for (unsigned n=c->ways;n>1;n>>=1) ++side->way_shift;
+}
+/* Unit builds observe actual stores; the core has no observer or counter. */
+#ifndef L1_HINT_WRITE
+#define L1_HINT_WRITE(side,index,way) ((side)->hints[index] = (way))
+#endif
+static void hint_store(LookupSide *side, unsigned index, uint8_t way)
+{
+    if (side->hints[index] != way) L1_HINT_WRITE(side,index,way);
+}
 static unsigned lookup_gate(const Cache *c)
 {
     unsigned gate = c->ways >= 64 ? 2u : 0u;
@@ -99,8 +122,9 @@ static void lookup_reset(void)
 static void tag_write(Cache *c, unsigned slot, Tag tag)
 {
     c->tags[slot] = tag;
-    lookup_side(c)->keys[slot] = tag.valid ? tag.va : UINT32_MAX;
-    if (tag.valid) lookup_side(c)->hints[hint_index(c,tag.va)] = (uint8_t)(slot%c->ways);
+    LookupSide *side = lookup_side(c);
+    side->keys[slot] = tag.valid ? tag.va : UINT32_MAX;
+    if (tag.valid) hint_store(side,hint_index(c,tag.va),(uint8_t)(slot & side->way_mask));
 }
 #if defined(ARCDROID_RPC_CROSSCHECK)
 static void lookup_integrity(Cache *c, unsigned first, unsigned count)
@@ -384,11 +408,12 @@ static Tag *lookup(Cache *c, uint32_t va
         return NULL;
     }
     uint32_t line = va >> c->shift;
-    unsigned base = (line & (c->sets - 1u)) * c->ways;
     LookupSide *side = lookup_side(c);
+    unsigned base = (line & side->set_mask) << side->way_shift;
+    unsigned index = 0;
     Tag *result = NULL;
     if (side->gate) {
-        unsigned index = hint_index(c,line);
+        index = hint_index(c,line);
 #if defined(ARCDROID_RPC_L1_POISON) && defined(ARCDROID_TEST_FAULTS)
         l1_poison_state = l1_poison_state*1664525u + 1013904223u;
         side->hints[index] = (uint8_t)(l1_poison_state >> 24);
@@ -439,7 +464,7 @@ static Tag *lookup(Cache *c, uint32_t va
     unsigned way = result ? (unsigned)(result-c->tags)-base : 0;
     lookup_count(maintenance,result?2:1,result?way+1:c->ways,way);
 #endif
-    if (side->gate && result) side->hints[hint_index(c,line)] = (uint8_t)((result-c->tags)%c->ways);
+    if (side->gate && result) hint_store(side,index,(uint8_t)((unsigned)(result-c->tags) & side->way_mask));
     return result;
 }
 
@@ -504,6 +529,8 @@ void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
     m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 64;
     m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : 4;
     m.data.shift = 5; m.data.sets = 16; m.data.ways = 32;
+    lookup_geometry(&m.instruction);
+    lookup_geometry(&m.data);
     l1_instruction.gate = lookup_gate(&m.instruction);
     l1_data.gate = lookup_gate(&m.data);
     arc_rpc_mem_control(0);
@@ -663,8 +690,10 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
     else
         allocate = allocate && (m.control & 5) == 5 && (attributes & 8);
     if (allocate) {
-        unsigned set = line & (c->sets - 1u), way = c->victim[set];
-        t = &c->tags[set * c->ways + way];
+        LookupSide *side = lookup_side(c);
+        unsigned set = line & side->set_mask, way = c->victim[set];
+        unsigned base = set << side->way_shift;
+        t = &c->tags[base + way];
         if (m.model == 2 && !fetch && t->valid) castout(t);
         if (!t->valid) ++c->populated;
         memo_clear();
@@ -672,14 +701,14 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
          * allocate a duplicate. Hints/mirror may therefore return any hit. */
 #if defined(ARCDROID_RPC_CROSSCHECK)
         for (unsigned n=0;n<c->ways;++n)
-            if (c->tags[set*c->ways+n].valid && c->tags[set*c->ways+n].va == line)
+            if (c->tags[base+n].valid && c->tags[base+n].va == line)
                 fatal("RPC L1 duplicate valid line");
 #endif
-        tag_write(c,set*c->ways+way,(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0});
+        tag_write(c,base+way,(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0});
 #if defined(ARCDROID_RPC_CROSSCHECK)
-        lookup_integrity(c,set*c->ways+way,1);
+        lookup_integrity(c,base+way,1);
 #endif
-        c->victim[set] = (uint8_t)((way + 1) % c->ways);
+        c->victim[set] = (uint8_t)((way + 1) & side->way_mask);
         Packet *p = append(DEMAND); p->fill = true; p->fetch = fetch;
         for (unsigned n = 0; n < (1u << c->shift) / 4; ++n) word(p, t->physical + n * 4, 4, false);
         ++m.stats.fills; ARC_RPC_PROFILE(fill());
@@ -1174,6 +1203,14 @@ bool arc_rpc_mem_l1_state(bool seed_hint)
     if(seed_hint)l1_instruction.hints[0]=l1_data.hints[0]=0;
     if(l1_instruction.gate!=(m.clock?lookup_gate(&m.instruction):0) ||
        l1_data.gate!=(m.clock?lookup_gate(&m.data):0))return false;
+    const Cache *caches[2]={&m.instruction,&m.data};
+    for(unsigned n=0;n<2;++n){
+        const Cache *c=caches[n];const LookupSide *side=lookup_side(c);
+        if(side->set_mask!=(m.clock?c->sets-1u:0) ||
+           side->way_mask!=(m.clock?c->ways-1u:0) ||
+           (m.clock?((1u<<side->set_shift)!=c->sets || (1u<<side->way_shift)!=c->ways):
+                     (side->set_shift || side->way_shift)))return false;
+    }
     for(unsigned i=0;i<512;++i)
         if(l1_instruction.keys[i]!=UINT32_MAX || l1_data.keys[i]!=UINT32_MAX ||
            l1_instruction.hints[i]!=255 || l1_data.hints[i]!=255)return false;

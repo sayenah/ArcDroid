@@ -533,3 +533,22 @@ Both candidates gain about 13 % on 031 but regress both way-0 guards beyond thei
 **Cause (Fable).** The hint path computes its index with `line / c->sets` (a division by a runtime field) on every gated lookup, and after each hit recomputes it and stores the hint with `% c->ways`: about two to three hardware divides per lookup that the linear path, whose way-0 hit is one tag compare, does not pay (19 `udiv` in the object). Every cache geometry is a power of two, so this is an implementation cost, not a property of the design.
 
 **Run B (ruling).** Sol makes the hint index and the way arithmetic division-free (per-cache shifts or masks fixed at bind, valid for the power-of-two geometries, asserted at bind) and stores a hint only when it changes; no other behaviour change, the same tests, mutants and identity checks. Fable then repeats the selection on run B's variant cores with the rule, workloads and bands unchanged. Selection run 1 stays on record; run B's cores supersede its candidates.
+
+
+### Run B implementation note (Sol, 2026-10-17)
+
+Before code: retain canonical `Cache` and raw snapshots verbatim. Add only
+bind-derived `set_mask`, `set_shift`, `way_mask` and `way_shift` to each existing
+host-only side state (D-200 exclusion, Run B ruling above); pin all eight leaves
+in the M2 schema and independent reviewed policy (5,160 bytes total side state
+on hosts with four-byte unsigned, replacing Run A's 5,128-byte bound). Bind checks nonzero power-of-two
+sets and ways through the contained fatal path, then derives masks and shifts
+from the bound geometry. Reset clears this metadata before the null-clock return.
+Lookup/fill use mask-and-shift set/slot arithmetic; slot-to-way and cyclic advance
+use the way mask. The retained linear reference keeps its independent formula.
+The hint index is computed once per gated lookup and reused after the hit.
+A shared hint writer compares the old byte before storing, on fills and hits;
+poison and lifecycle seeding retain their intentional test writes. A white-box
+unit-only store observer makes an unconditional-store mutant observable without
+adding core state, counters or ABI. Gates, counters, mirror and fallback semantics
+are unchanged; SA-110 remains linear pending Fable's repeated selection.

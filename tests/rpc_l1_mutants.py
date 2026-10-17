@@ -39,11 +39,12 @@ def kill(name,content,target='rpc_l1_directed_test',field=None):
         if field and field not in r.stderr:raise RuntimeError((name,'missing field',r.stderr))
         print(name+': killed',flush=True)
 mutants=[
+ ('unconditional-hint-store','if (side->hints[index] != way) L1_HINT_WRITE(side,index,way);','L1_HINT_WRITE(side,index,way);'),
  ('always-linear','    if (side->gate) {','    if (false) {'),
  ('hint-no-va',' && c->tags[base+way].va == line',''),
  ('hint-no-valid',' && c->tags[base+way].valid',''),
  ('hint-no-bound','way < c->ways && ','true && '),
- ('mirror-skip-fill','tag_write(c,set*c->ways+way,(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0});','c->tags[set*c->ways+way]=(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0};'),
+ ('mirror-skip-fill','tag_write(c,base+way,(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0});','c->tags[base+way]=(Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0};'),
  ('mirror-skip-full','        tag_write(c,i,tag);','        c->tags[i]=tag;'),
  ('mirror-skip-single','tag_write(&m.data,slot,tag);','*t=tag;'),
  ('mirror-zero-bind','memset(l1_instruction.keys, 0xff, sizeof(l1_instruction.keys));','memset(l1_instruction.keys, 0, sizeof(l1_instruction.keys));'),

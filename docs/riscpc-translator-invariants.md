@@ -36,7 +36,7 @@ Paths:
    - An MMU fault records no fetch, because `cp15.c:474-477` returns before `cp15.c:483`.
    - Absent backing with a valid translation **does** record a fetch (`cp15.c:479-483`, `backed=false`).
 4. **Opcode read.** The opcode is read from the backing allocation at fetch time (`arm.c:610`). Nothing in the loop retains a fetched word, so a store by instruction k to k+1 is seen by k+1's fetch. [C for the read; I for "no prefetch"]
-5. **Opcode record.** `arc_rpc_mem_opcode` (`arm.c:611`) records the opcode. Data requests are then classified by `swap()`/`multiple()` (`rpc_mem_timing.c:587-588`). [C]
+5. **Opcode record.** `arc_rpc_mem_opcode` (`arm.c:611`) records the opcode. Data requests are then classified by `swap()`/`multiple()` (`rpc_mem_timing.c:614-615`). [C]
 6. **Condition and body.** The condition is tested next (`arm.c:619`). The body follows. Each data access goes through `readmemfl/fb` or `writememfl/fb`:
    1. `translateaddress`, which is `checked_translation`;
    2. `arc_rpc_mem_access`, which only **collects** a timing request;
@@ -47,7 +47,7 @@ Paths:
 8. **PC advance.** `reg[15]+=4` (`arm.c:1955`) is raw arithmetic on R15. In 26-bit modes it can carry into bit 26 (F) at PC `0x3fffffc`. [C for the code; I for the carry]
 9. **End.** `arc_rpc_mem_instruction_end(PC)` (`arm.c:1963`; `rpc_mem_timing.h:124-148`) does three things:
    - it records burst-ROM discontinuity;
-   - if requests are pending, it calls `end_slow`, which sets `m.cursor=issue_ticks` (`rpc_mem_timing.c:773-788`);
+   - if requests are pending, it calls `end_slow`, which sets `m.cursor=issue_ticks` (`rpc_mem_timing.c:802-817`);
    - otherwise it resolves the next due time (§1.2).
 10. **Continuation** (`arm.c:1966-1970`). The batch stops at `count`, or when `arc_rpc_mem_batch_next` returns false. On the quota's last instruction, `batch_next` is not called. [C]
 11. **Batch end.** `inscount+=linecyc`, then `arc_rpc_mem_batch_flush()` if `integer_batch` is still set (`arm.c:1977-1978`). [C]
@@ -59,23 +59,23 @@ Paths:
 | What came before j | s | Code |
 |---|---|---|
 | j−1 collected no requests | issue time of j−1 | non-integer `rpc_mem_timing.h:143-147`; integer `rpc_mem_timing.h:136-140` |
-| j−1 collected requests | completion time of j−1's service, applied when `commands()` empties the queue | `next_base(m.cursor)`, `rpc_mem_timing.c:938-943`; fast path `rpc_mem_timing.c:1090-1109` |
-| j is the first instruction after bind | 0 | `next_base(0)`, `rpc_mem_timing.c:510` |
-| j is the first instruction after idle wake | now | `next_base(ticks(now))`, `rpc_mem_timing.c:1151` |
+| j−1 collected requests | completion time of j−1's service, applied when `commands()` empties the queue | `next_base(m.cursor)`, `rpc_mem_timing.c:967-972`; fast path `rpc_mem_timing.c:1119-1138` |
+| j is the first instruction after bind | 0 | `next_base(0)`, `rpc_mem_timing.c:537` |
+| j is the first instruction after idle wake | now | `next_base(ticks(now))`, `rpc_mem_timing.c:1180` |
 
 While requests are pending, `cpu_due_*` is **unresolved**. No reader uses it until service completes:
-- `arc_rpc_mem_next` reads it only when not pending (`rpc_mem_timing.c:1026`);
-- `arc_rpc_mem_ready` requires not pending (`rpc_mem_timing.c:1037`);
-- the video hold adjustment requires not pending (`rpc_mem_timing.c:987`);
+- `arc_rpc_mem_next` reads it only when not pending (`rpc_mem_timing.c:1055`);
+- `arc_rpc_mem_ready` requires not pending (`rpc_mem_timing.c:1066`);
+- the video hold adjustment requires not pending (`rpc_mem_timing.c:1016`);
 - `batch_next` takes the non-pending path only (`rpc_mem_timing.h:174-184`). [C]
 
-The two oracle paths leave different stale values: `end_slow` in integer mode flushes first, which sets `cpu_due = issue + base` (`rpc_mem_timing.c:776,804`), while the non-integer path leaves the value from issue. [C]
+The two oracle paths leave different stale values: `end_slow` in integer mode flushes first, which sets `cpu_due = issue + base` (`rpc_mem_timing.c:805,833`), while the non-integer path leaves the value from issue. [C]
 
 **Requests are collected during the instruction and serviced after it.** [C]
-- `cycle()` reads live `iomd.romcr0/1`, `clkctrl`, `dramwid`, `iotcr` and `ectcr` when a word **starts** (`rpc_mem_timing.c:331,818-819,824,837,859,866,876-879`).
+- `cycle()` reads live `iomd.romcr0/1`, `clkctrl`, `dramwid`, `iotcr` and `ectcr` when a word **starts** (`rpc_mem_timing.c:355,847-848,853,866,888,895,905-908`).
 - So an instruction that writes ROMCR has its own queued fetch costed with the new value.
 
-**Issue happens only with an empty command queue.** `pending` is cleared only once `m.count==0` (`rpc_mem_timing.c:938-939`), and issue requires `!pending` (`rpc_mem_timing.c:1037`; `rpc_mem_timing.h:174-184`). [C]
+**Issue happens only with an empty command queue.** `pending` is cleared only once `m.count==0` (`rpc_mem_timing.c:967-968`), and issue requires `!pending` (`rpc_mem_timing.c:1066`; `rpc_mem_timing.h:174-184`). [C]
 - At issue, the only work in flight is **older work**: the buffer ring, the active packet, and queued or active video.
 - The current instruction's requests are exactly the command-ring entries appended after its begin.
 
@@ -145,7 +145,7 @@ All of these are [C].
 
 **Continuation inside a batch** (`rpc_mem_timing.h:166-187`).
 - It returns false on idle or on a test stop.
-- With `pending||bus_busy`, it flushes integer mode and calls `arc_rpc_mem_batch_service` (`rpc_mem_timing.c:1047-1133`). That call can **advance `now_ns` and partially service work before returning false** (`rpc_mem_timing.c:1120-1132`). The demand-only shortcut either commits (`rpc_mem_timing.c:1095-1110`) or rolls back its ROM history (`rpc_mem_timing.c:1118`).
+- With `pending||bus_busy`, it flushes integer mode and calls `arc_rpc_mem_batch_service` (`rpc_mem_timing.c:1076-1162`). That call can **advance `now_ns` and partially service work before returning false** (`rpc_mem_timing.c:1149-1161`). The demand-only shortcut either commits (`rpc_mem_timing.c:1124-1139`) or rolls back its ROM history (`rpc_mem_timing.c:1147`).
 - Otherwise it requires `cpu_due_ns < boundary`. `next_ns` is re-read on every call, so an MMIO-armed delay-0 deadline (`fdc.c:529`) stops the batch. [C]
 
 **Integer batch.** It is active only when all of these hold (`rpc_mem_timing.h:103-113`):
@@ -154,16 +154,16 @@ All of these are [C].
 - there is headroom of 200·base (the quota constant appears here and at `arm.c:577`);
 - `!test_measure`.
 
-`issue_*` is stale until `arc_rpc_mem_batch_flush` (`rpc_mem_timing.c:790-805`). That function calls `next_base`. [C]
+`issue_*` is stale until `arc_rpc_mem_batch_flush` (`rpc_mem_timing.c:819-834`). That function calls `next_base`. [C]
 
 **Idle.**
 - **Set** by CP15 c15 wait (`cp15.c:280`) or by ARM7500 SUSMODE (`iomd.c:326`). Continuation then returns false (`rpc_mem_timing.h:170`).
 - **While idle:**
-  - `arc_rpc_mem_next` ignores CPU due (`rpc_mem_timing.c:1026`);
+  - `arc_rpc_mem_next` ignores CPU due (`rpc_mem_timing.c:1055`);
   - pending writes keep draining through `arc_rpc_mem_run`;
-  - a video hold does not push CPU due (`rpc_mem_timing.c:987`);
+  - a video hold does not push CPU due (`rpc_mem_timing.c:1016`);
   - `idle_ns` accrues (`rpc_session.c:449`).
-- **Wake.** `arc_rpc_mem_idle(false)` sets due to now + base (`rpc_mem_timing.c:1147-1152`). [C]
+- **Wake.** `arc_rpc_mem_idle(false)` sets due to now + base (`rpc_mem_timing.c:1176-1181`). [C]
 
 **Quota transparency.** That splitting the work at 200 instructions leaves chronology unchanged is an inference [I] (§5 Q-7).
 
@@ -176,8 +176,8 @@ All of these are [C].
 
 **Guest-reachable mid-instruction fatals:** [C]
 - "Bad mode" (`arm.c:177`), with `arm.mode` already written at `arm.c:128`;
-- the request budget (`rpc_mem_timing.c:449`) and the packet budget (`rpc_mem_timing.c:460`);
-- time overflow (`rpc_mem_timing.c:278,284`).
+- the request budget (`rpc_mem_timing.c:474`) and the packet budget (`rpc_mem_timing.c:485`);
+- time overflow (`rpc_mem_timing.c:302,308`).
 
 **Lifecycle.** [C]
 - **Start** (`rpc_session.c:217-291`): `arc_rpc_stop()` frees all memory (`rpc_session.c:153-178`, `mem.c:78-90`). A failed start also runs `arc_rpc_stop` (`rpc_session.c:231-234`). Allocation is a fresh `malloc` (`mem.c:78-92`), so **a later session can reuse the same host addresses**. Every successful start increments `arc_rpc_generation` (`rpc_session.c:288`).
@@ -216,12 +216,12 @@ All of these are [C].
 
 **Fetch memo.** It is a virtual-line-only key (`rpc_mem_timing.h:150–160`); since Q-3 a hit also requires a backed, cache-eligible physical region (`rpc_mem_timing.h:157–159`).
 - **Cleared by:**
-  - **any** allocation in either cache, **SA D-cache fills included** (`rpc_mem_timing.c:670`);
-  - control writes (`rpc_mem_timing.c:518`) and TLB flush (`rpc_mem_timing.c:540-543`);
-  - c7 invalidation (`rpc_mem_timing.c:736,752`);
-  - SA slow-clock uncached reads (`rpc_mem_timing.c:594`).
+  - **any** allocation in either cache, **SA D-cache fills included** (`rpc_mem_timing.c:699`);
+  - control writes (`rpc_mem_timing.c:545`) and TLB flush (`rpc_mem_timing.c:567-570`);
+  - c7 invalidation (`rpc_mem_timing.c:765,781`);
+  - SA slow-clock uncached reads (`rpc_mem_timing.c:621`).
 - **Not cleared** by a mode change. [C]
-- **Defect (§5 Q-3) — resolved (PR #375, `44d007e`).** A memo hit did not check `backed` or the region, whereas the slow path requires both before any tag lookup (`rpc_mem_timing.c:641–644`). A collision eviction followed by a re-walk could change that eligibility without clearing the memo. The gate now mirrors the slow path; `rpc-fetch-memo-rewalk` reproduces the sequence. Note for 6b: in the integrated system `backed` implies a cache region (`mem.c:169–180`), so the region term never decides the outcome there, but it is kept to mirror the slow path exactly (Opus QA, S61).
+- **Defect (§5 Q-3) — resolved (PR #375, `44d007e`).** A memo hit did not check `backed` or the region, whereas the slow path requires both before any tag lookup (`rpc_mem_timing.c:668–671`). A collision eviction followed by a re-walk could change that eligibility without clearing the memo. The gate now mirrors the slow path; `rpc-fetch-memo-rewalk` reproduces the sequence. Note for 6b: in the integrated system `backed` implies a cache region (`mem.c:169–180`), so the region term never decides the outcome there, but it is kept to mirror the slow path exactly (Opus QA, S61).
 
 ---
 
@@ -233,10 +233,10 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
 
 | Phase | Where | Materialised time representation [C] |
 |---|---|---|
-| **P0(k)** | `arm.c:600`, before k. Reached after continuation returned true, or by a driver issue through `arc_rpc_mem_ready`. The command queue is empty; older work has run to `now`. | `now_ns` = visible issue time of k. `issue_*` = issue of k and `cpu_due_*` = the same values (`rpc_mem_timing.h:182-185`; `rpc_mem_timing.c:1039-1041`). In integer mode, `issue_floor/ticks` are derived with the flush **formulas** (`rpc_mem_timing.c:802-803`) **without** `next_base`. Calling `batch_flush` here would set `cpu_due=issue+base` and so add a base: forbidden as a canonicaliser. |
+| **P0(k)** | `arm.c:600`, before k. Reached after continuation returned true, or by a driver issue through `arc_rpc_mem_ready`. The command queue is empty; older work has run to `now`. | `now_ns` = visible issue time of k. `issue_*` = issue of k and `cpu_due_*` = the same values (`rpc_mem_timing.h:182-185`; `rpc_mem_timing.c:1068-1070`). In integer mode, `issue_floor/ticks` are derived with the flush **formulas** (`rpc_mem_timing.c:831-832`) **without** `next_base`. Calling `batch_flush` here would set `cpu_due=issue+base` and so add a base: forbidden as a canonicaliser. |
 | **P1(k)** | Mid-k, at a helper call, including successful-fetch continuation (after opcode capture, before condition), SWI entry and completed-transition observation (§6). | As P0. Plus k's collected requests in program order, `recording=true`, `opcode` set after a successful fetch (a prefetch-abort mode report retains the prior value), and `arc_rpc_attributes` as the current access's translation left it. |
-| **P2(k)** | Just after `instruction_end(k)` (`arm.c:1963`), before continuation. | No requests: `cpu_due_*` = issue + base. Here a flush is equivalent (`rpc_mem_timing.c:804`). With requests: `pending`, `cursor=issue_ticks`, `cpu_due_*` unresolved and excluded from comparison (§1.2). |
-| **P3(k)** | After the continuation step returned false, or the quota/`NULL`-batch return, and the final flush (`arm.c:1966-1978`). | `now_ns` and the bus may have **advanced past P2** through batch service (`rpc_mem_timing.c:1120-1132`). The state is whatever service left; the resumer is the driver at `rpc_session.c:411`. |
+| **P2(k)** | Just after `instruction_end(k)` (`arm.c:1963`), before continuation. | No requests: `cpu_due_*` = issue + base. Here a flush is equivalent (`rpc_mem_timing.c:833`). With requests: `pending`, `cursor=issue_ticks`, `cpu_due_*` unresolved and excluded from comparison (§1.2). |
+| **P3(k)** | After the continuation step returned false, or the quota/`NULL`-batch return, and the final flush (`arm.c:1966-1978`). | `now_ns` and the bus may have **advanced past P2** through batch service (`rpc_mem_timing.c:1149-1161`). The state is whatever service left; the resumer is the driver at `rpc_session.c:411`. |
 
 ### 2.2 Canonical comparison contract (Astra 6)
 
@@ -283,12 +283,12 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
 - **Counts:** `linecyc`, `instruction_work`, `arc_rpc_executed`, `arc_rpc_idle_ns`.
 
 **Excluded fields.**
-- Packet lanes at index ≥ `count`. `append()` deliberately leaves stale lanes (`rpc_mem_timing.c:451-456`).
+- Packet lanes at index ≥ `count`. `append()` deliberately leaves stale lanes (`rpc_mem_timing.c:476-481`).
 - Ring slots outside the live window.
-- `va`/`physical` of invalid tags. `invalidate()` keeps them (`rpc_mem_timing.c:728`).
+- `va`/`physical` of invalid tags. `invalidate()` keeps them (`rpc_mem_timing.c:757`).
 - Write-only state (§1.4), including `dirtybuffer` (Q-5).
 - Diagnostic post-fatal registers (Q-9).
-- Host-only live L1 lookup hints/key mirrors and gate, hint-poison PRNG state,
+- Host-only live L1 lookup hints/key mirrors, gate and bind-derived geometry masks/shifts, hint-poison PRNG state,
   and `finish_ns` (reserved for S1), exercise and new ranking counters, interval exercise
   snapshots and batch bookkeeping, and cross-check bookkeeping. These remain
   outside `m` and `arc_rpc_mem_fast` and reset at every G-13 timing bind/unbind
@@ -306,7 +306,7 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
 | # | Exit | Lands at | Must be materialised | Must NOT be repeated on resume |
 |---|---|---|---|---|
 | E1 | Block end, continuing | P0(k+1), when the block itself performed the exact continuation | §2.2 at P0 | Nothing of k |
-| E2 | Guard miss before k | P0(k) | §2.2; **no part of k**: no `instructions++`, no TLB fill or walk, no memo or tag effect, no base. Guards use non-mutating probes only (`lookup()` is pure in canonical state, `rpc_mem_timing.c:367-444`) | — (k runs whole) |
+| E2 | Guard miss before k | P0(k) | §2.2; **no part of k**: no `instructions++`, no TLB fill or walk, no memo or tag effect, no base. Guards use non-mutating probes only (`lookup()` is pure in canonical state, `rpc_mem_timing.c:391-469`) | — (k runs whole) |
 | E2′ | Guard miss after k's fetch | **Disabled** (Q-1) | — | — |
 | E3 | Helper call inside k | P1(k) | Before the call: P1 contents and `now_ns` = issue of k (read via `rpc_timing.c:5`). After it, re-read `arm.event`, registers, mode and `r15_mask`, the TLB and memo generations, `next_ns`, idle, `base_*`, `pending` | Earlier functional effects of k; MMIO reads that pop FIFOs (`fdc.c:525-529`) |
 | E4 | Side exit after k (mode or mask change, idle, MMIO, CP15, c7, invalidation) | P2(k); the resumer runs continuation **once** | §2.2 at P2 | Fetch, transfers and base of k |
@@ -317,7 +317,7 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
 | E8 | Session fatal | `longjmp` | Translator bookkeeping must survive the unwind and be released by `arc_rpc_stop` (G-13) | No retry after partial effects |
 | E9 | Store into translated code | P2(k), after k completes atomically (remaining STM transfers, abort, event check, `instruction_end`) | Dependencies invalidated at the functional write | k's stores and base; the next fetch rereads memory |
 | E10 | SWI/Undefined (mid-body `exception()`) | P2(k) after the event check. FIQ can still be taken there, since only I is set (`arm.c:512-517`) | §2.2 | The exception entry |
-| E11 | Cache maintenance only (c7) | P2(k), as E4. c7 may append DRAIN (`rpc_mem_timing.c:762`) or castouts (`rpc_mem_timing.c:751`) and advances the G-5 generation | §2.2 | The maintenance effects |
+| E11 | Cache maintenance only (c7) | P2(k), as E4. c7 may append DRAIN (`rpc_mem_timing.c:791`) or castouts (`rpc_mem_timing.c:780`) and advances the G-5 generation | §2.2 | The maintenance effects |
 
 ---
 
@@ -357,17 +357,17 @@ Any `updatemode` ends the block (E4).
 - **Permission hoisting** needs a Fable ruling before Phase 1 (constraint 3).
 
 **G-5 Instruction-cache residency.**
-- **What a skipped fetch-timing step must reproduce:** the memo state, `stats.hits` and `fetch_hits` **separately** (§2.2), unchanged victim cursors, `instructions`, and the burst-ROM sequential state (`rpc_mem_timing.h:150-160`; `rpc_mem_timing.c:597-618,843-853`).
+- **What a skipped fetch-timing step must reproduce:** the memo state, `stats.hits` and `fetch_hits` **separately** (§2.2), unchanged victim cursors, `instructions`, and the burst-ROM sequential state (`rpc_mem_timing.h:150-160`; `rpc_mem_timing.c:624-645,872-882`).
 - **The generation advances on every memo clear:**
-  - any allocation in **either** cache, SA D fills included (`rpc_mem_timing.c:670`);
-  - c7 (`rpc_mem_timing.c:741-763`), control writes and TLB flush (`rpc_mem_timing.c:518,542`);
-  - SA uncached-read clock handling (`rpc_mem_timing.c:594`);
+  - any allocation in **either** cache, SA D fills included (`rpc_mem_timing.c:699`);
+  - c7 (`rpc_mem_timing.c:770-792`), control writes and TLB flush (`rpc_mem_timing.c:545,569`);
+  - SA uncached-read clock handling (`rpc_mem_timing.c:621`);
   - bind or reset.
-- **Tie to G-4.** The proof is tied to G-4, because eligibility depends on the current region and backing (`rpc_mem_timing.c:644`).
-- **Retained tags.** Retained tags still hit with C/I clear (`rpc_mem_timing.c:373-375,602`).
+- **Tie to G-4.** The proof is tied to G-4, because eligibility depends on the current region and backing (`rpc_mem_timing.c:671`).
+- **Retained tags.** Retained tags still hit with C/I clear (`rpc_mem_timing.c:397-399,629`).
 
 **G-6 Unified caches (ARM610/710/7500).**
-- **Shared array.** A cacheable data load miss allocates in the same array as code. It advances that set's cursor and can evict an executing line (`rpc_mem_timing.c:660-692`).
+- **Shared array.** A cacheable data load miss allocates in the same array as code. It advances that set's cursor and can evict an executing line (`rpc_mem_timing.c:687-721`).
 - **Stores.** Store hits emit a write and leave tags unchanged. Store misses do not allocate.
 - **Data accesses therefore** use the real lookup, plus revalidation of the fetch proof or an exit (Q-11). Any allocation advances the fetch generation.
 
@@ -375,14 +375,14 @@ Any `updatemode` ends the block (E4).
 - **Guards a filter must check:**
   - permission before the hit (`mem.c:724-727`), keyed by effective privilege (including LDRT/STRT), direction, DACR, S/R and `mmu`;
   - **tag validity and replacement state** (`lookup`, victim cursors);
-  - **the current backing and region** (`eligible = backed && cache_region(r)`, `rpc_mem_timing.c:644`);
-  - the empty-D-tag fast path, taken when C/W are clear (`rpc_mem_timing.c:625-632`).
+  - **the current backing and region** (`eligible = backed && cache_region(r)`, `rpc_mem_timing.c:671`);
+  - the empty-D-tag fast path, taken when C/W are clear (`rpc_mem_timing.c:652-659`).
 - **Load hit:** zero bus, `stats.hits++`.
-- **Store hit:** dirty half `(va>>4)&1` with no packet (`rpc_mem_timing.c:658`). The functional store still happens; ROM stores are functionally ignored but cast out under G7 (`rpc_mem_timing.c:467-475,668`).
+- **Store hit:** dirty half `(va>>4)&1` with no packet (`rpc_mem_timing.c:685`). The functional store still happens; ROM stores are functionally ignored but cast out under G7 (`rpc_mem_timing.c:492-500,697`).
 - **Load miss:** allocate, cast out dirty victim halves, fill, and clear the memo.
-- **Store miss:** no allocation; buffered only with M, W and B set in a memory region (`rpc_mem_timing.c:696-697`).
-- **SWP/SWPB stay on the exact path.** Their `mapped_swap`/`cached_swap` locking and write-allocate cases (`rpc_mem_timing.c:640-650,660,690`) are outside any filter.
-- **Clock switch.** An uncached SA read can switch the base clock (`rpc_mem_timing.c:589-596`).
+- **Store miss:** no allocation; buffered only with M, W and B set in a memory region (`rpc_mem_timing.c:725-726`).
+- **SWP/SWPB stay on the exact path.** Their `mapped_swap`/`cached_swap` locking and write-allocate cases (`rpc_mem_timing.c:667-677,687,719`) are outside any filter.
+- **Clock switch.** An uncached SA read can switch the base clock (`rpc_mem_timing.c:616-623`).
 - **Ruling needed.** A filter needs its own ruling (constraint 3).
 
 **G-8 Lazy bus catch-up: older work only.**
@@ -395,8 +395,8 @@ Any `updatemode` ends the block (E4).
 
   "Older work" is the buffer ring, the active packet and queued video (§1.2).
 - **Never service k's own collected requests before k's remaining functional effects.** The ROMCR example: k's queued fetch must be costed with the value k writes (§1.2).
-- **Equal-ns order:** events → `arc_rpc_mem_run` (completion, release, grant: video, then buffer FIFO, then CPU demand last) → CPU issue (`rpc_session.c:417-429`; `rpc_mem_timing.c:955-1004`).
-- **What equivalence must show:** identical word start, finish and release ticks, `buffer_wait_ticks`, hold placement (`rpc_mem_timing.c:983-991`) and `restart`. Bulk subtraction of elapsed time is not a proof.
+- **Equal-ns order:** events → `arc_rpc_mem_run` (completion, release, grant: video, then buffer FIFO, then CPU demand last) → CPU issue (`rpc_session.c:417-429`; `rpc_mem_timing.c:984-1033`).
+- **What equivalence must show:** identical word start, finish and release ticks, `buffer_wait_ticks`, hold placement (`rpc_mem_timing.c:1012-1020`) and `restart`. Bulk subtraction of elapsed time is not a proof.
 
 **G-9 Self-modifying code.**
 - **Key.** Dependencies are keyed by (allocation, offset) from the `code` pointer (`cp15.c:433,479`). For example `0x10000100` and `0x12000100` are the same `ram00` bytes. `0x11000100` and `0x13000100` alias each other at offset `0x1000100`, which is a **different** offset from `0x10000100`.
@@ -411,8 +411,8 @@ Any `updatemode` ends the block (E4).
 
 **G-11 Time representation.**
 - **Phase-specific values.** Each phase in §2.1 has its own time values. Reach them by the oracle's own formulas, never by calling `batch_flush`/`next_base` where the oracle would not.
-- **Base changes.** A base change applies from the next `next_base` (`rpc_mem_timing.c:515-527`).
-- **Overflow.** Overflow fatals must fire at the same instruction (`rpc_mem_timing.c:276-286`; `rpc_mem_timing.h:105,129`).
+- **Base changes.** A base change applies from the next `next_base` (`rpc_mem_timing.c:542-554`).
+- **Overflow.** Overflow fatals must fire at the same instruction (`rpc_mem_timing.c:300-310`; `rpc_mem_timing.h:105,129`).
 
 **G-12 Counters, measurement and observation barriers (D-195).**
 - Canonical counters and separate timing/fetch hit counts match at every exit.
@@ -426,10 +426,10 @@ Any `updatemode` ends the block (E4).
   end is last completion; drained end also waits for final command/buffer
   retirement. Capture never flushes, translates or services the bus.
   Admission, completion, ordinary return and final-retirement captures are at
-  `rpc_mem_timing.c:214`,
-  `rpc_mem_timing.c:240`,
-  `rpc_mem_timing.c:254` and
-  `rpc_mem_timing.c:979`.
+  `rpc_mem_timing.c:238`,
+  `rpc_mem_timing.c:264`,
+  `rpc_mem_timing.c:278` and
+  `rpc_mem_timing.c:1008`.
 - The fetch memo and demand-shortcut semantics are unchanged. Calibrations
   compare both modes' complete records; directed tests cover holds, wake,
   pending writes, quotas, fractions, shortcut commit/rollback, NULL entries and
@@ -572,3 +572,8 @@ restore of m, including M2b or savestate restore, must rebuild or reset it.
 When restored tags stay valid, rebuild their exact mirror before enabling
 mirror lookup; hints may be reset. Clearing mirror keys alone is sufficient
 only when canonical tags also reset (or lookup remains linear until rebuild).
+
+Run B derives each cache's set/way masks and shifts from its asserted power-of-two
+geometry at bind, outside canonical state. Lookup, fill, hint indexing and cyclic
+way advance use these masks/shifts; hits and fills store a hint only when its
+byte changes. The independently retained linear scan is unchanged.

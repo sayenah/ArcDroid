@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Independent cyclic-cache model and directed L1 expectations. No core run
  * produced expectations. Includes the candidate only to inspect private state. */
+static unsigned test_hint_writes;
+#define L1_HINT_WRITE(side,index,way) (++test_hint_writes, (side)->hints[index]=(way))
 #include "../engine/rpc/rpc_mem_timing.c"
 #undef NDEBUG
 #include <assert.h>
@@ -34,6 +36,40 @@ static void bind_model(unsigned model,unsigned gate)
     arc_rpc_mem_bind(&test_clock,model,100);
     arc_rpc_mem_clock_switch(true);arc_rpc_mem_control(0x100d);
     l1_instruction.gate=l1_data.gate=gate;
+}
+/* Independent arithmetic expectations across every set, hint slot and way,
+ * including the maximum virtual line and repeated stores. */
+static void unchanged(Cache *c,uint32_t va,int expected);
+static void geometry_and_stores(void)
+{
+    for(unsigned model=0;model<4;++model){
+        bind_model(model,2);
+        for(unsigned data=0;data<(model==2?2u:1u);++data){
+            Cache *c=data?&m.data:&m.instruction;LookupSide *side=side_state(c);
+            assert((1u<<side->set_shift)==c->sets);
+            assert((1u<<side->way_shift)==c->ways);
+            assert(side->set_mask==c->sets-1 && side->way_mask==c->ways-1);
+            for(unsigned line=0;line<c->sets*8;++line)
+                assert(hint_index(c,line)==(line%c->sets)*4+(line/c->sets)%4);
+            uint32_t last=UINT32_MAX>>c->shift;
+            assert(hint_index(c,last)==(last%c->sets)*4+(last/c->sets)%4);
+            for(unsigned slot=0;slot<c->sets*c->ways;++slot){
+                assert((slot & side->way_mask)==slot%c->ways);
+                assert(((slot+1)&side->way_mask)==(slot+1)%c->ways);
+                assert(((slot/c->ways)<<side->way_shift)==slot-slot%c->ways);
+            }
+            test_hint_writes=0;
+            hint_store(side,0,0);assert(test_hint_writes==1);
+            hint_store(side,0,0);assert(test_hint_writes==1);
+            hint_store(side,0,1);assert(test_hint_writes==2);
+            Tag tag={0,0,1,0};tag_write(c,0,tag);assert(test_hint_writes==3);
+            tag_write(c,0,tag);assert(test_hint_writes==3);
+            c->populated=1;
+#if !defined(ARCDROID_RPC_L1_POISON)
+            unchanged(c,0,0);assert(test_hint_writes==3);
+#endif
+        }
+    }
 }
 static void drain(void)
 {
@@ -283,6 +319,7 @@ static void reference_isolation(void)
 }
 int main(void)
 {
+    geometry_and_stores();
     reference_isolation();
     for(unsigned gate=0;gate<3;++gate)for(unsigned cpu=0;cpu<4;++cpu){
         directed(cpu,false,gate);random_model(cpu,false,gate,0x61a20001u+cpu);
