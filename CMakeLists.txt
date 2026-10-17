@@ -9,6 +9,7 @@ set(CMAKE_C_EXTENSIONS ON)
 
 option(ARCDROID_RPC_CROSSCHECK "Build test-only RPC canonical field cross-check reporting" OFF)
 option(ARCDROID_RPC_LOCKSTEP "Build the non-installed RPC lockstep core (host only)" OFF)
+option(ARCDROID_RPC_LOCKSTEP_LOCAL_TESTS "Register the 75 local lockstep golden-density checks" ON)
 if(ARCDROID_RPC_LOCKSTEP)
   # Owning-TU layout probes reuse the configured compiler commands.
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

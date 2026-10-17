@@ -15,19 +15,19 @@ ROOT=Path(__file__).resolve().parents[1];sys.path[:0]=[str(ROOT/'tools'),str(ROO
 from rpc_measure_compare import sections,blocks,field,number,run
 from rpc_ninja_commands import split_command
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('build',type=Path);p.add_argument('readobj');a=p.parse_args()
-manifest=json.loads((a.build/'generated/rpc-lockstep-tables/rpc_lockstep_codegen.json').read_text())
-commands=json.loads((a.build/'compile_commands.json').read_text());roots=0;classified=0;padding=0;members=0
+manifest=json.loads((a.build/'generated/rpc-lockstep-tables/rpc_lockstep_codegen.json').read_text(encoding='utf-8'))
+commands=json.loads((a.build/'compile_commands.json').read_text(encoding='utf-8'));roots=0;classified=0;padding=0;members=0
 with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-layout-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
  folder=Path(tmp)
  for source,rows in manifest['layouts'].items():
   if not rows:continue
   entry=next(e for e in commands if 'arcdroid_rpclockstep_libretro_rpc.dir/' in e['command'].replace('\\','/') and Path(e['file']).as_posix().endswith('/'+source))
   cc=split_command(entry['command'],os.name=='nt');original=Path(entry['file']);copy=folder/original.name;obj=folder/(original.stem+'.o')
-  copy.write_text(original.read_text()+'\n#if !defined(ARC_RPC_ARM_LOOP)\nARC_RPC_LS_LAYOUT_'+original.stem+'\n#endif\n')
+  copy.write_text(original.read_text(encoding='utf-8')+'\n#if !defined(ARC_RPC_ARM_LOOP)\nARC_RPC_LS_LAYOUT_'+original.stem+'\n#endif\n', encoding='utf-8')
   for flag,value in (('-c',copy),('-o',obj),('-MF',folder/(original.stem+'.d')),('-MT',obj)):
    if flag in cc:cc[cc.index(flag)+1]=str(value)
   cc+=['-I',str(original.parent)]
-  result=subprocess.run(cc,cwd=entry['directory'],capture_output=True,text=True,timeout=120)
+  result=subprocess.run(cc,cwd=entry['directory'],capture_output=True,text=True,timeout=120, encoding='utf-8')
   if result.returncode:raise RuntimeError((source,'layout fixture compile',result.stderr[-1800:]))
   symbols=blocks(run([a.readobj,'--symbols',str(obj)]),'Symbol')
   symbol=next(s for s in symbols if field(s,'Name').split()[0] in ('arc_lockstep_layout','_arc_lockstep_layout'))

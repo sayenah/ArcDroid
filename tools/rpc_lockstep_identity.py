@@ -19,21 +19,21 @@ def only_stubs(base,candidate,build,target,readobj):
     Comparing the resulting whole code sections avoids disassembly/relocation
     masking. It also detects unrelated changes hidden by the object exception.
     """
-    commands=json.loads((build/'compile_commands.json').read_text())
+    commands=json.loads((build/'compile_commands.json').read_text(encoding='utf-8'))
     entry=next(e for e in commands if target+'.dir/' in e['command'].replace('\\','/')
         and Path(e['file']).name=='rpc_session.c')
-    original=Path(entry['file']);source=original.read_text()
+    original=Path(entry['file']);source=original.read_text(encoding='utf-8')
     anchor='#if !defined(ARCDROID_RPC_LOCKSTEP)\nRETRO_API bool arc_rpc_test_lockstep_sink'
     if source.count(anchor)!=1:raise RuntimeError('enumerated stub definition anchor')
     first=source.index(anchor);last=source.index('#endif',first)+len('#endif')
     source=source[:first]+source[last:]
     with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-stub-identity-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
-        root=Path(tmp);copy=root/'rpc_session.c';obj=root/'session.o';copy.write_text(source)
+        root=Path(tmp);copy=root/'rpc_session.c';obj=root/'session.o';copy.write_text(source, encoding='utf-8')
         command=split_command(entry['command'],os.name=='nt')
         for flag,value in (('-c',copy),('-o',obj),('-MF',root/'session.d'),('-MT',obj)):
             if flag in command:command[command.index(flag)+1]=str(value)
         command+=['-I',str(original.parent)]
-        result=subprocess.run(command,cwd=entry['directory'],capture_output=True,text=True,timeout=120)
+        result=subprocess.run(command,cwd=entry['directory'],capture_output=True,text=True,timeout=120, encoding='utf-8')
         if result.returncode:raise RuntimeError(('stub identity fixture compile',result.stderr[-2000:]))
         if code(base,readobj)!=code(obj,readobj):raise RuntimeError(target+': rpc_session differs beyond enumerated refusing definitions')
     print(target+': removing only sink/status/end definitions restores complete base code sections')

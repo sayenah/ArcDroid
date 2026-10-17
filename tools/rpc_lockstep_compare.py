@@ -32,7 +32,7 @@ def require(ok, message):
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
 
 
 def validate_schema(schema):
@@ -508,7 +508,7 @@ def compare(left, right, schema=None, schema_hash=None, mode='strict', capture_e
         if diff: return failure(ar.key, *diff)
         if capture_evidence:
             value=compact_groups(ar,schema,mode) if ar.kind in (1,2) else ar.value
-            prefix.update(json.dumps((ar.kind if ar.kind not in (1,2) else 2,ar.key,ar.edge,value),separators=(',',':')).encode())
+            prefix.update(json.dumps((ar.kind if ar.kind not in (1,2) else 2,ar.key,ar.edge,value),separators=(',',':')).encode('utf-8'))
         last_matching = ar.key
         if ar.kind in (1, 2): previous = ar
         ar, br = a.next(), b.next()

@@ -13,7 +13,7 @@ SECTIONS = ('reviewed_conditions', 'reviewed_exclusions', 'reviewed_mode_exclusi
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
+    return json.dumps(value, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
 def compatibility(schema):
@@ -87,7 +87,7 @@ def initializer(source, symbol):
         elif ch=='{': depth+=1
         elif ch=='}': depth-=1
         elif ch==';' and depth==0:
-            return ' '.join(text[start:end].split()).encode()
+            return ' '.join(text[start:end].split()).encode('utf-8')
     raise ValueError('unterminated immutable initializer: '+symbol)
 
 
@@ -317,7 +317,7 @@ def generate(schema, directory):
         header.append(f'void arc_rpc_lockstep_collect_{tu}(uint64_t *);')
         header.append('#define ARC_RPC_LS_SERIALIZE_'+tu+' \\\n'+' \\\n'.join(body))
     header.append('#endif')
-    (directory/'rpc_lockstep_generated.h').write_text('\n'.join(header)+'\n')
+    (directory/'rpc_lockstep_generated.h').write_text('\n'.join(header)+'\n', encoding='utf-8')
     tables=['/* SPDX-License-Identifier: GPL-2.0-only; generated, do not commit. */',
             'typedef struct { unsigned offset,count,width,group,simple,modes,tu,wire; } LsField;',
             'static const LsField ls_fields[ARC_RPC_LS_FIELDS]={']
@@ -364,12 +364,12 @@ def generate(schema, directory):
     tables+=['}','#endif']
     for name,value in [('compatibility',compatibility(schema)),('schema',hashlib.sha256(canonical(schema)).digest())]:
         tables.append(f'static const uint8_t ls_{name}_hash[32]={{'+','.join(str(x) for x in value)+'};')
-    (directory/'rpc_lockstep_tables.h').write_text('\n'.join(tables)+'\n')
+    (directory/'rpc_lockstep_tables.h').write_text('\n'.join(tables)+'\n', encoding='utf-8')
     outputs={name:hashlib.sha256((directory/name).read_bytes()).hexdigest()
         for name in ('rpc_lockstep_generated.h','rpc_lockstep_tables.h')}
     (directory/'rpc_lockstep_codegen.json').write_text(json.dumps(dict(license='GPL-2.0-only',
         words=offset,fields=len(fields),compatibility=compatibility(schema).hex(),
-        metadata=hashlib.sha256(canonical(schema)).hexdigest(),outputs=outputs,layouts=layouts),indent=2)+'\n')
+        metadata=hashlib.sha256(canonical(schema)).hexdigest(),outputs=outputs,layouts=layouts),indent=2)+'\n', encoding='utf-8')
 
 
 def main():
@@ -379,7 +379,7 @@ def main():
     p.add_argument('--check',action='store_true')
     a=p.parse_args();schema=load(a.schema,a.policy)
     if a.check:
-        manifest=json.loads((a.output/'rpc_lockstep_codegen.json').read_text())
+        manifest=json.loads((a.output/'rpc_lockstep_codegen.json').read_text(encoding='utf-8'))
         if manifest['metadata']!=hashlib.sha256(canonical(schema)).hexdigest():raise ValueError('stale schema metadata: regenerate C tables')
         for name,digest in manifest['outputs'].items():
             if hashlib.sha256((a.output/name).read_bytes()).hexdigest()!=digest:raise ValueError('generated C table drift: '+name)

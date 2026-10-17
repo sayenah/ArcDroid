@@ -61,7 +61,7 @@ def main():
             if detail:args+=list(map(str,detail))
             elif frames:args+=['-','-']
             if frames:args+=['0',str(frames)]
-            r=subprocess.run(args,capture_output=True,text=True,timeout=120)
+            r=subprocess.run(args,capture_output=True,text=True,timeout=120, encoding='utf-8')
             require(r.returncode==0,(args,r.returncode,r.stderr))
             return path,r.stdout
         def compare(left,right,mode='strict'):
@@ -197,7 +197,7 @@ def main():
             for operation,expected in (('fail-sink','lockstep sink error'),('reentrant','lockstep sink reentrancy')):
                 path=root/(operation+'.stream')
                 args=[a.loader,a.core,str(rom),'0',str(path),'0','0','0','0','0','200',operation]
-                r=subprocess.run(args,capture_output=True,text=True,timeout=20)
+                r=subprocess.run(args,capture_output=True,text=True,timeout=20, encoding='utf-8')
                 require(r.returncode==1 and expected in r.stderr,('sink failure status',operation,r.returncode,r.stderr))
         if a.section in ('all','allocations'):
             for stage in range(1,5):

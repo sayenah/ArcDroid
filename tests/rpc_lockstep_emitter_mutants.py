@@ -199,11 +199,11 @@ RECIPES=[('added-m-member', 'engine/rpc/rpc_mem_timing.c', '    ArcRpcMemStats s
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('build',type=Path);p.add_argument('loader');p.add_argument('core');p.add_argument('fixtures',type=Path);p.add_argument('--only',default='');p.add_argument('--matrix',type=Path)
  a=p.parse_args();schema,sh=c.load_schema();build=a.build.resolve();start=time.monotonic()
- cache=(build/'CMakeCache.txt').read_text();ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
- commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))];matrix=[]
+ cache=(build/'CMakeCache.txt').read_text(encoding='utf-8');ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
+ commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True, encoding='utf-8'))];matrix=[]
  with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-mutants-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
   root=Path(tmp);rom=root/'points.rom';rom.write_bytes(program());baselines={}
-  plan=root/'points.arcplan';plan.write_text('version=1\nmodel=arm610\nfirmware=points.rom\ncmos=seed\nseed=authored.seed\nrtc_epoch=0\n')
+  plan=root/'points.arcplan';plan.write_text('version=1\nmodel=arm610\nfirmware=points.rom\ncmos=seed\nseed=authored.seed\nrtc_epoch=0\n', encoding='utf-8')
   (root/'authored.seed').write_bytes(bytes(256))
   from rpc_timing_rom import Guest
   g=Guest();g.literal(9,0x10040000);g.literal(0,0x55);g.emit(0xe8a90001)
@@ -256,24 +256,24 @@ def main():
    flags=(flags|1) if baseline else (flags&~1)
    args=[a.loader,str(core),str(path),str(model),str(stream),str(duration),str(flags),'0','0','0','200',operation]
    if len(case)>6:args+=['-','-','0',str(case[6])]
-   r=subprocess.run(args,capture_output=True,text=True,timeout=120)
+   r=subprocess.run(args,capture_output=True,text=True,timeout=120, encoding='utf-8')
    if r.returncode not in (0,1):raise RuntimeError(('load/run error, not a kill',r.returncode,r.stderr[-1000:]))
    if r.returncode and not any(x in r.stderr for x in ('lockstep mutating projection','lockstep unlogged write','lockstep projection changed','lockstep late fatal emission')):raise RuntimeError(('unexpected failure, not a kill',r.stderr[-1000:]))
    return stream,r
   def fixture_object(relative,content,stem):
    cc,link=rebuild_commands(commands,ROOT/relative,'arcdroid_rpclockstep_libretro_rpc',build,os.name=='nt')
-   source=root/(stem+'-'+Path(relative).name);obj=root/(stem+'.o');source.write_text(content)
+   source=root/(stem+'-'+Path(relative).name);obj=root/(stem+'.o');source.write_text(content, encoding='utf-8')
    original=cc[cc.index('-o')+1]
    for flag,value in (('-c',source),('-o',obj),('-MF',root/(stem+'.d')),('-MT',obj)):
     if flag in cc:cc[cc.index(flag)+1]=str(value)
    cc+=['-I',str((ROOT/relative).parent)]
-   result=subprocess.run(cc,cwd=build,capture_output=True,text=True,timeout=180)
+   result=subprocess.run(cc,cwd=build,capture_output=True,text=True,timeout=180, encoding='utf-8')
    if result.returncode:raise RuntimeError(('fixture compile, not a kill',stem,result.stderr[-1500:]))
    return original,obj,link
   for label,relative,old,new,kind in RECIPES:
    if a.only and a.only not in label:continue
    if kind=='unused':continue
-   text=(ROOT/relative).read_text();extra=None
+   text=(ROOT/relative).read_text(encoding='utf-8');extra=None
    if label=='unlogged-store':
     # Select one physical RAM funnel, not all same-width stores.
     old='    ARC_RPC_LOCKSTEP(ram_write(addr,4,val));\n'
@@ -286,12 +286,12 @@ def main():
     newtext=text.replace(old,new)
    extras=[];control_core=a.core;context=None
    if label=='entry-transient-repaired':
-    extras.append((P,(ROOT/P).read_text()+'\nvoid arc_rpc_lockstep_probe_entry(void){arc_rpc_attributes^=4u;}\n'))
+    extras.append((P,(ROOT/P).read_text(encoding='utf-8')+'\nvoid arc_rpc_lockstep_probe_entry(void){arc_rpc_attributes^=4u;}\n'))
    if label=='projection-next-base':
     newtext='void arc_rpc_lockstep_probe_next_base(uint64_t);\n'+newtext
-    extras.append((T,(ROOT/T).read_text()+'\nvoid arc_rpc_lockstep_probe_next_base(uint64_t issue){next_base(issue); }\n'))
+    extras.append((T,(ROOT/T).read_text(encoding='utf-8')+'\nvoid arc_rpc_lockstep_probe_next_base(uint64_t issue){next_base(issue); }\n'))
    if label=='P3-zero-admission':
-    end_text=(ROOT/E).read_text();anchor='    if(ls.ended)return !ls.error;'
+    end_text=(ROOT/E).read_text(encoding='utf-8');anchor='    if(ls.ended)return !ls.error;'
     if end_text.count(anchor)!=1:raise RuntimeError('zero-admission fixture anchor')
     end_text=end_text.replace('#include "arm.h"','#include "arm.h"\nextern int arc_rpc_arm_exec_batch(unsigned,ArcRpcCpuBatch *);').replace(anchor,anchor+'\n    if(active() && ls.phase!=5)(void)arc_rpc_arm_exec_batch(0,NULL);')
     extras.append((E,end_text));context='injected zero-admission wrapper probe'
@@ -306,18 +306,18 @@ def main():
     control_link=[str(control_obj) if x==original_control else x for x in control_link]
     control_link[control_link.index('-o')+1]=str(control_core)
     control_link=['-Wl,--out-implib,'+str(root/'control.dll.a') if x.startswith('-Wl,--out-implib,') else x for x in control_link]
-    result=subprocess.run(control_link,cwd=build,capture_output=True,text=True,timeout=180)
+    result=subprocess.run(control_link,cwd=build,capture_output=True,text=True,timeout=180, encoding='utf-8')
     if result.returncode:raise RuntimeError(('counter fixture link',result.stderr[-1500:]))
     context='injected timing-counter perturbation in both control and candidate'
    compile,link=rebuild_commands(commands,ROOT/relative,'arcdroid_rpclockstep_libretro_rpc',build,os.name=='nt')
-   source=root/Path(relative).name;obj=root/'mutant.o';library=root/Path(a.core).name;source.write_text(newtext)
+   source=root/Path(relative).name;obj=root/'mutant.o';library=root/Path(a.core).name;source.write_text(newtext, encoding='utf-8')
    original=compile[compile.index('-o')+1]
    for flag,value in (('-c',source),('-o',obj),('-MF',root/'mutant.d'),('-MT',obj)):
     if flag in compile:compile[compile.index(flag)+1]=str(value)
    compile+=['-I',str((ROOT/relative).parent)]
    link=[str(obj) if x==original else x for x in link];link[link.index('-o')+1]=str(library)
    link=['-Wl,--out-implib,'+str(root/'mutant.dll.a') if x.startswith('-Wl,--out-implib,') else x for x in link]
-   result=subprocess.run(compile,cwd=build,capture_output=True,text=True,timeout=180)
+   result=subprocess.run(compile,cwd=build,capture_output=True,text=True,timeout=180, encoding='utf-8')
    if kind=='compile':
     if result.returncode==0 or 'unclassified_member' not in result.stderr or 'missing' not in result.stderr:raise RuntimeError((label,'member control not rejected',result.stderr[-1000:]))
     matrix.append(dict(mutant=label,detected_by=['classified-member compiler'],status='demonstrated',single_item=True));continue
@@ -325,7 +325,7 @@ def main():
    for j,(path,content) in enumerate(extras):
     original_extra,extra_obj,_=fixture_object(path,content,'extra-'+str(j))
     link=[str(extra_obj) if x==original_extra else x for x in link]
-   result=subprocess.run(link,cwd=build,capture_output=True,text=True,timeout=180)
+   result=subprocess.run(link,cwd=build,capture_output=True,text=True,timeout=180, encoding='utf-8')
    if result.returncode:raise RuntimeError((label,'link error, not a kill',result.stderr[-1600:]))
    killed=[]
    for i,case in enumerate(cases(kind)):
@@ -380,14 +380,14 @@ def main():
       '--runner-arg=--endpoint-instructions','--runner-arg='+('1:5001:0' if label=='late-cpu-due-one-tick' else '1:17:0')]
     if label=='late-cpu-due-one-tick':args+=['--max-bytes',str(16*1024*1024)]
     if label=='post-reset-cpu-due':args+=['--frames','3','--runner-arg=--reset-at','--runner-arg=1']
-    result=subprocess.run(args,capture_output=True,text=True,timeout=60)
+    result=subprocess.run(args,capture_output=True,text=True,timeout=60, encoding='utf-8')
     finding=json.loads(result.stdout)
     expected='non-deterministic' if label=='non-deterministic-detail-rerun' else 'fast.cpu_due_ticks'
     if result.returncode!=1 or finding.get('field')!=expected:raise RuntimeError(('real driver reproduction',label,result.returncode,result.stdout,result.stderr))
     killed.append(dict(case='two explicit runner/core pairs over FIFO/bounded files',evidence=finding))
    matrix.append(dict(mutant=label,detected_by=killed,status='demonstrated',single_item=detecting_items==1,detecting_items=detecting_items,context=context))
    print('killed real C',label,'cases',len(killed),flush=True)
- if a.matrix:a.matrix.write_text(json.dumps(dict(license='GPL-2.0-only',mutants=matrix,elapsed=time.monotonic()-start),indent=2)+'\n')
+ if a.matrix:a.matrix.write_text(json.dumps(dict(license='GPL-2.0-only',mutants=matrix,elapsed=time.monotonic()-start),indent=2)+'\n', encoding='utf-8')
  print('real C variants:',len(matrix),'elapsed',round(time.monotonic()-start,3))
 
 

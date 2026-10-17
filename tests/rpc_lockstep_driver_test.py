@@ -13,7 +13,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 import rpc_lockstep_run as driver
 
 with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-driver-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
-    root=Path(tmp);plan=root/'input.arcplan';plan.write_text('version=1\nmodel=sa110\n')
+    root=Path(tmp);plan=root/'input.arcplan';plan.write_text('version=1\nmodel=sa110\n', encoding='utf-8')
     common=['driver','--baseline-runner','runner-b','--baseline-core','core-b',
         '--candidate-runner','runner-c','--candidate-core','core-c','--system',str(root),'--plan',str(plan)]
     def invoke(arguments):

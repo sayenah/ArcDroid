@@ -93,7 +93,7 @@ def run_pair(args,detail=None):
                 if any(p.returncode not in (0,1) for p in processes):raise ValueError('runner refused/failed')
                 outputs=[]
                 for side in ('baseline','candidate'):
-                    outputs.append(compare.stdout_projection((root/(side+'.stdout')).read_text(),args.mode,schema))
+                    outputs.append(compare.stdout_projection((root/(side+'.stdout')).read_text(encoding='utf-8'),args.mode,schema))
                 if outputs[0]!=outputs[1]:
                     result=dict(ok=False,field='runner.stdout',baseline=compare.digest(outputs[0]),candidate=compare.digest(outputs[1]))
             result['runner_returncodes']=[p.returncode for p in processes]

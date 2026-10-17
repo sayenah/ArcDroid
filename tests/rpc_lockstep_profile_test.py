@@ -24,15 +24,15 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-profile-counts-',dir='/pri
  for i,address in enumerate(reads):g.literal(0,address);g.emit(0xe5d01000 if i==6 else 0xe5901000)
  payload=struct.pack('<'+'I'*len(g.words),*g.words);(root/'dispatch.rom').write_bytes(payload+bytes(2097152-len(payload)))
  for model in range(4):
-  plan=root/'dispatch.arcplan';plan.write_text(f'version=1\nmodel={("arm610","arm710","sa110","arm7500")[model]}\nfirmware=dispatch.rom\ncmos=seed\nseed=authored.seed\nrtc_epoch=0\n')
+  plan=root/'dispatch.arcplan';plan.write_text(f'version=1\nmodel={("arm610","arm710","sa110","arm7500")[model]}\nfirmware=dispatch.rom\ncmos=seed\nseed=authored.seed\nrtc_epoch=0\n', encoding='utf-8')
   for kind,source,system,endpoint in [('dispatch',plan,root,g.steps),('walk',a.fixtures/f'walk-mmio-{model}.arcplan',a.fixtures,80)]:
    common=['--plan',str(source),'--system',str(system),'--save',str(root),'--frames','1','--endpoint-instructions',f'1:{endpoint}:0']
    profile=root/'profile.json';stream=root/'stream.bin'
-   prof=subprocess.run([a.runner,'--core',a.profile_core,*common,'--profile',str(profile),'--profile-sample-stride','0'],capture_output=True,text=True,timeout=60)
+   prof=subprocess.run([a.runner,'--core',a.profile_core,*common,'--profile',str(profile),'--profile-sample-stride','0'],capture_output=True,text=True,timeout=60, encoding='utf-8')
    if prof.returncode:raise RuntimeError(('profile baseline',model,kind,prof.stderr[-1000:]))
-   actual=subprocess.run([a.runner,'--core',a.lockstep_core,*common,'--lockstep-stream',str(stream),'--lockstep-model',str(model),'--lockstep-role','baseline'],capture_output=True,text=True,timeout=60)
+   actual=subprocess.run([a.runner,'--core',a.lockstep_core,*common,'--lockstep-stream',str(stream),'--lockstep-model',str(model),'--lockstep-role','baseline'],capture_output=True,text=True,timeout=60, encoding='utf-8')
    if actual.returncode or actual.stdout!=prof.stdout:raise RuntimeError(('stream/class guest effect',model,kind,actual.returncode,actual.stderr[-1000:]))
-   record=json.loads(profile.read_text())['records'][-1];counts=dict(reads=0,writes=0,walk=0,attempts=0,fetched=0);addresses=[]
+   record=json.loads(profile.read_text(encoding='utf-8'))['records'][-1];counts=dict(reads=0,writes=0,walk=0,attempts=0,fetched=0);addresses=[]
    with stream.open('rb') as f:
     reader=c.Reader(f,schema,sh,'strict')
     while (r:=reader.next()) is not None:

@@ -17,8 +17,8 @@ import rpc_lockstep_compare as c
 
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('build',type=Path)
 p.add_argument('loader');p.add_argument('core');a=p.parse_args();schema,sh=c.load_schema()
-cache=(a.build/'CMakeCache.txt').read_text();ninja=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
-commands=[entry['command'] for entry in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=a.build,text=True))]
+cache=(a.build/'CMakeCache.txt').read_text(encoding='utf-8');ninja=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
+commands=[entry['command'] for entry in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=a.build,text=True, encoding='utf-8'))]
 with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-char-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
     root=Path(tmp);rom=root/'points.rom';rom.write_bytes(program());variants=[]
     for setting in ('signed','unsigned'):
@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-char-',dir='/private/tmp' 
         for relative in ('engine/rpc/rpc_observers.c','engine/rpcemu/src/fdc.c'):
             cc,link=rebuild_commands(commands,ROOT/relative,'arcdroid_rpclockstep_libretro_rpc',a.build,os.name=='nt')
             original=cc[cc.index('-o')+1];source=root/(setting+'-'+Path(relative).name);obj=root/(setting+'-'+Path(relative).stem+'.o')
-            source.write_text((ROOT/relative).read_text())
+            source.write_text((ROOT/relative).read_text(encoding='utf-8'), encoding='utf-8')
             for flag,value in (('-c',source),('-o',obj),('-MF',obj.with_suffix('.d')),('-MT',obj)):
                 if flag in cc:cc[cc.index(flag)+1]=str(value)
             cc+=['-I',str((ROOT/relative).parent),'-f'+setting+'-char']
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-char-',dir='/private/tmp' 
     streams=[];outputs=[]
     for i,library in enumerate([Path(a.core),*variants]):
         stream=root/f'{i}.stream';streams.append(stream)
-        result=subprocess.run([a.loader,str(library),str(rom),'0',str(stream),'100000',str(17 if i==0 else 16),'0','0','0','200','jfd-byte-text'],capture_output=True,text=True,timeout=60)
+        result=subprocess.run([a.loader,str(library),str(rom),'0',str(stream),'100000',str(17 if i==0 else 16),'0','0','0','200','jfd-byte-text'],capture_output=True,text=True,timeout=60, encoding='utf-8')
         if result.returncode:raise RuntimeError(('byte-text fixture',i,result.returncode,result.stderr))
         outputs.append(result.stdout)
     if len(set(outputs))!=1:raise RuntimeError('char setting changed guest execution')

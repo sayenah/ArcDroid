@@ -50,7 +50,7 @@ def policy_encoding_check():
             paths.append(path)
         with mock.patch('io.open', side_effect=windows_open):
             schema, _ = reference.load_schema(paths[0])
-            misdecoded = json.loads(paths[1].read_text())
+            misdecoded = json.loads(paths[1].read_text(encoding='cp1252'))
             require(schema['reviewed_exclusions'] != misdecoded['reviewed_exclusions'],
                     'Windows encoding regression did not reproduce the original mismatch')
             reviewed_policy(schema, paths[1])
@@ -474,7 +474,7 @@ def cli_checks():
         require(result.returncode==1 and json.loads(result.stdout)['field']=='cpu.reg[0]','CLI stdin mismatch')
         for extra,field in (([],None),(['--reproduce',str(paths[0]),str(paths[1])],None),
                             (['--reproduce',str(paths[0]),str(paths[2])],'non-deterministic')):
-            result=subprocess.run([*command,str(paths[0]),str(paths[1]),'--hash-only',*extra],capture_output=True,text=True,timeout=30)
+            result=subprocess.run([*command,str(paths[0]),str(paths[1]),'--hash-only',*extra],capture_output=True,text=True,timeout=30, encoding='utf-8')
             record=json.loads(result.stdout)
             require(result.returncode==1 and record['field']==reference.digest(field or 'cpu.reg[0]'),'CLI rerun/hash-only')
             require(all(type(value) is bool or name=='max_buffered_records' or isinstance(value,str) and len(value)==64

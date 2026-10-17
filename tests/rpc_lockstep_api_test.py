@@ -13,6 +13,6 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-api-',dir='/private/tmp' i
     for core in cores:
         subprocess.run([loader,'--refusal',core],check=True,timeout=20)
         args=[runner,'--core',core,'--plan',str(Path(tmp)/'unused.arcplan'),'--system',tmp,'--save',tmp,'--lockstep-stream',str(Path(tmp)/'unused.stream')]
-        result=subprocess.run(args,capture_output=True,text=True,timeout=20)
+        result=subprocess.run(args,capture_output=True,text=True,timeout=20, encoding='utf-8')
         if result.returncode!=2 or 'Core refuses lockstep stream' not in result.stderr:raise RuntimeError((core,result.returncode,result.stderr))
 print('shipping: no lockstep API; other test cores: no emitter/injection, bit absent, exported stubs refuse, runner exits 2 with named refusal')

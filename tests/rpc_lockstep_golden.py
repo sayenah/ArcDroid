@@ -12,7 +12,7 @@ def run(command,**kwargs):
     original=list(command);candidate=list(command)
     index=original.index('--core')+1
     original[index]=os.environ['ARCDROID_RPC_LOCKSTEP_PLAN_CORE']
-    plan=Path(candidate[candidate.index('--plan')+1]).read_text()
+    plan=Path(candidate[candidate.index('--plan')+1]).read_text(encoding='utf-8')
     model=next(line.split('=',1)[1] for line in plan.splitlines() if line.startswith('model='))
     model=('arm610','arm710','sa110','arm7500').index(model)
     candidate+=['--lockstep-stream',os.devnull,'--lockstep-role','baseline',

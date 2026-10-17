@@ -28,7 +28,7 @@ def main():
     p.add_argument('--cross-quota-only',action='store_true',help='rerun full-checkpoint quotas and oracle without unchanged strict density legs')
     p.add_argument('--endpoint',type=int,default=200000)
     a=p.parse_args();started=time.monotonic()
-    items=json.loads((a.fixtures/'manifest.json').read_text())['items']
+    items=json.loads((a.fixtures/'manifest.json').read_text(encoding='utf-8'))['items']
     items=[x for x in items if (a.model is None or x['model']==a.model) and a.only in x['name']]
     if not items:raise RuntimeError('empty corpus')
     maximum=0;total_bytes=0;quota_comparisons=0;schema,sh=c.load_schema()
@@ -40,7 +40,7 @@ def main():
         r=subprocess.run(command,capture_output=True,timeout=120)
         elapsed=time.monotonic()-begin
         if r.returncode:raise RuntimeError((item['name'],sink,flags,r.returncode,r.stderr[-1000:]))
-        text=r.stdout.decode()
+        text=r.stdout.decode('utf-8')
         if item['fatal']:
             if 'fault=1' not in text:raise RuntimeError((item['name'],'missing fatal'))
             registers=[int(x,16) for x in re.search(r'^regs=(.*)$',text,re.M)[1].split(',')]
@@ -81,13 +81,13 @@ def main():
             left=Path(tmp)/'baseline.stream';right=Path(tmp)/'candidate.stream'
             baseline,elapsed=run(item,a.lockstep_core,str(left),257,endpoint=endpoint)
             maximum=max(maximum,elapsed);total_bytes+=left.stat().st_size
-            expected=c.stdout_projection(oracle.stdout.decode(),'cross-quota',schema)
-            if c.stdout_projection(baseline.stdout.decode(),'cross-quota',schema)!=expected:
+            expected=c.stdout_projection(oracle.stdout.decode('utf-8'),'cross-quota',schema)
+            if c.stdout_projection(baseline.stdout.decode('utf-8'),'cross-quota',schema)!=expected:
                 raise RuntimeError((item['name'],'cross-quota baseline guest effect'))
             for quota in (1,7,200):
                 candidate,elapsed=run(item,a.lockstep_core,str(right),256,endpoint=endpoint,quota=quota)
                 maximum=max(maximum,elapsed);total_bytes+=right.stat().st_size
-                if c.stdout_projection(candidate.stdout.decode(),'cross-quota',schema)!=expected:
+                if c.stdout_projection(candidate.stdout.decode('utf-8'),'cross-quota',schema)!=expected:
                     raise RuntimeError((item['name'],'cross-quota guest effect',quota))
                 with left.open('rb') as l,right.open('rb') as r:result=c.compare(l,r,schema,sh,'cross-quota')
                 if not result['ok']:raise RuntimeError((item['name'],'full-checkpoint quota disagreement',quota,result))
@@ -112,7 +112,7 @@ def main():
         for flags in densities:
             result,elapsed=run(item,a.lockstep_core,'discard',flags,endpoint=endpoint);maximum=max(maximum,elapsed)
             if result.stdout!=oracle.stdout:raise RuntimeError((item['name'],'density guest effect',flags))
-        print('PASS',item['name'],'endpoint='+str(endpoint),'full-checkpoint-quotas=1,7,200','wire-sha256='+hashes[0].decode(),
+        print('PASS',item['name'],'endpoint='+str(endpoint),'full-checkpoint-quotas=1,7,200','wire-sha256='+hashes[0].decode('utf-8'),
             'stdout-sha256='+hashlib.sha256(oracle.stdout).hexdigest(),flush=True)
     print(json.dumps(dict(items=len(items),endpoint=a.endpoint,maximum_process_seconds=maximum,
         stream_bytes=total_bytes,quota_comparisons=quota_comparisons,elapsed_seconds=time.monotonic()-started),sort_keys=True),flush=True)

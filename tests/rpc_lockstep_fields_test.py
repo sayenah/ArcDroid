@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-fields-',dir='/private/tmp
         items=[values[f['name']]] if f['count']==1 else values[f['name']]
         words.extend(n for value in items for n in (value if f['type']=='allocation-offset' else [value]))
     vector.write_bytes(struct.pack('<'+'Q'*len(words),*words))
-    result=subprocess.run([sys.argv[1],str(vector)],capture_output=True,text=True,timeout=60)
+    result=subprocess.run([sys.argv[1],str(vector)],capture_output=True,text=True,timeout=60, encoding='utf-8')
     if result.returncode:raise RuntimeError(('C field digest',result.returncode,result.stderr))
     lines=result.stdout.splitlines()
     if len(lines)!=len(schema['fields']):raise RuntimeError('field coverage count')

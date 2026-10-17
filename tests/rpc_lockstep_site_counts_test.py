@@ -47,7 +47,7 @@ def main():
     p.add_argument('runner');p.add_argument('profile_core');p.add_argument('core')
     p.add_argument('fixtures',type=Path);p.add_argument('--model',type=int,required=True)
     p.add_argument('--only',default='');a=p.parse_args();schema,sh=c.load_schema();start=time.monotonic()
-    items=[item for item in json.loads((a.fixtures/'manifest.json').read_text())['items'] if item['model']==a.model and a.only in item['name']]
+    items=[item for item in json.loads((a.fixtures/'manifest.json').read_text(encoding='utf-8'))['items'] if item['model']==a.model and a.only in item['name']]
     if not items:raise RuntimeError('empty site-count corpus')
     with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-site-counts-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
         root=Path(tmp)
@@ -57,12 +57,12 @@ def main():
                 '--save',str(root),'--frames','2','--ram-offset','262144','--ram-words',str(len(item['expected'])),
                 '--endpoint-instructions','1:30000:0']
             oracle=subprocess.run([a.runner,'--core',a.profile_core,*common,'--profile',str(profile),
-                '--profile-sample-stride','0'],capture_output=True,text=True,timeout=60)
+                '--profile-sample-stride','0'],capture_output=True,text=True,timeout=60, encoding='utf-8')
             expectation(item,oracle)
             actual=subprocess.run([a.runner,'--core',a.core,*common,'--lockstep-stream',str(stream),
-                '--lockstep-role','baseline','--lockstep-model',str(a.model)],capture_output=True,text=True,timeout=120)
+                '--lockstep-role','baseline','--lockstep-model',str(a.model)],capture_output=True,text=True,timeout=120, encoding='utf-8')
             if actual.returncode!=oracle.returncode or actual.stdout!=oracle.stdout:raise RuntimeError((item['name'],'profile/lockstep guest effect',oracle.returncode,actual.returncode,actual.stderr[-1000:]))
-            counters=json.loads(profile.read_text())['records'][-1];want=expected(item,counters);got=collections.Counter();edges=collections.Counter();attempts=0
+            counters=json.loads(profile.read_text(encoding='utf-8'))['records'][-1];want=expected(item,counters);got=collections.Counter();edges=collections.Counter();attempts=0
             with stream.open('rb') as file:
                 reader=c.Reader(file,schema,sh,'strict')
                 while (record:=reader.next()) is not None:

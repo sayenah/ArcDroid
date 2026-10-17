@@ -130,17 +130,17 @@ def main():
     with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-compat-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
         path=Path(tmp)/'schema.json';modified=copy.deepcopy(schema)
         modified['grounding_commit']='inventory-metadata-only';modified['fields'][0]['citation']='reviewed new location'
-        path.write_text(json.dumps(modified));require(c.load_schema(path)[1]==sh,'metadata changed compatibility')
-        modified['fields'][0]['count']+=1;path.write_text(json.dumps(modified))
+        path.write_text(json.dumps(modified), encoding='utf-8');require(c.load_schema(path)[1]==sh,'metadata changed compatibility')
+        modified['fields'][0]['count']+=1;path.write_text(json.dumps(modified), encoding='utf-8')
         require(c.load_schema(path)[1]!=sh,'layout absent from compatibility')
         modified=copy.deepcopy(schema)
         host=copy.deepcopy(next(f for f in schema['fields'] if f['condition'] is False))
         rule=copy.deepcopy(next(r for r in schema['reviewed_exclusions'] if r['field']==host['name']))
         host['name']='transport.new_host_only_state';rule['field']=host['name']
         modified['fields'].insert(0,host);modified['reviewed_exclusions'].append(rule)
-        path.write_text(json.dumps(modified));require(c.load_schema(path)[1]==sh,'host-only field changed wire compatibility')
+        path.write_text(json.dumps(modified), encoding='utf-8');require(c.load_schema(path)[1]==sh,'host-only field changed wire compatibility')
         require(w.checkpoint(key(),modified,w.defaults(modified))==cp(0),'host-only field changed detail wire layout')
-    vectors=json.loads((ROOT/'tests/rpc_lockstep_observer_vectors.json').read_text())
+    vectors=json.loads((ROOT/'tests/rpc_lockstep_observer_vectors.json').read_text(encoding='utf-8'))
     for vector in vectors['vectors']:
         for side in ('cheap','observed'):
             v=vector[side];n=v['instruction']+(v['instructions']-v['batch_start']-v['accounted'] if v['batch_live'] and v['observers_active'] else 0)
