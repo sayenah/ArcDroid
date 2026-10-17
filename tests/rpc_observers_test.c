@@ -964,9 +964,8 @@ static void phase_valid(void *opaque) {(void)opaque;++phase_revalidations;}
 static void phase_changed(void *opaque) {(void)opaque;++phase_changes;}
 static void phase_aborted(void *opaque,ArcRpcAttemptInterrupt reason)
 {(void)opaque;(void)reason;++phase_aborts;}
-static void phase_bind(CPUModel model,unsigned cells)
+static void phase_prepare(void)
 {
-    start(model,cells);
     phase_tag[0]=0x53435241;phase_tag[1]=64;phase_tag[2]=1;
     ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(plan.target,"ADFS::0.$.!Boot");
     ArcRpcAttemptToken token;assert(arc_riscpc_attempt_init(&phase_attempt,++phase_session,1));
@@ -976,6 +975,8 @@ static void phase_bind(CPUModel model,unsigned cells)
     ArcRpcLaunchBinding binding={&phase_attempt,&phase_controller,phase_valid,NULL,phase_changed,phase_aborted};
     assert(arc_rpc_observers_attempt(&binding));assert(!arc_rpc_observers_attempt(&binding));
 }
+static void phase_bind(CPUModel model,unsigned cells)
+{ start(model,cells);phase_prepare(); }
 static void phase_swi(uint32_t pc,uint32_t swi,uint32_t r0,uint32_t r1,uint32_t r2,uint32_t r3)
 {
     updatemode(16);arm.reg[16]=16;arm.reg[15]=pc+8;
@@ -1135,7 +1136,7 @@ static void production_cases(unsigned catalogue,CPUModel model)
     for(unsigned mode=3;mode<=19;mode+=16)for(unsigned flags=0;flags<32;++flags){
         production_start(catalogue,model);
         for(unsigned bit=1;bit<=128;bit*=2)
-            assert(arc_rpc_observers_capability(bit)==((252u&bit)!=0));
+            assert(arc_rpc_observers_capability(bit));
         assert(arc_rpc_observer_active && !arc_rpc_observer_context);
         arc_rpc_observers_boot_arm();assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_DISABLED);
         assert(!arc_rpc_observers_launch_arm("Run Authored"));
@@ -1204,6 +1205,26 @@ static void production_cases(unsigned catalogue,CPUModel model)
     arc_rpc_observers_rebase(model);assert(arc_rpc_observers_capability(252));
     assert(!box().recognised_open && !arc_rpc_observer_context);
 }
+/* D-203 promotion runs through production binding with no cell override. */
+static void production_phase_cases(unsigned catalogue,CPUModel model)
+{
+    for(unsigned desktop=0;desktop<2;++desktop){
+        production_start(catalogue,model);phase_prepare();
+        assert(arc_rpc_observers_launch_arm(phase_controller.text));phase_dispatch();
+        phase_marker(ARC_RPC_STATUS_START_RETURNED,4,desktop?99:0);
+        assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+        phase_marker(desktop?ARC_RPC_STATUS_DESKTOP:ARC_RPC_STATUS_RETURNED,5,desktop?99:0);
+        assert(phase_attempt.outcome==(desktop?ARC_RPC_OUTCOME_DESKTOP:ARC_RPC_OUTCOME_RETURNED));
+        assert(arc_riscpc_attempt_established(&phase_attempt));
+        phase_marker(ARC_RPC_STATUS_CLOSED,6,0);
+    }
+    production_start(catalogue,model);phase_prepare();phase_dispatch();
+    phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);
+    arc_rpc_observers_frame(249999);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    arc_rpc_observers_frame(250000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_WAITING);
+    arc_rpc_observers_frame(2000000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING && !arc_rpc_observer_context);
+    arc_rpc_observers_frame(120000000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_UNKNOWN);
+}
 static void qualification_dump(void)
 {
     size_t count=0;const ArcRpcObserverQualification *table=arc_rpc_observer_test_qualifications(&count);
@@ -1218,6 +1239,10 @@ static void qualification_dump(void)
     for(unsigned catalogue=1;catalogue<=4;++catalogue)for(unsigned cpu=0;cpu<4;++cpu)if(production_pair(catalogue,cpu)){
         production_start(catalogue,(CPUModel)cpu);ArcErrorBox b=box();const ArcErrorProfile *e=b.profile;assert(e);
         printf("error\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\n",catalogue,cpu,e->contextual,e->poll_r1,e->poll_r2,e->poll_modes,e->answer_forms,e->ok_forms,e->cancel_forms,e->default_cancel_forms,e->numbers);
+        ArcLaunchOutcome outcome;arc_rpc_observers_launch_snapshot(&outcome);const ArcOutcomeProfile *l=outcome.profile;assert(l);
+        printf("launch\t%u\t%u\t%llu\t%u\t%u\t%u\t%u\n",catalogue,cpu,(unsigned long long)l->horizon_us,l->exit_rom,l->close_rom,l->poll_rom,l->contextual);
+        ArcBootWatch watch;arc_rpc_observers_test_boot_snapshot(&watch);const ArcBootProfile *w=watch.profile;assert(w);
+        printf("boot\t%u\t%u\t%llu\t%llu\t%u\t%u\t%u\t%u\n",catalogue,cpu,(unsigned long long)w->horizon_us,(unsigned long long)w->wait_us,w->buffer_limit,w->user_only,w->rom,w->contextual);
         arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);strcpy((char *)ram00,"NextDisc");
         issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
         ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);const ArcDiscProfile *p=d.profile;assert(p);
@@ -1245,11 +1270,14 @@ int main(int argc,char **argv)
         for(unsigned owner=0;owner<4;++owner)for(unsigned capability=0;capability<=ARC_RPC_CAP_REPLACE_B;++capability){
             ArcRpcObserverQualification q=arc_rpc_observer_qualification(catalogue,cpu,(ArcRpcObserver)owner,(ArcRpcObserverCapability)capability);
             bool enabled=production_pair(catalogue,cpu) && ((owner==ARC_RPC_OBS_ERROR && capability<=ARC_RPC_CAP_COMPLETE) ||
-                (owner==ARC_RPC_OBS_DISC && capability!=ARC_RPC_CAP_COMPLETE));
-            assert(q.enabled==enabled && q.profile==ARC_RPC_PROFILE_REVISION && q.reason && q.reason[0]);
+                (owner==ARC_RPC_OBS_DISC && capability!=ARC_RPC_CAP_COMPLETE) ||
+                ((owner==ARC_RPC_OBS_BOOT || owner==ARC_RPC_OBS_LAUNCH) && capability==ARC_RPC_CAP_OBSERVE));
+            unsigned revision=enabled && (owner==ARC_RPC_OBS_BOOT || owner==ARC_RPC_OBS_LAUNCH)?
+                ARC_RPC_LAUNCH_PROFILE_REVISION:ARC_RPC_PROFILE_REVISION;
+            assert(q.enabled==enabled && q.profile==revision && q.reason && q.reason[0]);
         }
     for(unsigned catalogue=0;catalogue<=5;++catalogue)for(unsigned cpu=0;cpu<4;++cpu){
-        if(production_pair(catalogue,cpu))production_cases(catalogue,(CPUModel)cpu);
+        if(production_pair(catalogue,cpu)){production_cases(catalogue,(CPUModel)cpu);production_phase_cases(catalogue,(CPUModel)cpu);}
         else {production_start(catalogue,(CPUModel)cpu);assert(!arc_rpc_observer_active && !arc_rpc_observers_capability(252));report(3);assert(box().modal_unknown && !box().recognised_open);}
     }
     for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);adjudicated_cases((CPUModel)model);

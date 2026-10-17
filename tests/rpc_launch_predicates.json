@@ -8,7 +8,7 @@
     "libretro/rpc_cmos_store.c": "6598034b05f7c8a44d8b991ffe066f7d27053b3f068e7b5d9701d3f7968a88f1",
     "engine/arc_boot_watch.c": "d0e24f3176d45bb3834db0be9177e57d537e440f81191efbf1546f2ee61e0e95",
     "engine/arc_launch_outcome.c": "b5ba3005fa319ca620b1f5cbbbbda191788ee4ebeb542d65b363c9a461131165",
-    "engine/rpc/rpc_observers.c": "df225bb6b882986e056ec5b4aeb60937d5c6d568ca9d2b9810627cee12880f6d",
+    "engine/rpc/rpc_observers.c": "fdf8f47df05fe2d71bfdb5b1e2900208942770b309e2bef21bb3c94008b25efc",
     "core/launch_discovery.c": "84197694beccfe2e0a0a0e4e4e810c46bf030fff530a26bfa49e782758f4ed21",
     "libretro/rpc_preparation.c": "ba441b45ee73f02783eb3ef8bf93f00830d14abece586fc66fc1e28ad03b0a4c",
     "libretro/arcdroid_libretro.c": "0fa647c1cf2572e455d12a7c24e71dced0297d40bd5120dd4ce3aa66c25c2465",

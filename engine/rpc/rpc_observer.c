@@ -82,32 +82,32 @@ static void gate(void)
     arc_rpc_observer_active|=trace.status.enabled;arc_rpc_observer_context|=trace.status.enabled;
 #endif
 }
-/* D-181: reasons/references are pinned to the adopted qualification record. */
-#define DEFERRED "awaiting R3c-3 launch hook (S64: *WimpTask starts tasks in SVC mode; F12 calls Wimp_Initialise; 3.5+ prompt buffers lie above 0x8000)"
+/* D-181/D-203: references are pinned to the adopted qualification record. */
+#define LAUNCH_EVIDENCE "docs/riscpc-observer-qualification.md: ret-*, desk-*, blk-*, prm-*, pin-*, dup-*, rst-*, swp-*"
 #define ERROR_EVIDENCE "docs/riscpc-observer-qualification.md: a3-*, b3-*, ga-*, gb-*, gna-*, gnb-*, b14-*, a14-*"
 #define DISC_A_EVIDENCE "docs/riscpc-observer-qualification.md: k-*, u-*"
 #define DISC_B_EVIDENCE "docs/riscpc-observer-qualification.md: sb-*"
-#define CELL(cat,cpu,owner,cap,on,reason) {cat,cpu,1,owner,cap,on,reason}
-#define PAIR(cat,cpu,error,disc_a) CELL(cat,cpu,ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE,false,DEFERRED), \
-    CELL(cat,cpu,ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE,false,DEFERRED), \
-    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,true,error), \
-    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_COMPLETE,true,ERROR_EVIDENCE), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE,true,disc_a), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE,true,disc_a), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE_B,true,DISC_B_EVIDENCE), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE_B,true,DISC_B_EVIDENCE)
+#define CELL(cat,cpu,rev,owner,cap,on,reason) {cat,cpu,rev,owner,cap,on,reason}
+#define PAIR(cat,cpu,error,disc_a,launch) CELL(cat,cpu,2,ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE,true,launch), \
+    CELL(cat,cpu,2,ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE,true,launch), \
+    CELL(cat,cpu,1,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,true,error), \
+    CELL(cat,cpu,1,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_COMPLETE,true,ERROR_EVIDENCE), \
+    CELL(cat,cpu,1,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE,true,disc_a), \
+    CELL(cat,cpu,1,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE,true,disc_a), \
+    CELL(cat,cpu,1,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE_B,true,DISC_B_EVIDENCE), \
+    CELL(cat,cpu,1,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE_B,true,DISC_B_EVIDENCE)
 static const ArcRpcObserverQualification qualifications[]={
-    PAIR(1,0,ERROR_EVIDENCE ", o-350-arm610",DISC_A_EVIDENCE),
-    PAIR(2,1,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(2,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),
-    PAIR(3,2,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(4,1,ERROR_EVIDENCE,DISC_A_EVIDENCE),
-    PAIR(4,2,ERROR_EVIDENCE,DISC_A_EVIDENCE ", d-084d"),PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)
+    PAIR(1,0,ERROR_EVIDENCE ", o-350-arm610",DISC_A_EVIDENCE,LAUNCH_EVIDENCE),
+    PAIR(2,1,ERROR_EVIDENCE,DISC_A_EVIDENCE,LAUNCH_EVIDENCE),PAIR(2,3,ERROR_EVIDENCE,DISC_A_EVIDENCE,LAUNCH_EVIDENCE),
+    PAIR(3,2,ERROR_EVIDENCE,DISC_A_EVIDENCE,LAUNCH_EVIDENCE),PAIR(4,1,ERROR_EVIDENCE,DISC_A_EVIDENCE,LAUNCH_EVIDENCE),
+    PAIR(4,2,ERROR_EVIDENCE,DISC_A_EVIDENCE ", d-084d",LAUNCH_EVIDENCE ", i084-371sa110, p084-371sa110, one-371sa110, odin-371sa110, win-371sa110"),PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE,LAUNCH_EVIDENCE)
 };
 #undef PAIR
 #undef CELL
 #undef DISC_B_EVIDENCE
 #undef DISC_A_EVIDENCE
 #undef ERROR_EVIDENCE
-#undef DEFERRED
+#undef LAUNCH_EVIDENCE
 ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
     unsigned cpu, ArcRpcObserver owner, ArcRpcObserverCapability capability)
 {

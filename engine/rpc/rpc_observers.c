@@ -716,3 +716,8 @@ void arc_rpc_observers_disc_status(ArcRpcDiscStatus *out)
         !arc_rpc_observers_capability(ARC_RPC_CELL_ERROR)?"error-observation-disabled":
         state.error.recognised_open?"user-error-open":state.error.modal_unknown?"modal-unknown":"eligible";
 }
+
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
+void arc_rpc_observers_test_boot_snapshot(ArcBootWatch *out)
+{ if(out){*out=state.boot;if(!arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))memset(out,0,sizeof(*out));} }
+#endif

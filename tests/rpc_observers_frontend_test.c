@@ -273,11 +273,11 @@ int main(int argc,char **argv)
             assert(catalogue==4 && cpu==2);
             reset();binding(UINT32_MAX,&catalogue,&cpu);
             assert(catalogue==4 && cpu==2);
-            assert(cells()==(setting==2?0u:252u));
+            assert(cells()==(setting==2?0u:255u));
             assert(off_logs==(setting==2?2u:0u));
             run();run();api->error_snapshot(&box);
             assert(box.recognised_open==(setting!=2));
-            assert(cells()==(setting==2?0u:252u));unload();
+            assert(cells()==(setting==2?0u:255u));unload();
         }
         deinit();free(rom);puts("observers off: qualified 3.71/SA110 binding, all cells disabled across reset; absent/zero retain production; distinct TEST OFF log");return 0;
     }
@@ -486,7 +486,7 @@ extended:;
             assert(api->error_request(ARC_ERROR_OK));reset();api->error_snapshot(&box);
             ArcDiscRequest retired;api->disc_snapshot(&retired);
             assert(!box.recognised_open && !box.modal_unknown && !box.answer_available && box.pending==ARC_ERROR_NONE && !retired.a_active);
-            unsigned catalogue,cpu;binding(UINT32_MAX,&catalogue,&cpu);assert(catalogue==4 && cpu==2 && cells()==252);
+            unsigned catalogue,cpu;binding(UINT32_MAX,&catalogue,&cpu);assert(catalogue==4 && cpu==2 && cells()==255);
         }
         unload();
     }
