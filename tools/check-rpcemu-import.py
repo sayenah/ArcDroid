@@ -25,7 +25,7 @@ ALLOWLIST = {"COPYING", "readme.txt", "src/rpcemu.h", "src/sound.h",
     f"src/{name}.{extension}" for name in NAMES for extension in ("c", "h")}
 SYSTEM_HEADERS = {"assert.h", "errno.h", "limits.h", "stdarg.h", "stddef.h",
                   "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h", "stdbool.h"}
-PROJECT_HEADERS = {"engine/rpc/rpc_profile.h", "engine/rpc/rpc_observer.h", "engine/rpc/rpc_ide.h", "engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h", "engine/rpc/rpc_mem_timing.h"}
+PROJECT_HEADERS = {"engine/rpc/rpc_crosscheck.h", "engine/rpc/rpc_exercise.h", "engine/rpc/rpc_profile.h", "engine/rpc/rpc_observer.h", "engine/rpc/rpc_ide.h", "engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h", "engine/rpc/rpc_mem_timing.h"}
 # R2b typed media service: exact neutral API closure, never another backend.
 PROJECT_HEADERS |= {"core/adffs.h", "core/arcdroid_core.h", "core/hd_program.h",
     "core/jfd.h", "engine/arc_boot_watch.h", "engine/arc_disc_request.h",

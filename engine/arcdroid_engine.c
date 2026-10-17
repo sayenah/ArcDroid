@@ -586,10 +586,15 @@ void arc_engine_test_gate_release_fault(bool enabled)
         .registers=7,.results=1,.kinds=ARC_RPC_OBS_SWI,.callback=gate_release_fault};
     (void)arc_rpc_observer_test_filter(ARC_RPC_OBS_BOOT,&f);
 }
+bool arc_engine_test_refuse(const char *facility) { return arc_rpc_test_refuse(facility); }
 void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
 {
     if(!arc_engine_is_rpc())return;
+#if !defined(ARCDROID_RPC_MEASUREMENT)
     arc_rpc_session_test_quota(quota);
+#else
+    if(quota!=200)arc_rpc_session_test_quota(quota);
+#endif
     ArcRpcObserveFilter f={.modes=~0u,.swi=0xffffff,.swi_mask=0xffffff,.kinds=ARC_RPC_OBS_SWI};
     arc_rpc_observer_test_filter(ARC_RPC_OBS_BOOT,unmatched?&f:NULL);
 }

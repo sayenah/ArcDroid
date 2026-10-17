@@ -114,7 +114,7 @@ void arc_rpc_observer_host_handler(ArcRpcObserver, const ArcRpcHostWorkHandler *
 bool arc_rpc_observer_in_host(void);
 void arc_rpc_observer_drain(void); /* Frame boundary only, never guest execution. */
 
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count);
 #include "libretro.h"
 extern uint64_t arc_rpc_observer_integer_attempts;

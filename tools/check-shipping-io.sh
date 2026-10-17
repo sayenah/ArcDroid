@@ -41,6 +41,7 @@ engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
 engine/rpc/rpc_profile.c
+engine/rpc/rpc_crosscheck.c
 engine/rpc/rpc_session.c
 engine/rpc/rpc_audio.c
 engine/rpc/rpc_input.c
@@ -139,6 +140,7 @@ engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
 engine/rpc/rpc_profile.c
+engine/rpc/rpc_crosscheck.c
 engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c engine/rpc/rpc_mem_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c
@@ -193,8 +195,9 @@ third_party/zlib/zutil.c third_party/zlib/zutil.h'
   fi
   rm -f "$preprocess_tmp"
 
-  zlib_search_path='build/**/CMakeFiles/arcdroid_zlib.dir/**/*.{o,obj}'
-  zlib_objects=$(find build -type f -path '*arcdroid_zlib.dir*' \( -name '*.o' -o -name '*.obj' \) 2>/dev/null || true)
+  zlib_build_root=${ARCDROID_SHIPPING_IO_BUILD_DIR:-build}
+  zlib_search_path="$zlib_build_root/**/CMakeFiles/arcdroid_zlib.dir/**/*.{o,obj}"
+  zlib_objects=$(find "$zlib_build_root" -type f -path '*arcdroid_zlib.dir*' \( -name '*.o' -o -name '*.obj' \) 2>/dev/null || true)
   if [ -z "$zlib_objects" ]; then
     printf 'shipping I/O guard: no compiled zlib objects found; searched %s\n' "$zlib_search_path" >&2
     exit 1
