@@ -102,7 +102,7 @@ def objects(directory):
     return paths
 
 
-def verify(arculator, rpc, policy, nm, sanitized=False, errors=None, allocation_census=False):
+def verify(arculator, rpc, policy, nm, sanitized=False, errors=None, allocation_census=False, shipping=False):
     local = errors is None
     if local:
         errors = []
@@ -127,6 +127,12 @@ def verify(arculator, rpc, policy, nm, sanitized=False, errors=None, allocation_
                 continue
             form = object_format(path)
             for name, undefined in symbols:
+                if engine=="rpc":
+                    violation(not name.startswith("arc_sha256_") or path.name in ("rpc_lockstep.c.o","rpc_lockstep.c.obj"),
+                              f"SHA-256 reference outside lockstep emitter: {path}: {name}",errors)
+                    if shipping:
+                        violation(not name.startswith(("arc_rpc_lockstep_","arc_rpc_test_lockstep_","arc_sha256_")),
+                                  f"shipping lockstep symbol: {path}: {name}",errors)
                 current.append((path, name, undefined, form))
                 if undefined:
                     continue
@@ -326,6 +332,7 @@ def main():
                         help="recognise compiler-owned ASan/UBSan instrumentation")
     parser.add_argument("--allocation-census", type=int, choices=(0, 1), default=0,
                         help="recognise forced allocator instrumentation in the dedicated test core")
+    parser.add_argument("--shipping", type=int, choices=(0,1),default=0)
     parser.add_argument("--policy", type=Path,
                         default=Path(__file__).resolve().parents[1] / "engine/backend-symbols.json")
     args = parser.parse_args()
@@ -334,7 +341,7 @@ def main():
         policy = json.loads(args.policy.read_text())
         require(policy["schema"] == 1, "unsupported symbol policy")
         errors = []
-        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors, args.allocation_census)
+        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors, args.allocation_census,args.shipping)
         if args.outside:
             verify_outside(args.outside, policy, args.nm, args.sanitized, errors)
         if args.allocation_census:

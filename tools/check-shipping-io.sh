@@ -42,6 +42,7 @@ engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
 engine/rpc/rpc_profile.c
 engine/rpc/rpc_crosscheck.c
+engine/rpc/rpc_lockstep.c
 engine/rpc/rpc_session.c
 engine/rpc/rpc_audio.c
 engine/rpc/rpc_input.c
@@ -141,6 +142,7 @@ engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
 engine/rpc/rpc_profile.c
 engine/rpc/rpc_crosscheck.c
+engine/rpc/rpc_lockstep.c
 engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c engine/rpc/rpc_mem_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c

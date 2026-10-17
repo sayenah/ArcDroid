@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
 
 
@@ -36,6 +38,7 @@
 
   Keyboard acks (0xFA) after every byte
   */
+#include "rpc_lockstep.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -134,6 +137,7 @@ static int oldz;
 static inline void
 keyboard_irq_rx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_keyboard_irq_raise();
 	} else {
@@ -145,6 +149,7 @@ keyboard_irq_rx_raise(void)
 static inline void
 keyboard_irq_rx_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_keyboard_irq_lower();
 	} else {
@@ -156,6 +161,7 @@ keyboard_irq_rx_lower(void)
 static inline void
 keyboard_irq_tx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	iomd.irqb.status |= IOMD_IRQB_KEYBOARD_TX;
 	updateirqs();
 }
@@ -163,6 +169,7 @@ keyboard_irq_tx_raise(void)
 static inline void
 mouse_irq_tx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	iomd.irqd.status |= IOMD_IRQD_MOUSE_TX;
 	updateirqs();
 }
@@ -170,6 +177,7 @@ mouse_irq_tx_raise(void)
 static inline void
 mouse_irq_tx_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	iomd.irqd.status &= ~IOMD_IRQD_MOUSE_TX;
 	updateirqs();
 }
@@ -177,6 +185,7 @@ mouse_irq_tx_lower(void)
 static inline void
 mouse_irq_rx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_mouse_irq_raise();
 	} else {
@@ -188,6 +197,7 @@ mouse_irq_rx_raise(void)
 static inline void
 mouse_irq_rx_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_mouse_irq_lower();
 	} else {
@@ -199,6 +209,7 @@ mouse_irq_rx_lower(void)
 static void
 ps2_queue(PS2Queue *q, uint8_t b)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (q->count >= PS2_QUEUE_SIZE) {
 		return;
 	}
@@ -212,6 +223,7 @@ ps2_queue(PS2Queue *q, uint8_t b)
 static int
 calculateparity(uint8_t v)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	int c, d = 0;
 
 	for (c = 0; c < 8; c++) {
@@ -228,6 +240,7 @@ calculateparity(uint8_t v)
 void
 keyboard_reset(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 0);
 	memset(&kbd, 0, sizeof(kbd));
     arc_rpc_kbd_parameter = 0;
@@ -254,6 +267,7 @@ keyboard_reset(void)
 static uint8_t
 ps2_read_data(PS2Queue *q)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	uint8_t val;
 
 	if (q->count == 0) {
@@ -280,6 +294,7 @@ ps2_read_data(PS2Queue *q)
 void
 keyboard_data_write(uint8_t v)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
     if (arc_rpc_kbd_parameter) {
         if (arc_rpc_kbd_parameter == 0xf3) arc_rpc_input_typematic(v);
         arc_rpc_kbd_parameter = 0;
@@ -313,6 +328,7 @@ queued:
 void
 keyboard_control_write(uint8_t v)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (v && !kbd.enable) {
 		kbd.reset = 1;
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 5 * 4);
@@ -328,6 +344,7 @@ keyboard_control_write(uint8_t v)
 static void
 keyboardsend(uint8_t v)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	kbd.data = v;
 	kbd.stat |= PS2_CONTROL_RX_FULL;
 	if (calculateparity(v)) {
@@ -342,6 +359,7 @@ keyboardsend(uint8_t v)
 void
 keyboard_callback_rpcemu(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	PS2Queue *q = &kbd.queue;
     /* TX link readiness must not be blocked by a pre-enable unread make. */
     if ((kbd.stat & PS2_CONTROL_RX_FULL) && kbd.reset != 1) {
@@ -396,6 +414,7 @@ keyboard_callback_rpcemu(void)
 uint8_t
 keyboard_status_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	return kbd.stat;
 }
 
@@ -407,6 +426,7 @@ keyboard_status_read(void)
 uint8_t
 keyboard_data_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	keyboard_irq_rx_lower();
 	kbd.stat &= ~PS2_CONTROL_RX_FULL;
 	if (!kcallback && (kbd.command == 0xfe || kbd.reset == 2 || kbd.reset == 3)) {
@@ -423,6 +443,7 @@ keyboard_data_read(void)
 void
 mouse_control_write(uint8_t v)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 //        printf("Write mouse enable %02X\n",v);
 
         v &= PS2_CONTROL_ENABLE;
@@ -445,6 +466,7 @@ mouse_control_write(uint8_t v)
 void
 mouse_data_write(uint8_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
         /* Set BUSY flag, clear EMPTY flag */
         msstat = (msstat & 0x3f) | PS2_CONTROL_TX_BUSY;
 
@@ -569,6 +591,7 @@ mouse_data_write(uint8_t val)
 uint8_t
 mouse_status_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
         return msstat;
 }
 
@@ -580,6 +603,7 @@ mouse_status_read(void)
 uint8_t
 mouse_data_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
         uint8_t temp = msdata;
 
         msstat &= ~PS2_CONTROL_RX_FULL;
@@ -603,6 +627,7 @@ mouse_data_read(void)
 static void
 mouse_send(uint8_t v)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
         msdata = v;
 
         mouse_irq_rx_raise();
@@ -624,6 +649,7 @@ mouse_send(uint8_t v)
 void
 mouse_ps2_callback(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (mcallback != 0) fatal("Mouse callback invariant");
     if (msstat & PS2_CONTROL_RX_FULL) return;
 
@@ -686,6 +712,7 @@ mouse_ps2_callback(void)
 static void
 mouse_process(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	int x, y;
 	int z, tmpz;
 	uint8_t mouseb = mouse.buttons & 7;
@@ -801,6 +828,7 @@ mouse_process(void)
 void
 mouse_mouse_move_relative(int dx, int dy)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 
 
 	mouse.dx = dx;
@@ -818,6 +846,7 @@ mouse_mouse_move_relative(int dx, int dy)
 void
 mouse_mouse_press(int buttons)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	mouse.buttons |= buttons;
 
 	// Capture mode
@@ -834,6 +863,7 @@ mouse_mouse_press(int buttons)
 void
 mouse_mouse_release(int buttons)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	mouse.buttons &= ~buttons;
 
 	// Capture mode
@@ -848,6 +878,7 @@ mouse_mouse_release(int buttons)
 int
 mouse_buttons_get(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	return mouse.buttons;
 }
 
@@ -857,6 +888,7 @@ mouse_buttons_get(void)
 void
 keyboard_key_press(const uint8_t *scan_codes)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (scan_codes == NULL || arc_rpc_keyboard_room() < 8) {
 		return;
 	}
@@ -886,6 +918,7 @@ keyboard_key_press(const uint8_t *scan_codes)
 void
 keyboard_key_release(const uint8_t *scan_codes)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (scan_codes == NULL || arc_rpc_keyboard_room() < 8) {
 		return;
 	}
@@ -907,5 +940,11 @@ keyboard_key_release(const uint8_t *scan_codes)
     kbd.command = 0xfe;
 }
 
-unsigned arc_rpc_keyboard_room(void) { return PS2_QUEUE_SIZE - kbd.queue.count; }
-unsigned arc_rpc_mouse_room(void) { return PS2_QUEUE_SIZE - msqueue.count; }
+unsigned arc_rpc_keyboard_room(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard)); return PS2_QUEUE_SIZE - kbd.queue.count; }
+unsigned arc_rpc_mouse_room(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard)); return PS2_QUEUE_SIZE - msqueue.count; }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_keyboard
+#endif

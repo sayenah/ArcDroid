@@ -24,7 +24,7 @@ from rpc_test_loop_compare import compare as compare_test_loops
 
 
 def run(args):
-    return subprocess.check_output(args,text=True,stderr=subprocess.STDOUT)
+    return subprocess.check_output(args,text=True,stderr=subprocess.STDOUT, encoding='utf-8')
 
 
 def blocks(text,kind):
@@ -110,14 +110,14 @@ for typename,members in (
 
 
 def layout(build,target,readobj,temp,header_only=False):
-    commands=json.loads((build/'compile_commands.json').read_text())
+    commands=json.loads((build/'compile_commands.json').read_text(encoding='utf-8'))
     entry=next(c for c in commands if f'{target}.dir/' in c['command'] and c['file'].endswith('/arcdroid_engine.c' if header_only else '/rpc_mem_timing.c'))
     command=split_command(entry['command'],os.name=='nt')
     # Build a constant layout vector with precisely the source object's flags.
     source=Path(entry['file']);probe=temp/(target+'.c');obj=temp/(target+'.o')
     include=(source.parent/'rpc/rpc_mem_timing.h') if header_only else source
     fields=LAYOUT_FIELDS[:FAST_LAYOUT_COUNT] if header_only else LAYOUT_FIELDS
-    probe.write_text('#include <stddef.h>\n#include "'+include.as_posix()+'"\nconst uint64_t arc_rpc_layout[] = {'+','.join(fields)+'};\n')
+    probe.write_text('#include <stddef.h>\n#include "'+include.as_posix()+'"\nconst uint64_t arc_rpc_layout[] = {'+','.join(fields)+'};\n', encoding='utf-8')
     command[command.index('-o')+1]=str(obj);command[command.index('-c')+1]=str(probe)
     subprocess.run(command,cwd=entry['directory'],check=True,capture_output=True)
     syms=blocks(run([readobj,'--symbols',str(obj)]),'Symbol')
@@ -143,7 +143,7 @@ def main():
     if args.test_loops and not args.objdump:raise RuntimeError('llvm-objdump is required for the TEST_FAULTS loop proof')
     for target in ('arcdroid_libretro_arculator','arcdroid_libretro_rpc','arcdroid_libretro','arcdroid_core','arcdroid_zlib'):
         compare_objects(objects(args.base,target),objects(args.candidate,target),args.readobj,'AC-5(a) '+target)
-    commands=json.loads((args.candidate/'compile_commands.json').read_text())
+    commands=json.loads((args.candidate/'compile_commands.json').read_text(encoding='utf-8'))
     flags=[]
     for target in ('arcdroid_libretro_rpc','arcdroid_rpcmeasure_libretro_rpc'):
         entry=next(c for c in commands if f'{target}.dir/' in c['command'] and c['file'].endswith('/arm.c'))

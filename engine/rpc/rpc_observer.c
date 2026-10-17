@@ -709,3 +709,7 @@ RETRO_API uint64_t arc_rpc_observer_test_epoch(void) { return observer.epoch; }
 const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count)
 { *count=sizeof(qualifications)/sizeof(qualifications[0]);return qualifications; }
 #endif
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_observer
+#endif

@@ -33,3 +33,7 @@ bool arc_rpc_calendar(uint64_t epoch, uint64_t elapsed_ns, ArcRpcCalendar *out)
         (unsigned)(seconds % 60), (unsigned)(elapsed_ns / 10000000 % 100)};
     return true;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_rtc
+#endif

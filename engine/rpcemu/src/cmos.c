@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* I2C + CMOS RAM emulation
 
   I2C and Philips PCF8583.
@@ -29,6 +31,7 @@
 /* ArcDroid modification (2026-10-06): declared in-memory CMOS, virtual RTC,
  * full transaction reset and contained invariant faults; no host services.
  * ArcDroid modification (2026-10-07): payload-only evidence and write time. */
+#include "rpc_lockstep.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -50,9 +53,11 @@ static uint64_t cmos_writes, arc_rpc_cmos_total_writes;
 static uint8_t arc_rpc_cmos_written[32];
 static uint64_t arc_rpc_cmos_last_write;
 static uint64_t (*arc_rpc_cmos_write_clock)(void);
-void arc_rpc_cmos_set_write_clock(uint64_t (*clock)(void)) { arc_rpc_cmos_write_clock=clock; }
+void arc_rpc_cmos_set_write_clock(uint64_t (*clock)(void)) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); arc_rpc_cmos_write_clock=clock; }
 uint64_t arc_rpc_cmos_payload_evidence(uint8_t mask[32],uint64_t *last)
-{ if(mask){memcpy(mask,arc_rpc_cmos_written,32);mask[0]=mask[1]=0;}if(last)*last=arc_rpc_cmos_last_write;return cmos_writes; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); if(mask){memcpy(mask,arc_rpc_cmos_written,32);mask[0]=mask[1]=0;}if(last)*last=arc_rpc_cmos_last_write;return cmos_writes; }
 static uint32_t i2c_devices; /**< Bitfield of devices on the I2C bus */
 
 /****************************************************************************/
@@ -104,21 +109,29 @@ typedef struct {
 /* Declared bytes are never silently patched, checksummed or persisted. */
 void arc_rpc_cmos_seed(const uint8_t bytes[256])
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
     if (!bytes) fatal("Missing declared CMOS seed");
     memcpy(cmosram, bytes, sizeof(cmosram));
     cmos_writes = arc_rpc_cmos_total_writes = arc_rpc_cmos_last_write = 0;
     memset(arc_rpc_cmos_written, 0, sizeof(arc_rpc_cmos_written));
 }
-void arc_rpc_cmos_snapshot(uint8_t bytes[256]) { memcpy(bytes, cmosram, 256); }
-uint64_t arc_rpc_cmos_writes(void) { return cmos_writes; }
-void cmos_init(void) { uint8_t empty[256] = {0}; arc_rpc_cmos_seed(empty); }
+void arc_rpc_cmos_snapshot(uint8_t bytes[256]) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); memcpy(bytes, cmosram, 256); }
+uint64_t arc_rpc_cmos_writes(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); return cmos_writes; }
+void cmos_init(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); uint8_t empty[256] = {0}; arc_rpc_cmos_seed(empty); }
 uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32])
-{ if(mask)memcpy(mask,arc_rpc_cmos_written,32);return arc_rpc_cmos_total_writes; }
-void cmos_reset(void) { /* Volatile CMOS survives reset. Bus reset is separate. */ }
-void savecmos(void) { /* Persistence is outside the R1 session contract. */ }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); if(mask)memcpy(mask,arc_rpc_cmos_written,32);return arc_rpc_cmos_total_writes; }
+void cmos_reset(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); /* Volatile CMOS survives reset. Bus reset is separate. */ }
+void savecmos(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos)); /* Persistence is outside the R1 session contract. */ }
 
 static void cmosgettime(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
     ArcRpcCalendar t;
     if (!arc_rpc_rtc_read(&t)) fatal("RTC outside declared epoch range");
     cmosram[1] = BIN2BCD(t.centisecond);
@@ -139,6 +152,7 @@ static void cmosgettime(void)
 static int
 pcf8583_write(void *dev, uint8_t data)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	PCF8583 *pcf = dev;
 
 	if (pcf->state == PCF_STATE_ADDR) {
@@ -175,6 +189,7 @@ pcf8583_write(void *dev, uint8_t data)
 static int
 pcf8583_read(void *dev, uint8_t *data)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	PCF8583 *pcf = dev;
 
 	if (pcf->reg_address < 0x10)
@@ -199,6 +214,7 @@ pcf8583_read(void *dev, uint8_t *data)
 static int
 pcf8583_start(void *dev, int i2c_addr, int operation)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	PCF8583 *pcf = dev;
 
 	NOT_USED(i2c_addr);
@@ -219,6 +235,7 @@ pcf8583_start(void *dev, int i2c_addr, int operation)
 static void
 pcf8583_stop(void *dev)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	PCF8583 *pcf = dev;
 
 	dbgprintf("pcf8583 stop\n");
@@ -266,6 +283,7 @@ static uint8_t spd_data[128] = {
 static int
 spd_write(void *dev, uint8_t data)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	SPD *spd = dev;
 
 	rpclog("spd_write : data = %02X\n", data);
@@ -285,6 +303,7 @@ spd_write(void *dev, uint8_t data)
 static int
 spd_read(void *dev, uint8_t *data)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	SPD *spd = dev;
 
 	*data = spd_data[spd->reg_address];
@@ -306,6 +325,7 @@ spd_read(void *dev, uint8_t *data)
 static int
 spd_start(void *dev, int i2c_addr, int operation)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	NOT_USED(dev);
 	NOT_USED(i2c_addr);
 	NOT_USED(operation);
@@ -324,6 +344,7 @@ spd_start(void *dev, int i2c_addr, int operation)
 static void
 spd_stop(void *dev)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	NOT_USED(dev);
 
 	rpclog("spd stop\n");
@@ -382,6 +403,7 @@ static I2C_SerDes *serdes = &serdes_s; /**< Handle of the I2C state machine */
 static void
 reset_serdes(I2C_SerDes *serdes)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	memset(serdes, 0, sizeof(*serdes));
     serdes->oldpinstate = I2C_SCL | I2C_SDA;
 	serdes->state = I2C_STATE_IDLE;
@@ -405,6 +427,7 @@ reset_serdes(I2C_SerDes *serdes)
 void
 cmosi2cchange(int scl, int sda)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	int oldscl = serdes->oldpinstate & I2C_SCL;
 	int oldsda = serdes->oldpinstate & I2C_SDA;
 
@@ -647,6 +670,7 @@ cmosi2cchange(int scl, int sda)
 void
 reseti2c(uint32_t chosen_i2c_devices)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_cmos));
 	i2cclock = 1;
 	i2cdata = 1;
 	i2c_devices = chosen_i2c_devices;
@@ -669,3 +693,7 @@ reseti2c(uint32_t chosen_i2c_devices)
 	/* Initialise the I2C state machine */
 	reset_serdes(serdes);
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_cmos
+#endif

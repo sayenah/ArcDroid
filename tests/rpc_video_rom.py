@@ -194,5 +194,5 @@ def main():
     for scenario in ('hclip','vclip','packed'):
         out.append(f'static const uint32_t rpc_a7000_{scenario}_readback[]={{'+','.join(f'0x{v:08x}u' for v in readbacks(scenario))+'};')
     out.append('static const uint32_t rpc_a7000_scroll_readback[]={'+','.join(f'0x{v:08x}u' for v in scroll_readbacks())+'};')
-    Path(sys.argv[1]).write_text('\n'.join(out)+'\n')
+    Path(sys.argv[1]).write_text('\n'.join(out)+'\n', encoding='utf-8')
 if __name__=='__main__':main()

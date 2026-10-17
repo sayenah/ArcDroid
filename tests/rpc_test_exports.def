@@ -1,5 +1,10 @@
 ; Non-installed test DLL seams only. GPL-2.0-only.
 EXPORTS
+  arc_rpc_test_lockstep_sink
+  arc_rpc_test_lockstep_status
+  arc_rpc_test_lockstep_end
+  arc_rpc_observer_complete
+  arc_rpc_observer_generation
   arc_rpc_session_test_rate
   arc_engine_test_cmos_write
   arc_engine_test_cmos_image

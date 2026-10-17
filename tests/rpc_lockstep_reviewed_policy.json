@@ -1093,6 +1093,38 @@
       ],
       "reason": "A-25(b): raw local batch position depends on quota; projected completion and remaining budgets remain compared",
       "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "rpc_observer.arc_rpc_observer_active",
+        "rpc_observer.arc_rpc_observer_context",
+        "observer.batch.live",
+        "observer.batch.start",
+        "observer.batch.accounted"
+      ],
+      "reason": "AS-2: trace-driven admission and lazy batch representation; semantic instruction/origin/watch state is projected separately",
+      "citation": "docs/riscpc-6b-m2b.md:AS-2"
+    },
+    {
+      "mode": "trace-toggle",
+      "fields": [
+        "rpc_observer.arc_rpc_observer_active",
+        "rpc_observer.arc_rpc_observer_context",
+        "observer.batch.live",
+        "observer.batch.start",
+        "observer.batch.accounted"
+      ],
+      "reason": "AS-2: trace-driven admission and lazy batch representation; semantic instruction/origin/watch state is projected separately",
+      "citation": "docs/riscpc-6b-m2b.md:AS-2"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "rpc_session.arc_rpc_test_quota"
+      ],
+      "reason": "R-M2b-O1: requested quota is the cross-quota independent variable and test configuration, not guest state; strict retains the raw value.",
+      "citation": "Fable S67 PR #504, R-M2b-O1"
     }
   ],
   "cross_quota_projections": {
@@ -1113,7 +1145,9 @@
       "pixels_since_entry": "pixels serviced since advance entry",
       "current_fields": "current video field count",
       "fields_since_entry": "fields serviced since advance entry",
-      "batch_completed": "total completed attempts at P3, including the final completed attempt"
+      "batch_completed": "total completed attempts at P3, including the final completed attempt",
+      "raw_inscount": "Raw uint32 ARM inscount, booked only at batch return; CPU start/reset clears it.",
+      "unbooked_completed": "Current batch P2 completions before return: prior attempts at P0/P1, inclusive at P2; P3 has already booked them."
     },
     "fields": {
       "rpc_session.arc_rpc_executed": {
@@ -1411,9 +1445,73 @@
           ]
         },
         "stop_at_field": "field remaining applies only while stop_at_field is enabled"
+      },
+      "arm.inscount": {
+        "P0": {
+          "mod": [
+            {
+              "add": [
+                {
+                  "input": "raw_inscount"
+                },
+                {
+                  "input": "unbooked_completed"
+                }
+              ]
+            },
+            4294967296
+          ]
+        },
+        "P1": {
+          "mod": [
+            {
+              "add": [
+                {
+                  "input": "raw_inscount"
+                },
+                {
+                  "input": "unbooked_completed"
+                }
+              ]
+            },
+            4294967296
+          ]
+        },
+        "P2": {
+          "mod": [
+            {
+              "add": [
+                {
+                  "input": "raw_inscount"
+                },
+                {
+                  "input": "unbooked_completed"
+                }
+              ]
+            },
+            4294967296
+          ]
+        },
+        "P3": {
+          "input": "raw_inscount"
+        }
       }
     },
-    "owner": "M2b serialises these non-mutating projected values into compared fields; M2a has no emitter"
+    "owner": "M2b serialises these non-mutating projected values into compared fields; M2a has no emitter",
+    "conditions": {
+      "memory.active_kind": {
+        "condition": {
+          "field": "memory.active_valid"
+        },
+        "citation": "Fable S67 PR #504, R-M2b-O2",
+        "reason": "The retained active kind describes an active request only while active_valid is true; active_valid itself stays compared. Strict retains the raw kind."
+      }
+    },
+    "rulings": {
+      "R-M2b-O1": "R-M2b-O1: requested quota is the cross-quota independent variable and test configuration, not guest state; strict retains the raw value.",
+      "R-M2b-O2": "The retained active kind describes an active request only while active_valid is true; active_valid itself stays compared. Strict retains the raw kind.",
+      "R-M2b-O3": "RPC arm.inscount is reset at CPU start/reset and incremented only at batch return; no runtime reader uses it. Cross-quota compares raw plus unbooked P2 credit modulo 2^32 at P0/P1/P2, raw at P3; any raw counter delta remains compared. Strict retains raw. Projection defined in docs/riscpc-lockstep-harness.md."
+    }
   },
   "stdout_projection": {
     "prefixes": [
@@ -1438,6 +1536,591 @@
         },
         "citation": "docs/riscpc-translator-invariants.md:Q-9; docs/riscpc-6b-m2a.md:A-33",
         "reason": "Post-fatal diagnostic count: fatal unwind skips batch-return accounting; exclude only cpu on the first fault=1 frame in cross-quota comparison."
+      }
+    ]
+  },
+  "observer_projections": {
+    "citation": "docs/riscpc-6b-m2b.md:AS-2",
+    "modes": [
+      "cross-quota",
+      "trace-toggle"
+    ],
+    "instruction": "instruction + (batch.live && observers_active ? fast.instructions - batch.start - batch.accounted : 0)",
+    "origin_live": {
+      "or": [
+        {
+          "field": "observer.in_swi"
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 0
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 1
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 2
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 3
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 4
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 5
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 6
+        },
+        {
+          "field": "observer.watches.live",
+          "index": 7
+        }
+      ]
+    },
+    "vectors": "tests/rpc_lockstep_observer_vectors.json"
+  },
+  "wire": {
+    "version": 1,
+    "plain_char_encoding": "unsigned octet widened to u64",
+    "p3_output_digest": "SHA-256(empty); no video or PCM scan",
+    "key_words": 6,
+    "edge_words": 1,
+    "fatal_hash_words": 2,
+    "page_identity": "boundary-kind,per-kind-occurrence,allocation,page",
+    "hash": "sha256/64(field included index,value words); sha256/64(ordered field hashes per group)",
+    "spans": "online open/close per kind; no header cap",
+    "counts": "End",
+    "output_boundaries": [
+      "frame-end",
+      "epoch-retirement",
+      "post-transition",
+      "fatal"
+    ],
+    "output_digest": "Boundary-marker SHA-256 over width,height,published RGB words,queued PCM frame count and signed sample words, all u64 LE."
+  },
+  "output_compared": {
+    "fields": [
+      "rpc_audio.arc_rpc_pcm",
+      "device.presentation_contents"
+    ],
+    "citation": "docs/riscpc-6b-m2b.md:M11",
+    "rule": "Only page-boundary markers compare output: initialized published video rectangle and live queued PCM, canonical u64 values, SHA-256. Never read uninitialized presentation rows."
+  },
+  "reviewed_inventory": {
+    "inventory": "2b161e783140f666597709b203008be50a08b1330a760c78bd3cad05ee2381e5",
+    "object_symbols": "483b8104e825b967011abaf3569d90b2d7dc4238c51388637c33079f94a7add2",
+    "local_static_symbols": "6b95f1103426754c8c41342d7b455977f1e126abee346c350a0f540f6b97514a"
+  },
+  "reachable_types": {
+    "ArcJfdImage": [
+      {
+        "name": "decoded",
+        "c_type": "uint8_t *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "decoded_size",
+        "c_type": "size_t",
+        "dimensions": []
+      },
+      {
+        "name": "sectors",
+        "c_type": "ArcJfdSector *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "sector_count",
+        "c_type": "size_t",
+        "dimensions": []
+      },
+      {
+        "name": "tracks",
+        "c_type": "ArcJfdTrack[166]",
+        "dimensions": [
+          166
+        ],
+        "record": "ArcJfdTrack"
+      },
+      {
+        "name": "track_count",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "title",
+        "c_type": "char[256]",
+        "dimensions": [
+          256
+        ]
+      },
+      {
+        "name": "sequence",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "disc_number",
+        "c_type": "uint16_t",
+        "dimensions": []
+      },
+      {
+        "name": "disc_count",
+        "c_type": "uint16_t",
+        "dimensions": []
+      },
+      {
+        "name": "game_id",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "flags",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "obey_length",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "fps_times_two",
+        "c_type": "uint8_t",
+        "dimensions": []
+      },
+      {
+        "name": "extended",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "ignored_header_fields",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "overlay",
+        "c_type": "ArcJfdOverlay *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "file_data",
+        "c_type": "ArcJfdFileData",
+        "dimensions": [],
+        "record": "ArcJfdFileData"
+      },
+      {
+        "name": "identification_mask",
+        "c_type": "uint16_t",
+        "dimensions": []
+      },
+      {
+        "name": "identification_time",
+        "c_type": "uint32_t[10]",
+        "dimensions": [
+          10
+        ]
+      },
+      {
+        "name": "identification_schedule",
+        "c_type": "uint8_t",
+        "dimensions": []
+      },
+      {
+        "name": "identification_maps",
+        "c_type": "uint8_t",
+        "dimensions": []
+      },
+      {
+        "name": "identification_format",
+        "c_type": "char",
+        "dimensions": []
+      },
+      {
+        "name": "identification_timed",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "identification_basis",
+        "c_type": "const char *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "identification_reason",
+        "c_type": "const char *",
+        "dimensions": [],
+        "pointer": true
+      }
+    ],
+    "ArcJfdOverlay": [
+      {
+        "name": "data",
+        "c_type": "uint8_t **",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "created",
+        "c_type": "uint8_t *[160][5]",
+        "dimensions": [
+          160,
+          5
+        ],
+        "pointer": true
+      },
+      {
+        "name": "creation_time",
+        "c_type": "uint32_t[160][5]",
+        "dimensions": [
+          160,
+          5
+        ]
+      },
+      {
+        "name": "creation_mask",
+        "c_type": "uint8_t[160]",
+        "dimensions": [
+          160
+        ]
+      },
+      {
+        "name": "eligible",
+        "c_type": "uint8_t *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "image_number",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "creation_capacity",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "pdd5_profile",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "layout_supported",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "guarded",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "guard_violated",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "unavailable_mask",
+        "c_type": "uint8_t[160]",
+        "dimensions": [
+          160
+        ]
+      },
+      {
+        "name": "guard_base_allocation",
+        "c_type": "uint8_t[400]",
+        "dimensions": [
+          400
+        ]
+      },
+      {
+        "name": "unavailable_slots",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "guard_declared_units",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "guard_tail_units",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "generation",
+        "c_type": "uint64_t",
+        "dimensions": []
+      },
+      {
+        "name": "records",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "store_sha1",
+        "c_type": "char[41]",
+        "dimensions": [
+          41
+        ]
+      },
+      {
+        "name": "writable",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "visible",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "hidden_store",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "allocation_mask",
+        "c_type": "uint8_t[160]",
+        "dimensions": [
+          160
+        ]
+      },
+      {
+        "name": "probe_mask",
+        "c_type": "uint8_t[160]",
+        "dimensions": [
+          160
+        ]
+      },
+      {
+        "name": "map_record",
+        "c_type": "uint8_t[60]",
+        "dimensions": [
+          60
+        ]
+      },
+      {
+        "name": "map_kind",
+        "c_type": "uint8_t",
+        "dimensions": []
+      },
+      {
+        "name": "map_enabled",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "map_valid",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "map_unavailable_logged",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "damaged",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "failed",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "reason",
+        "c_type": "const char *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "commit",
+        "c_type": "bool (*)(struct ArcJfdImage *, size_t, const uint8_t *)",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "commit_created",
+        "c_type": "bool (*)(struct ArcJfdImage *, unsigned int, unsigned int, const uint8_t *)",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "log_refusal",
+        "c_type": "void (*)(unsigned int, unsigned int, unsigned int, unsigned int, const char *)",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "log_map_unavailable",
+        "c_type": "void (*)(unsigned int)",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "store",
+        "c_type": "void *",
+        "dimensions": [],
+        "pointer": true
+      }
+    ],
+    "ArcJfdSector": [
+      {
+        "name": "time_us",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "data_offset",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "size",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "id",
+        "c_type": "uint8_t",
+        "dimensions": []
+      },
+      {
+        "name": "density",
+        "c_type": "uint8_t",
+        "dimensions": []
+      },
+      {
+        "name": "flags",
+        "c_type": "uint8_t",
+        "dimensions": []
+      }
+    ],
+    "ArcJfdTrack": [
+      {
+        "name": "first_sector",
+        "c_type": "uint32_t",
+        "dimensions": []
+      },
+      {
+        "name": "sector_count",
+        "c_type": "uint16_t",
+        "dimensions": []
+      },
+      {
+        "name": "timed",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "quarantine_reason",
+        "c_type": "const char *",
+        "dimensions": [],
+        "pointer": true
+      }
+    ],
+    "ArcJfdFileData": [
+      {
+        "name": "mask",
+        "c_type": "uint8_t[160]",
+        "dimensions": [
+          160
+        ]
+      },
+      {
+        "name": "time",
+        "c_type": "uint32_t[160][5]",
+        "dimensions": [
+          160,
+          5
+        ]
+      },
+      {
+        "name": "presented",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "skipped_sides",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "incomplete_dirs",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "valid_copies",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "agreeing_copies",
+        "c_type": "unsigned int",
+        "dimensions": []
+      },
+      {
+        "name": "format",
+        "c_type": "char",
+        "dimensions": []
+      },
+      {
+        "name": "reason",
+        "c_type": "const char *",
+        "dimensions": [],
+        "pointer": true
+      }
+    ],
+    "ArcJfdView": [
+      {
+        "name": "sector",
+        "c_type": "ArcJfdSector",
+        "dimensions": [],
+        "record": "ArcJfdSector"
+      },
+      {
+        "name": "data",
+        "c_type": "const uint8_t *",
+        "dimensions": [],
+        "pointer": true
+      },
+      {
+        "name": "key",
+        "c_type": "size_t",
+        "dimensions": []
+      },
+      {
+        "name": "created",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "id_visible",
+        "c_type": "bool",
+        "dimensions": []
+      },
+      {
+        "name": "write_eligible",
+        "c_type": "bool",
+        "dimensions": []
       }
     ]
   }

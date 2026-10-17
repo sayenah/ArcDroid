@@ -168,18 +168,28 @@ All of these are [C].
 
 ### 1.6 Session fatal and lifecycle
 
-**Fatal.** `fatal()` (`rpc_session.c:50-64`):
+**Fatal.** `fatal()` (`rpc_session.c:132`, M2b working tree; base `:117-134`):
 - clears every armed deadline;
 - `longjmp`s to the `setjmp` in advance (`rpc_session.c:403`), reset (`rpc_session.c:328`) or start (`rpc_session.c:231`);
 - after that, `arc_rpc_fault` refuses every later advance (`rpc_session.c:401`). [C]
 
-**Guest-reachable mid-instruction fatals:** [C]
+**Fatal paths and reachability:** [C]
 - "Bad mode" (`arm.c:177`), with `arm.mode` already written at `arm.c:128`;
-- the request budget (`rpc_mem_timing.c:326`) and the packet budget (`rpc_mem_timing.c:337`);
-- time overflow (`rpc_mem_timing.c:204,210`).
+- the request and packet checks (base `rpc_mem_timing.c:333,344`) are internal
+  invariants; R-M2b-S2 permits separately labelled **injected** lockstep evidence;
+- time overflow (base `rpc_mem_timing.c:211,217`) remains an unexercised limit.
+
+In the lockstep class, the fatal hook runs after formatting the text and before
+fault publication, deadline clearing or observer retirement. Fatal uses phase
+5, independent of P1 density; prepared full pages precede its literal/text
+hashes, followed by exactly one End. Unprepared memory is represented as absent.
+An open attempt keeps its reserved helper identity; an outside-attempt fatal
+uses the next k with the last maintained site/sequence, including with P1 off.
+The epoch pending latch retires the outer lifecycle flow once, even
+when a nested failure ends without another P0. Generation zero is valid.
 
 **Lifecycle.** [C]
-- **Start** (`rpc_session.c:217-291`): `arc_rpc_stop()` frees all memory (`rpc_session.c:153-178`, `mem.c:78-90`). A failed start also runs `arc_rpc_stop` (`rpc_session.c:231-234`). Allocation is a fresh `malloc` (`mem.c:78-92`), so **a later session can reuse the same host addresses**. Every successful start increments `arc_rpc_generation` (`rpc_session.c:288`).
+- **Start** (merge-base `0966af3`, `rpc_session.c:217-291`): `arc_rpc_stop()` frees all memory (`rpc_session.c:153-178`, `mem.c:78-90`). A failed start also runs `arc_rpc_stop` (`rpc_session.c:231-234`). Allocation is a fresh `malloc` (`mem.c:78-92`), so **a later session can reuse the same host addresses**. Every successful start increments `arc_rpc_generation` (`rpc_session.c:283`).
 - **Reset** (`rpc_session.c:321-343`) clears RAM (`mem.c:162-164`), rebinds timing, flushes the TLB (`cp15.c:136`) and resets the ARM. It **does not** bump the generation.
 - **Test rate.** The rate override rebinds timing at time zero (`rpc_session.c:633-642`).
 - **Engine switching.** Arculator and RPC switch inside one library (`tests/rpc-session-expectations.md:39-41`).
@@ -228,16 +238,37 @@ All of these are [C].
 
 ### 2.1 Phases
 
+M2b format v1 is specified in `riscpc-lockstep-harness.md`. Data P1 has entry
+and exit edges at one reserved identity; walk and physical events lie between
+them. Entry preserves the previous `arc_rpc_attributes`; exit preserves the
+translation's value, including abort paths. LDRT/STRT expose their raw temporary
+`memmode`. Fetch reserves its sequence before `getpccache`, emits after opcode
+capture, and consumes the sequence without a fetch record on prefetch abort.
+Mode P1 precedes `arc_rpc_observe_mode`. P2 precedes continuation; P3 is emitted
+only after a positive admission count. Integer P0/P1 project issue and due to
+the current issue; P2 projects issue and, without requests, due to issue+base.
+Projection is pure arithmetic with status-only overflow and no flush/next_base.
+
 Every exit lands on exactly one of the phases below. The resumer then performs exactly the oracle's next steps, no more and no fewer.
 
 | Phase | Where | Materialised time representation [C] |
 |---|---|---|
 | **P0(k)** | `arm.c:600`, before k. Reached after continuation returned true, or by a driver issue through `arc_rpc_mem_ready`. The command queue is empty; older work has run to `now`. | `now_ns` = visible issue time of k. `issue_*` = issue of k and `cpu_due_*` = the same values (`rpc_mem_timing.h:182-185`; `rpc_mem_timing.c:886-888`). In integer mode, `issue_floor/ticks` are derived with the flush **formulas** (`rpc_mem_timing.c:649-650`) **without** `next_base`. Calling `batch_flush` here would set `cpu_due=issue+base` and so add a base: forbidden as a canonicaliser. |
-| **P1(k)** | Mid-k, at a helper call, including successful-fetch continuation (after opcode capture, before condition), SWI entry and completed-transition observation (§6). | As P0. Plus k's collected requests in program order, `recording=true`, `opcode` set after a successful fetch (a prefetch-abort mode report retains the prior value), and `arc_rpc_attributes` as the current access's translation left it. |
+| **P1(k)** | Mid-k: data-access entry and exit, successful fetch after opcode capture/before condition, SWI/CP15/exception entry, and each changed-mode observation (§6). | As P0, plus k's collected requests in program order and `recording=true`. Data entry retains the previous `arc_rpc_attributes`; exit retains the value left by translation, including abort paths. `opcode` is set after a successful fetch; a prefetch-abort mode report retains the prior value. Temporary LDRT/STRT `memmode` is compared raw. |
 | **P2(k)** | Just after `instruction_end(k)` (`arm.c:1963`), before continuation. | No requests: `cpu_due_*` = issue + base. Here a flush is equivalent (`rpc_mem_timing.c:651`). With requests: `pending`, `cursor=issue_ticks`, `cpu_due_*` unresolved and excluded from comparison (§1.2). |
 | **P3(k)** | After the continuation step returned false, or the quota/`NULL`-batch return, and the final flush (`arm.c:1966-1978`). | `now_ns` and the bus may have **advanced past P2** through batch service (`rpc_mem_timing.c:967-979`). The state is whatever service left; the resumer is the driver at `rpc_session.c:411`. |
 
 ### 2.2 Canonical comparison contract (Astra 6)
+
+The executable v1 schema and independent reviewed policy govern field, phase
+and mode membership. C tables are generated at build time with drift checks;
+owning-TU serializers use member and array capacity probes. The API-only
+measurement macro split removes hot test fields and all emitter hooks, while
+retaining refusing APIs (R-M2b-S1). Large PCM and presentation contents compare
+at output boundaries (M11); observer SWI lists and input-owned storage are
+serialized by contents. Observer projections and examples are pinned in
+`tests/rpc_lockstep_observer_vectors.json` (AS-2). Compatibility hashes exclude
+inventory/citation metadata; inventory has a separate independent policy pin.
 
 **Included fields.**
 - **CPU:**

@@ -23,7 +23,7 @@ def execute(runner, core, fixtures, plan, save, words, profile=None, extra=()):
     args = [runner, '--core', core, '--plan', str(plan), '--system', str(fixtures),
             '--save', str(save), '--frames', '2', '--ram-offset', '262144', '--ram-words', str(words), *extra]
     if profile: args.extend(('--profile', str(profile), '--profile-sample-stride', '0'))
-    return subprocess.run(args, capture_output=True, text=True, timeout=60)
+    return subprocess.run(args, capture_output=True, text=True, timeout=60, encoding='utf-8')
 
 
 def ram(text):
@@ -69,7 +69,7 @@ def main():
     p.add_argument('--model', type=int); p.add_argument('--profile', action='store_true')
     p.add_argument('--quick', action='store_true'); p.add_argument('--generator-mutants', action='store_true')
     p.add_argument('--only', default=''); args = p.parse_args()
-    manifest = json.loads((args.fixtures/'manifest.json').read_text())
+    manifest = json.loads((args.fixtures/'manifest.json').read_text(encoding='utf-8'))
     schema, _ = load_schema()
     items = [x for x in manifest['items'] if (args.model is None or x['model'] == args.model) and args.only in x['name']]
     require(bool(items), 'empty corpus selection')
@@ -78,7 +78,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='arcdroid-m2a-corpus-') as temp:
         save = Path(temp); plan = save/'test.arcplan'
         for item in items:
-            source = (args.fixtures/(item['name']+'.arcplan')).read_text()
+            source = (args.fixtures/(item['name']+'.arcplan')).read_text(encoding='utf-8')
             # Paths in generated plans are relative to --system, independent of build location.
             plan.write_bytes(source.encode('utf-8'))
             profile = save/'profile.json' if args.profile else None
@@ -110,14 +110,14 @@ def main():
             model = item['model']; count = coverage[model]
             for feature, offset in item['markers'].items(): count['features'][feature] = count['features'].get(feature,0)+ram(result.stdout)[offset]
             if args.profile:
-                record = json.loads(profile.read_text())['records'][-1]
+                record = json.loads(profile.read_text(encoding='utf-8'))['records'][-1]
                 if item.get('walk_mmio'):
                     require(record['mmio_reads'] == record['exits']['E7b'] and record['mmio_reads']>0,
                             (item['name'],'one physical MMIO descriptor read per prefetch abort'))
                 for group in ('exits','classes'):
                     for key, value in record[group].items(): count[group][key] = count[group].get(key,0)+value
                 for key in ('reads','writes','mmio_reads','mmio_writes'): count[key] += record[key]
-            print('PASS', item['name'], 'sha256='+hashlib.sha256(result.stdout.encode()).hexdigest(), flush=True)
+            print('PASS', item['name'], 'sha256='+hashlib.sha256(result.stdout.encode('utf-8')).hexdigest(), flush=True)
         for model in sorted({x['model'] for x in items}):
             count = coverage[model]
             if not args.only:

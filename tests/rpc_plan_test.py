@@ -11,12 +11,13 @@ from rpc_plan_goldens import matrix_golden
 from rpc_video_goldens import expected as video_expected
 from rpc_d2_goldens import expected as audio_expected, fnv
 from rpc_video_paths import CASES as path_cases, expected as path_expected
+from rpc_lockstep_golden import run as golden_run
 
 runner,core,shipping,directory,mode=sys.argv[1:6]
 directory=Path(directory).resolve()
 def run(name,frames=2,pacing='flat',extra=(),library=core,success=True):
     command=[runner,'--core',library,'--plan',str(directory/(name+'.arcplan')),'--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra]
-    result=subprocess.run(command,capture_output=True)
+    result=golden_run(command,capture_output=True)
     assert b'\r' not in result.stdout,'canonical stdout must contain LF bytes on every platform'
     result.stdout=result.stdout.decode('utf-8');result.stderr=result.stderr.decode('utf-8')
     if success:assert result.returncode==0,result.stderr+result.stdout

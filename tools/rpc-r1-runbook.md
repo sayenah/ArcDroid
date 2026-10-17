@@ -707,3 +707,57 @@ change `model` to `arm710` and `rate_mips` to `35`, then run:
 Select exact recorded frame bounds within that workload's measured window for
 `rpc_rank_report.py`. The fixed 6400–7400 decision window belongs to private
 031; the hot wall-clock window remains 60/300 seconds.
+
+## M2b lockstep core and v1 driver
+
+The opt-in `ARCDROID_RPC_LOCKSTEP=ON` builds the non-installed host core
+`arcdroid_rpclockstep_libretro`; Android never builds it. It has capability bit
+32. All other test cores export explicit refusing sink/status/End stubs, with
+bit 32 absent. Shipping exports no lockstep API. R-M2b-S1's measurement exception
+is confined to the enumerated session stubs; the named hot objects stay equal.
+
+```sh
+cmake -S . -B /private/tmp/arcdroid-m2b-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DARCDROID_RPC_LOCKSTEP=ON \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build /private/tmp/arcdroid-m2b-host -j3
+ctest --test-dir /private/tmp/arcdroid-m2b-host -R '^rpc-lockstep-' --output-on-failure -j3
+python3 -B tools/rpc_lockstep_run.py \
+  --baseline-runner /private/tmp/arcdroid-m2b-host/rpc_runner \
+  --baseline-core /private/tmp/arcdroid-m2b-host/arcdroid_rpclockstep_libretro.dylib \
+  --candidate-runner /private/tmp/arcdroid-m2b-host/rpc_runner \
+  --candidate-core /private/tmp/arcdroid-m2b-host/arcdroid_rpclockstep_libretro.dylib \
+  --plan /private/tmp/arcdroid-m2b-host/generated/rpc-lockstep/ac-h2-0.arcplan \
+  --system /private/tmp/arcdroid-m2b-host/generated/rpc-lockstep \
+  --model 0 --mode strict --density every-instruction --frames 1
+```
+
+Supply schedule/configuration SHA-256 inputs with `--schedule-hash` and
+`--configuration-hash`; these must identify the complete agreed input set.
+The default plan hash is SHA-256 of the plan bytes. For two revisions, supply
+two explicit runner/core pairs. Cross-quota and observer modes require the
+reviewed v1 projections; a discovered oracle disagreement is reported under
+AC-8, never silently suppressed. `--hash-only` limits reports to hashes.
+
+The runner also accepts `--lockstep-stream`, `--lockstep-role`,
+`--lockstep-density`, `--lockstep-mode`, `--lockstep-p1`, `--lockstep-detail A:B`,
+`--lockstep-stop-after K`, `--lockstep-key-context GENERATION:EPOCH`, and the
+explicit plan/schedule/configuration hashes. A:B and K are emitter instruction
+ordinals; stop-after ends after the containing frame. Context zero is a
+wildcard. The driver carries the original generation and epoch into a rerun,
+retains its compact prefix and requests detail only at the mismatching attempt.
+Each peer has a separate mutable save directory. The header model defaults to
+the plan model; `--model` explicitly overrides it.
+The driver uses POSIX FIFOs and bounded Windows temporary files, closes its
+readers and terminates only its own child handles on failure. A detail rerun
+must reproduce the original compact groups and matching prefix before its leaf
+finding is accepted. Changed or earlier divergence is `non-deterministic`.
+
+Full audit checks all fixed 64 MiB RAM plus up to 2 MiB VRAM at P3 against an
+independent log-applied shadow. It cannot establish a write-and-restore between
+P3s. R-M2b-S2 budget-fatal probes are **injected**, only in the lockstep class;
+bad-mode is guest-reachable, and clock-time overflow remains unexercised.
+All stream scratch is deleted after a run. Private-title streams contain data
+values: keep them in private scratch, delete them, and never upload them.
+Generated tables and authored fixture bytes belong in build trees, never git.
+Delete `/private/tmp/arcdroid-m2b-*` intermediate trees when finished.
