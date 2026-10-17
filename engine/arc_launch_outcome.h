@@ -9,7 +9,9 @@ typedef enum {
    ARC_OUTCOME_CLOSE, ARC_OUTCOME_END, ARC_OUTCOME_POLL,
    ARC_OUTCOME_CANCEL
 } ArcOutcomeState;
-typedef struct { uint64_t horizon_us; bool exit_rom, close_rom, poll_rom; } ArcOutcomeProfile;
+typedef struct { uint64_t horizon_us; bool exit_rom, close_rom, poll_rom;
+   bool contextual; /* RPC: established outcomes arrive through the bound controller. */
+} ArcOutcomeProfile;
 typedef struct {
    const ArcOutcomeProfile *profile;
    ArcOutcomeState state;

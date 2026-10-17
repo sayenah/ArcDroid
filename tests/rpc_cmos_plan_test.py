@@ -23,7 +23,7 @@ def record(path,magic,firmware,content=None):
 
 with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     d=Path(tmp);roms=generate(d/'roms');save=d/'save';save.mkdir()
-    layout='ro350' if kind=='ro350' else 'ro370'
+    layout='ro350' if kind=='ro350' else 'ro360' if kind=='ro360' else 'ro370'
     # Reset interrupts the full-mask guest; there is no reset.rom. Construct
     # the intended basename directly, independent of native path separators.
     firmware=roms/(('full' if kind in ('reset','fallback') else 'empty' if kind=='terminalfallback' else kind)+'.rom')
@@ -69,9 +69,9 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         run();base=save/'arcdroid/cmos-riscpc';slots=list(base.glob('*.1'));defaults=list((base/'defaults').glob('*.1'))
         assert len(slots)==len(defaults)==1
         b=record(defaults[0],b'ARCRPCD1',roms/(kind+'.rom'))
-        expected=bytearray(240);expected[47]=1
+        expected=bytearray(240);expected[183]=2;expected[47]=3
         assert b[104:344]==expected
-        assert struct.unpack_from('<IIII',b,344)==(3,1,rates[model],1)
+        assert struct.unpack_from('<IIII',b,344)==(4,1,rates[model],1)
         assert struct.unpack_from('<QQQQQ',b,360)==(946684800,0,45000000000,45000000000,5000000000)
         writes,last=struct.unpack_from('<QQ',b,400);assert writes==(238 if kind=='ro350' else 240) and 0<last<40000000000
         if kind=='delayed':assert last>18022400000
@@ -97,6 +97,20 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
             save=original_save;plan.write_text(text)
 
         original=slots[0].read_bytes();run('record');assert slots[0].read_bytes()==original
+        if kind=='full' and model==0 and profile=='full':
+            # A p3 default is preserved but cannot satisfy the p4 procedure.
+            old=bytearray(b);struct.pack_into('<I',old,344,3)
+            old[104+183]=0;old[104+47]=1
+            old[448:480]=hashlib.sha256(old[104:344]).digest()
+            struct.pack_into('<I',old,508,zlib.crc32(old[:508]))
+            previous=defaults[0].with_name(defaults[0].name.replace('-p4-','-p3-'))
+            previous.write_bytes(old);defaults[0].unlink()
+            # Existing per-content bytes are still authoritative, not repaired.
+            run('record');assert slots[0].read_bytes()==original and not defaults[0].exists()
+            plan.write_text(text.replace('a'*40,'e'*40));run()
+            assert defaults[0].read_bytes()==b and previous.read_bytes()==old
+            assert slots[0].read_bytes()==original
+            plan.write_text(text)
         # The same frontend switches through real Arculator persistence.
         import shutil
         fw=roms/'arcdroid/firmware';fw.mkdir(parents=True)

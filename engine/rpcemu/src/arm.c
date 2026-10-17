@@ -1913,6 +1913,11 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 #else
 				opSWI(opcode);
 #endif
+#if ARC_RPC_ARM_OBSERVING != 0
+        /* ArcDroid D-204, 2026-10-17: leave the CPU after an applied consume.
+         * The session services media only after this instruction completes. */
+        if(arc_rpc_observer_boundary_pending)count=(unsigned)linecyc+1;
+#endif
 				break;
 
 			default:

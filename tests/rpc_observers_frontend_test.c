@@ -224,6 +224,7 @@ static void write_file(const char *name,const void *bytes,size_t size)
     }
     assert(!fclose(file));
 }
+static void session_revalidate(void *opaque) { (void)opaque; }
 int main(int argc,char **argv)
 {
     assert(argc==4 || argc==5);directory=argv[2];bool sanitizer=argc==5 && !strncmp(argv[4],"sanitizer",9);
@@ -272,11 +273,11 @@ int main(int argc,char **argv)
             assert(catalogue==4 && cpu==2);
             reset();binding(UINT32_MAX,&catalogue,&cpu);
             assert(catalogue==4 && cpu==2);
-            assert(cells()==(setting==2?0u:252u));
+            assert(cells()==(setting==2?0u:255u));
             assert(off_logs==(setting==2?2u:0u));
             run();run();api->error_snapshot(&box);
             assert(box.recognised_open==(setting!=2));
-            assert(cells()==(setting==2?0u:252u));unload();
+            assert(cells()==(setting==2?0u:255u));unload();
         }
         deinit();free(rom);puts("observers off: qualified 3.71/SA110 binding, all cells disabled across reset; absent/zero retain production; distinct TEST OFF log");return 0;
     }
@@ -458,8 +459,8 @@ legacy_disc:;
 extended:;
     /* Trusted table seam exercises production profiles without pretending the
      * authored copied firmware is recognised by the runtime catalogue. */
-    void (*production)(unsigned,unsigned),(*horizon)(unsigned);unsigned (*cells)(void);
-    LOAD(production,"arc_engine_test_observers_production");LOAD(horizon,"arc_engine_test_observers_horizon");
+    void (*production)(unsigned,unsigned);unsigned (*cells)(void);
+    LOAD(production,"arc_engine_test_observers_production");
     LOAD(cells,"arc_engine_test_observers_cells");
     bool (*back_request)(unsigned,unsigned *,uint64_t *,unsigned *);
     LOAD(back_request,"arc_libretro_test_disc_back_request");
@@ -485,7 +486,7 @@ extended:;
             assert(api->error_request(ARC_ERROR_OK));reset();api->error_snapshot(&box);
             ArcDiscRequest retired;api->disc_snapshot(&retired);
             assert(!box.recognised_open && !box.modal_unknown && !box.answer_available && box.pending==ARC_ERROR_NONE && !retired.a_active);
-            unsigned catalogue,cpu;binding(UINT32_MAX,&catalogue,&cpu);assert(catalogue==4 && cpu==2 && cells()==252);
+            unsigned catalogue,cpu;binding(UINT32_MAX,&catalogue,&cpu);assert(catalogue==4 && cpu==2 && cells()==255);
         }
         unload();
     }
@@ -507,18 +508,41 @@ extended:;
         reset();api->error_snapshot(&box);assert(!box.modal_unknown && !box.answer_available);unload();
     }
     if(!focus || !strcmp(focus,"h-session")){
-    /* Session frame hook: boot and a shortened launch horizon expire through
-     * retro_run; no direct call to the observer's frame function. */
-    /* Expiry follows session virtual time while the CPU is asleep. Keep the
-     * real 40-second boot horizon without a sanitizer-long busy loop. */
+    /* Part 2 requires a bound attempt; arbitrary observer arms cannot create
+     * a launch phase. Keep the real frontend frame hook and time-unit checks
+     * against the production 120-second attempt horizon, with an asleep CPU. */
     const uint32_t expiry_guest[]={0xe3a00070,0xee010f10,0xee0f0f58,0xeafffffd};
     rom_words(expiry_guest,sizeof(expiry_guest)/4);write_file("guest.rom",rom,2097152);
     count=snprintf(plan,sizeof(plan),"version=1\nmodel=sa110\nrate_mips=1\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\nobserver_cells=3\n",directory,directory);
     write_file("test.arcplan",plan,(size_t)count);assert(load(&game));
-    horizon(50000);assert(api->launch_outcome_arm("Run Authored"));api->boot_watch_arm();
-    run();api->launch_outcome_snapshot(&launch);assert(launch.state==ARC_OUTCOME_WAIT && api->boot_watch_state()==ARC_BOOT_WATCH_ARMED);
-    for(unsigned f=1;f<3;++f)run();api->launch_outcome_snapshot(&launch);assert(launch.state==ARC_OUTCOME_CANCEL);
-    if(!mutant){for(unsigned f=3;f<2400;++f)run();assert(api->boot_watch_state()==ARC_BOOT_WATCH_EXPIRED);}
+    assert(!api->launch_outcome_arm("Run Authored"));api->boot_watch_arm();
+    assert(api->boot_watch_state()==ARC_BOOT_WATCH_DISABLED);
+    bool (*bind_attempt)(const ArcRpcLaunchBinding *);
+    LOAD(bind_attempt,"arc_engine_rpc_launch_bind");
+    ArcRpcLaunchPlan launch_plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};
+    strcpy(launch_plan.target,"ADFS::0.$.!Boot");
+    ArcRpcLaunchAttempt attempt;ArcRpcAttemptToken token;ArcRpcLaunchController controller;
+    assert(arc_riscpc_attempt_init(&attempt,1234,1));
+    assert(arc_riscpc_attempt_prepare(&attempt,&launch_plan,0,&token));
+    assert(arc_riscpc_controller_build(&launch_plan,&token,&controller));
+    ArcRpcLaunchBinding owner={.attempt=&attempt,.controller=&controller,.revalidate=session_revalidate};
+    assert(bind_attempt(&owner) && api->launch_outcome_arm(controller.text));
+    run();assert(attempt.delivery==ARC_RPC_DELIVERY_PREPARED && attempt.outcome==ARC_RPC_OUTCOME_NONE);
+    /* Reach just before the boundary without thousands of frontend repaints;
+     * advance does not invoke the session frame hook being tested. */
+    while(snapshot().now_ns<UINT64_C(119900000000)){
+        uint64_t left=UINT64_C(119900000000)-snapshot().now_ns;
+        assert(advance_rpc(left<16666667u?left:16666667u));
+    }
+    assert(attempt.delivery==ARC_RPC_DELIVERY_PREPARED && attempt.outcome==ARC_RPC_OUTCOME_NONE);
+    do {
+        assert(attempt.delivery==ARC_RPC_DELIVERY_PREPARED);
+        run();
+        if(snapshot().now_ns<UINT64_C(120000000000))
+            assert(attempt.delivery==ARC_RPC_DELIVERY_PREPARED && attempt.outcome==ARC_RPC_OUTCOME_NONE && attempt.capabilities==3);
+    } while(snapshot().now_ns<UINT64_C(120000000000));
+    assert(attempt.delivery==ARC_RPC_DELIVERY_PREPARED && attempt.outcome==ARC_RPC_OUTCOME_UNKNOWN && !attempt.capabilities);
+    assert(api->boot_watch_state()==ARC_BOOT_WATCH_DISABLED);
     unload();
     }
     for(unsigned mode=0;mode<=16;mode+=16)for(unsigned scenario=0;scenario<10;++scenario){

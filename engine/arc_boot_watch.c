@@ -35,7 +35,10 @@ void arc_boot_watch_observe(ArcBootWatch *watch, uint32_t swi,
    if (swi == 0x400c0u)
    { watch->state = ARC_BOOT_WATCH_DISABLED; watch->pending = false; }
    else if (swi == 5u) watch->pending = false;
-   else if (swi == 0x0eu && r0 < (watch->profile ? watch->profile->buffer_limit : 0x8000u) &&
+   else if (swi == 0x0eu &&
+       (watch->profile && watch->profile->contextual ?
+        !(r0 & 0xc0000000u) && r1>=1 && r1<=255 && r2==32 && r3==126 :
+        r0 < (watch->profile ? watch->profile->buffer_limit : 0x8000u)) &&
        (in_rom || (watch->profile && !watch->profile->rom)) &&
        (!watch->profile || !watch->profile->user_only || mode == 0u || mode == 16u))
    { watch->read_us = now_us; watch->pending = true; }

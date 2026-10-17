@@ -55,6 +55,8 @@ bool arc_rpc_observer_watch_live(ArcRpcObserver, uint64_t);
 bool arc_rpc_observer_watch_renew(ArcRpcObserver, uint64_t, unsigned attempts);
 /* The interpreter tests this before constructing any observation context. */
 extern bool arc_rpc_observer_active, arc_rpc_observer_context;
+/* Session service request, independent of filter/watch/work generations. */
+extern bool arc_rpc_observer_boundary_pending;
 void arc_rpc_observe_batch_begin(void);
 void arc_rpc_observe_advance(unsigned attempts);
 void arc_rpc_observe_batch_end(void);

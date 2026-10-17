@@ -20,15 +20,26 @@ for row in text.split('## Cells\n', 1)[1].split('## Evidence per cell', 1)[0].sp
         for (owner, cap), value in zip(columns, values):
             assert value in ('on', 'off')
             cells[catalogue, cpu, owner, cap] = value == 'on'
-assert len(cells) == 56 and sum(cells.values()) == 42
-disabled = re.search(r'\*\*Disabled reason, boot and launch \(all pairs\):\*\* "([^"]+)"', text)[1]
+assert len(cells) == 56 and sum(cells.values()) == 56
+assert '**Disabled reason, boot and launch' not in text
+statement = re.search(r'\*\*Boot and launch \(all pairs, D-203\):\*\* ([^\n]+)', text)[1]
+launch_revision = int(re.search(r'enabled at launch-profile revision (\d+)', statement)[1])
+assert revision == 1 and launch_revision == 2
+assert statement == (f"enabled at launch-profile revision {launch_revision} (`ARC_RPC_LAUNCH_PROFILE_REVISION`, "
+    "the R3c-3b launch and boot profiles that the evidence below exercised); "
+    f"the error and disc cells stay at profile revision {revision}. "
+    "The route that issues launch attempts stays behind the closed compile-time gate until R3d-4 (D-186); "
+    "production routing and session-ID allocation are re-verified there.")
 
-# Evidence references come from the record's leg tables, including the two
-# pair-specific additions. Do not turn their private paths into test content.
+# Evidence references come from the record's separate error, disc and launch
+# leg tables, including pair-specific additions. No private paths enter tests.
 evidence = {key: [] for key, enabled in cells.items() if enabled}
-for section, owners in [('The error-box evidence', [(2, 0), (2, 1)]), ('The disc evidence', [(3, 0), (3, 2), (3, 3), (3, 4)])]:
-    part = text.split(section, 1)[1].split('## Cost', 1)[0]
-    if section == 'The error-box evidence': part = part.split('The disc evidence', 1)[0]
+for section, end, owners in [
+    ('The error-box evidence', 'The disc evidence', [(2, 0), (2, 1)]),
+    ('The disc evidence', 'The launch evidence', [(3, 0), (3, 2), (3, 3), (3, 4)]),
+    ('The launch evidence', '**Configuration policy', [(0, 0), (1, 0)]),
+]:
+    part = text.split(section, 1)[1].split(end, 1)[0]
     for row in part.splitlines():
         if not row.startswith('| `'): continue
         fields = [field.strip() for field in row.split('|')[1:-1]]
@@ -38,6 +49,7 @@ for section, owners in [('The error-box evidence', [(2, 0), (2, 1)]), ('The disc
         targets = owners
         if legs == ['o-350-arm610']: targets = [(2, 0)]
         if section == 'The disc evidence': targets = [(3, 3), (3, 4)] if legs == ['sb-*'] else [(3, 0), (3, 2)]
+        assert legs, row
         for pair in pairs:
             for owner, cap in targets: evidence[(*pair, owner, cap)].extend(legs)
 
@@ -75,21 +87,50 @@ b_profile = parameters['Disc signal B']
 assert '`ADFS::<inserted disc or 0>.$…`' in b_profile and 'first miss ignored' in b_profile and 'repeated miss resolved' in b_profile
 error_values = [1, poll_r1, poll_r2, (1 << 3) | (1 << 19), sum(1 << f for f in forms), ok_forms, cancel_forms, default_cancel, number_class]
 
+launch = parameters[f'Launch outcome (launch-profile revision {launch_revision})']
+assert 'Bound to the explicit attempt and its exact generated command' in launch
+assert 'Role-1 authored status on `XOS_Byte 0` in the frozen 64-byte layout' in launch
+assert '(consume, registered, dispatch, start returned, returned, desktop, rejected, closed)' in launch
+assert 'A StartTask return with a live child stays pending' in launch
+assert 'expiry is unknown, never a retry' in launch
+launch_horizon = int(re.search(r'horizon (\d+) s virtual', launch)[1]) * 1000000
+launch_values = [launch_horizon, 0, 0, 0, 1]
+
+boot = parameters[f'Boot watch (launch-profile revision {launch_revision})']
+assert 'A pending user-mode `OS_ReadLine` during the exact blocked command' in boot
+assert 'R1 1–255, R2 = 32, R3 = 126, backed RAM buffer' in boot
+assert 'at most one watch; no mode subscription; never a relaunch' in boot
+instructions, seconds = re.search(r'ceiling ([0-9,]+) instructions and (\d+) s virtual', boot).groups()
+assert int(instructions.replace(',', '')) == 64000000 and int(seconds) == 2
+boot_wait = int(re.search(r'offered after (\d+) ms virtual', boot)[1]) * 1000
+# The overall boot horizon shares the bound attempt's delivery horizon;
+# continuation lifetime is separately covered by the instruction/time cases.
+boot_values = [launch_horizon, boot_wait, 0, 1, 0, 1]
+
 output = subprocess.check_output([binary, '--qualification'], text=True, timeout=30)
-seen_cells = set(); seen_table = set(); seen_error = set(); seen_disc = set()
+seen_cells = set(); seen_table = set(); seen_error = set(); seen_disc = set(); seen_launch = set(); seen_boot = set()
 for line in output.splitlines():
     kind, *values = line.split('\t')
     if kind in ('cell', 'table'):
         catalogue, cpu, owner, cap, profile, enabled = map(int, values[:6]); key = catalogue, cpu, owner, cap
         seen = seen_table if kind == 'table' else seen_cells
         assert key not in seen; seen.add(key)
-        assert profile == revision and bool(enabled) == cells.get(key, False), line
-        reason = ('docs/riscpc-observer-qualification.md: ' + ', '.join(evidence[key])) if cells.get(key) else disabled if key in cells else 'unknown firmware, CPU pair or sub-capability'
+        expected_revision = launch_revision if key in cells and owner in (0, 1) else revision
+        assert profile == expected_revision and bool(enabled) == cells.get(key, False), line
+        reason = ('docs/riscpc-observer-qualification.md: ' + ', '.join(evidence[key])) if cells.get(key) else 'unknown firmware, CPU pair or sub-capability'
         assert values[6] == reason, (key, values[6], reason)
     elif kind == 'error':
         catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
         assert key not in seen_error; seen_error.add(key)
         assert profile == error_values, line
+    elif kind == 'launch':
+        catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
+        assert key not in seen_launch; seen_launch.add(key)
+        assert profile == launch_values, line
+    elif kind == 'boot':
+        catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
+        assert key not in seen_boot; seen_boot.add(key)
+        assert profile == boot_values, line
     elif kind == 'disc':
         catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
         assert key not in seen_disc; seen_disc.add(key)
@@ -98,5 +139,5 @@ for line in output.splitlines():
 assert seen_cells == {(cat, cpu, owner, cap) for cat in range(6) for cpu in range(5) for owner in range(4) for cap in range(5)}
 assert seen_table == set(cells), 'missing/extra production table row'
 pairs = {(cat, cpu) for cat, cpu, _, _ in cells}
-assert seen_error == seen_disc == pairs
-print('qualification record: every cell/value/reason/reference pinned; 42 enabled, 14 deferred, unknown tuples disabled')
+assert seen_error == seen_disc == seen_launch == seen_boot == pairs
+print('qualification record: every cell/value/reason/reference pinned; 56 enabled, unknown tuples disabled')
