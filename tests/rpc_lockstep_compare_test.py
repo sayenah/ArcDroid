@@ -10,6 +10,7 @@ import sys
 import subprocess
 import tempfile
 import threading
+from unittest import mock
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tools'))
@@ -22,13 +23,43 @@ def require(ok, message):
         raise RuntimeError(message)
 
 
-def reviewed_policy(schema):
+def reviewed_policy(schema, path=None):
     # Independent review boundary: a schema cannot approve its own exclusion.
     # This fixture is maintained only when a ruling changes the reviewed policy.
-    policy=json.loads((ROOT/'tests/rpc_lockstep_reviewed_policy.json').read_text())
+    path = path or ROOT/'tests/rpc_lockstep_reviewed_policy.json'
+    policy=json.loads(path.read_text(encoding='utf-8'))
     for section in ('reviewed_conditions','reviewed_exclusions','reviewed_mode_exclusions',
                     'cross_quota_projections','stdout_projection'):
         require(schema[section]==policy[section], 'unreviewed schema policy: '+section)
+
+
+def policy_encoding_check():
+    # Windows checkout + non-UTF-8 Python locale: CRLF must not affect JSON,
+    # and UTF-8 citations must not acquire CP1252's extra character before §.
+    real_open = io.open
+    def windows_open(file, mode='r', buffering=-1, encoding=None, *args, **kwargs):
+        if 'b' not in mode and encoding in (None, 'locale'):
+            encoding = 'cp1252'
+        return real_open(file, mode, buffering, encoding, *args, **kwargs)
+    with tempfile.TemporaryDirectory(prefix='arcdroid-m2a-policy-') as temp:
+        paths = []
+        for name in ('rpc_lockstep_schema.json', 'rpc_lockstep_reviewed_policy.json'):
+            path = Path(temp)/name
+            raw = (ROOT/'tests'/name).read_bytes().replace(b'\r\n', b'\n')
+            path.write_bytes(raw.replace(b'\n', b'\r\n'))
+            paths.append(path)
+        with mock.patch('io.open', side_effect=windows_open):
+            schema, _ = reference.load_schema(paths[0])
+            misdecoded = json.loads(paths[1].read_text())
+            require(schema['reviewed_exclusions'] != misdecoded['reviewed_exclusions'],
+                    'Windows encoding regression did not reproduce the original mismatch')
+            reviewed_policy(schema, paths[1])
+            mutant = copy.deepcopy(schema)
+            mutant['reviewed_exclusions'][0]['reason'] += ' self-approved'
+            try: reviewed_policy(mutant, paths[1])
+            except RuntimeError: pass
+            else: raise RuntimeError('Windows encoding fix relaxed the policy pin')
+    print('UTF-8/CRLF policy under CP1252: original mismatch reproduced, pin enforced')
 
 
 def suite(c=reference, stress=False):
@@ -454,11 +485,22 @@ def cli_checks():
 
 
 def main():
+    policy_encoding_check()
     print('comparator cases:', suite(stress='--stress' in sys.argv))
     cli_checks()
     if '--mutants' in sys.argv:
-        from rpc_lockstep_compare_mutants import mutations
-        original = (ROOT/'tools/rpc_lockstep_compare.py').read_text()
+        from rpc_lockstep_compare_mutants import mutations, target_cases
+        original = (ROOT/'tools/rpc_lockstep_compare.py').read_text(encoding='utf-8')
+        schema, sh = reference.load_schema()
+        def outcome(engine, case, label):
+            method, args = case
+            if method == 'compare':
+                args = (io.BytesIO(args[0]), io.BytesIO(args[1]), *args[2:])
+            try: return ('returned', getattr(engine, method)(*args))
+            except engine.Invalid as error:
+                # The existing pointer controls require the specific refusal;
+                # other malformed controls accept any Invalid, as in suite().
+                return ('invalid', str(error) if label.startswith('qa-pointer-') else None)
         survivors = []
         for label, old, new in mutations():
             require(original.count(old) == 1, ('mutant anchor not unique', label))
@@ -466,8 +508,13 @@ def main():
             module.__file__ = str(ROOT/'tools/rpc_lockstep_compare.py')
             sys.modules[module.__name__] = module
             exec(compile(original.replace(old, new), module.__file__, 'exec'), module.__dict__)
-            try: suite(module)
-            except (RuntimeError, module.Invalid): print('killed comparator', label)
+            cases = target_cases(label, schema, sh)
+            require(cases, ('missing comparator sensitivity witness', label))
+            for index, case in enumerate(cases):
+                control = outcome(reference, case, label)
+                if outcome(module, case, label) != control:
+                    print('killed comparator', label, 'case', index+1, flush=True)
+                    break
             else:
                 survivors.append(label)
                 print('SURVIVED comparator', label, flush=True)
