@@ -636,3 +636,13 @@ Sol stopped run A before implementation on two conflicts. Both rulings below bin
   - **The three budget fatals** are demonstrated by a **test-only injection that exists only in the lockstep core class**: it forces the existing check's failure path at a chosen key without changing any budget, constant or condition used by any other build. The fatal records at those sites carry the same fatal-phase content as bad mode (page frames, committed logs, End). The evidence is labelled **injected**, never guest-reachable, in the report, the expectations file and the kill matrix.
   - AC-3 proves the injection is absent from the shipping core, the measurement core and every other test core.
   - The clock-time overflow path stays an unexercised, reported limit, as M2a recorded.
+
+## Fable's rulings on run B's cross-quota oracle findings (S67)
+
+Run B's authored point ROM shows three quota 1 against quota 200 differences in comparison mode (b). Each is ruled below; each applies to mode (b) only, strict mode keeps raw comparison, each is pinned with its reason in `tests/rpc_lockstep_reviewed_policy.json`, and each carries a sensitivity test showing that a genuine divergence in the compared or projected value still fails.
+
+- **R-M2b-O1 `rpc_session.arc_rpc_test_quota`:** the requested quota is the independent variable of mode (b), a test configuration value and not guest state. Excluded in mode (b).
+- **R-M2b-O2 `memory.active_kind`:** its value carries no meaning while `memory.active_valid` is false. In mode (b) it is compared only while `active_valid` is true; `active_valid` itself stays compared.
+- **R-M2b-O3 `arm.inscount`:** in the RPC engine it is only incremented at batch return and reset at start (`engine/rpcemu/src/arm.c:279,2007`); nothing reads it, so it cannot affect the guest, and its value at a point depends on batch structure. Mode (b) compares a defined projection of it (stated in the harness note) instead of the raw per-point value.
+
+Also ruled: the two standalone component goldens (CPU and CMOS executables) have no core sink surface and are recorded as component-only coverage; Windows runtime and W4 timeouts are taken from the PR's CI durations by W4's rule (at least twice the worst observed, whole minutes) in a follow-up run if CI shows them short.
