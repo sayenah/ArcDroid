@@ -348,6 +348,30 @@ python3 -B tests/rpc_lockstep_inventory.py /private/tmp/arcdroid-m2a-run-c-mingw
 ```
 
 On ELF/Linux, omit `--apple` and use the build's native `nm` and C compiler.
+
+## Run E: re-grounding after 1a-0
+
+The schema is re-grounded at `b57f772` after PR #469. Endpoint arming,
+previous/end completion, pending capture, interval fetch-hit snapshots and
+authored prefix-capture state are measurement state under D-195 R-e0-2:
+new fields are compared at all phases. Existing amendment-authorised mode
+projections are retained. Exercise counters, interval counter snapshots,
+exercise batch bookkeeping, ranking/profile state and cross-check bookkeeping
+are host-only exclusions under D-195 R-c and invariants §2.2; each exclusion
+is also pinned in the independent reviewed-policy fixture.
+
+The test-API refusal status is compared measurement state (1a-0 R-e0-4).
+Its borrowed `const char *` is a bounded index by facility-string content,
+with zero for no refusal and the schema's explicit table for other values;
+no process address is represented. An unknown facility has no identity and
+must be refused by the future emitter, like any other unassigned pointer.
+This follows A-29's typed-index rule without introducing a host-address hash.
+
+Source roots and scalar fields are recorded even when a compiler eliminates
+or aggregates their storage. Mach-O and COFF inventories additionally inspect
+profile/cross-check-enabled objects and API-only measurement-core objects, so
+their optional storage cannot evade classification behind the ordinary plan
+core's build flags. The object classifier remains fail-closed on unknown data.
 The normal CTest invokes the same classifier/export tool and compiled controls.
 It discovers all current `.c.o` / `.c.obj` files in the plan-core RPC object
 target, including a newly built source TU; it does not iterate a frozen source

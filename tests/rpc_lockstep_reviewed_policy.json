@@ -705,9 +705,87 @@
     },
     {
       "field": "profile",
-      "class": "diagnostic",
-      "citation": "docs/decision-log.md:D-195",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_profile.c:9; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: profile counters excluded"
+    },
+    {
+      "field": "rpc_mem_timing.arc_rpc_exercise.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.interval_exercise_start.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.interval_exercise_end.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.arc_rpc_exercise_path",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.start",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.integer",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.services",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.live",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.integral",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.batched",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.comparisons",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.mismatches",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.first_field",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     }
   ],
   "reviewed_mode_exclusions": [

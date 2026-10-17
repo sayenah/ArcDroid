@@ -1,7 +1,7 @@
 {
   "license": "GPL-2.0-only",
   "version": 0,
-  "grounding_commit": "bb5008fb58bc60bcd2d46bc65c98e67ea2f96956",
+  "grounding_commit": "b57f77211e1d7ce59e1b55605af70d1edb406def",
   "modes": [
     "strict",
     "cross-quota",
@@ -19169,7 +19169,7 @@
       "group": "session",
       "type": "u64",
       "count": 1,
-      "class": "diagnostic",
+      "class": "host-only/excluded",
       "phases": [
         0,
         1,
@@ -19178,7 +19178,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: profile counters excluded",
-      "citation": "docs/decision-log.md:D-195",
+      "citation": "engine/rpc/rpc_profile.c:9; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_profile.c",
       "mode_exclusions": {}
     },
@@ -19202,6 +19202,572 @@
         "cross-quota": "A-25(b): raw local batch position depends on quota; projected completion and remaining budgets remain compared",
         "guest-output": "A-25(c): host batching/measurement representation is not guest output; strict comparison still includes it"
       }
+    },
+    {
+      "name": "rpc_mem_timing.endpoint_mode",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "rpc_mem_timing.previous_valid",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "rpc_mem_timing.pending_end",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "rpc_mem_timing.previous_completion",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.end_completion",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.interval.start_fetch_hits",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.h:43; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.interval.end_fetch_hits",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_mem_timing.h:43; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.arc_rpc_exercise.values",
+      "group": "session",
+      "type": "u64",
+      "count": 168,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.interval_exercise_start.values",
+      "group": "session",
+      "type": "u64",
+      "count": 168,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.interval_exercise_end.values",
+      "group": "session",
+      "type": "u64",
+      "count": 168,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.arc_rpc_exercise_path",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned"
+    },
+    {
+      "name": "rpc_mem_timing.exercise_batch.start",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.exercise_batch.integer",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.exercise_batch.services",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_mem_timing.exercise_batch.live",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "rpc_mem_timing.exercise_batch.integral",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "rpc_mem_timing.exercise_batch.batched",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "arm.arc_rpc_prefix_last",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2017; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "arm.arc_rpc_prefix_done",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2018; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "bool"
+    },
+    {
+      "name": "arm.arc_rpc_prefix.instructions",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "arm.arc_rpc_prefix.issue_ticks",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "arm.arc_rpc_prefix.now_ns",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "arm.arc_rpc_prefix.cpu",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "arm.arc_rpc_prefix.memory",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "arm.arc_rpc_prefix.scheduler",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpcemu/src/arm.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_session.arc_rpc_refused",
+      "group": "session",
+      "type": "index",
+      "count": 1,
+      "class": "measurement",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
+      "citation": "engine/rpc/rpc_session.c:91; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2; docs/riscpc-6b-1a0.md:R-e0-4; docs/riscpc-6b-m2a.md:A-29",
+      "source": "engine/rpc/rpc_session.c",
+      "mode_exclusions": {},
+      "c_type": "const char *",
+      "index_limit": 10,
+      "index_values": [
+        null,
+        "allocation fault injection",
+        "endpoint measurement",
+        "entry fault injection",
+        "exercise counters",
+        "intrusive measurement",
+        "measurement interval",
+        "observer fault injection",
+        "observer trace",
+        "quota clamp",
+        "ranking counters"
+      ],
+      "normalization": "0=null; otherwise 1-based index by facility-string content in index_values; unknown content is unassigned and must fail, never encode a host address"
+    },
+    {
+      "name": "rpc_crosscheck.comparisons",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_crosscheck.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_crosscheck.mismatches",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_crosscheck.c",
+      "mode_exclusions": {},
+      "c_type": "uint64_t"
+    },
+    {
+      "name": "rpc_crosscheck.first_field",
+      "group": "session",
+      "type": "u64",
+      "count": 96,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_crosscheck.c",
+      "mode_exclusions": {},
+      "c_type": "char"
     }
   ],
   "inventory": [
@@ -21977,8 +22543,8 @@
       "symbol": "profile",
       "root": "profile",
       "classification": "excluded with ruling",
-      "ruling": "D-195 R-c: profile counters excluded",
-      "citation": "docs/decision-log.md:D-195"
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_profile.c:9; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "live-control-local",
@@ -21987,6 +22553,159 @@
       "classification": "contents-compared",
       "ruling": "Strict raw batch progress; derived epoch completions and driver remaining budgets compared across quotas (A-25/A-29)",
       "citation": "engine/rpcemu/src/arm.c:575-584; docs/riscpc-6b-m2a.md:A-25,A-29"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "endpoint_mode",
+      "root": "rpc_mem_timing.endpoint_mode",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "previous_valid",
+      "root": "rpc_mem_timing.previous_valid",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "pending_end",
+      "root": "rpc_mem_timing.pending_end",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "previous_completion",
+      "root": "rpc_mem_timing.previous_completion",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "end_completion",
+      "root": "rpc_mem_timing.end_completion",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "arc_rpc_exercise",
+      "root": "rpc_mem_timing.arc_rpc_exercise",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "interval_exercise_start",
+      "root": "rpc_mem_timing.interval_exercise_start",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "interval_exercise_end",
+      "root": "rpc_mem_timing.interval_exercise_end",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "arc_rpc_exercise_path",
+      "root": "rpc_mem_timing.arc_rpc_exercise_path",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "exercise_batch",
+      "root": "rpc_mem_timing.exercise_batch",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpcemu/src/arm.c",
+      "symbol": "arc_rpc_prefix_last",
+      "root": "arm.arc_rpc_prefix_last",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpcemu/src/arm.c:2017; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpcemu/src/arm.c",
+      "symbol": "arc_rpc_prefix_done",
+      "root": "arm.arc_rpc_prefix_done",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpcemu/src/arm.c:2018; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpcemu/src/arm.c",
+      "symbol": "arc_rpc_prefix",
+      "root": "arm.arc_rpc_prefix",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpcemu/src/arm.c:2019; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_refused",
+      "root": "rpc_session.arc_rpc_refused",
+      "classification": "contents-compared",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_session.c:91; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2; docs/riscpc-6b-1a0.md:R-e0-4; docs/riscpc-6b-m2a.md:A-29"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_crosscheck.c",
+      "symbol": "comparisons",
+      "root": "rpc_crosscheck.comparisons",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_crosscheck.c",
+      "symbol": "mismatches",
+      "root": "rpc_crosscheck.mismatches",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_crosscheck.c",
+      "symbol": "first_field",
+      "root": "rpc_crosscheck.first_field",
+      "classification": "excluded with ruling",
+      "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     }
   ],
   "object_symbols": {
@@ -22117,7 +22836,8 @@
           "rpc_session.arc_rpc_test_quota",
           "rpc_session.arc_rpc_fail_entry",
           "rpc_session.arc_rpc_observation",
-          "rpc_session.arc_rpc_backend"
+          "rpc_session.arc_rpc_backend",
+          "rpc_session.arc_rpc_refused"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -22220,7 +22940,17 @@
           "rpc_mem_timing.measure_drained",
           "rpc_mem_timing.interval",
           "rpc_mem_timing.cycle.simple",
-          "rpc_mem_timing.cycle.pc"
+          "rpc_mem_timing.cycle.pc",
+          "rpc_mem_timing.endpoint_mode",
+          "rpc_mem_timing.previous_valid",
+          "rpc_mem_timing.pending_end",
+          "rpc_mem_timing.previous_completion",
+          "rpc_mem_timing.end_completion",
+          "rpc_mem_timing.arc_rpc_exercise",
+          "rpc_mem_timing.interval_exercise_start",
+          "rpc_mem_timing.interval_exercise_end",
+          "rpc_mem_timing.arc_rpc_exercise_path",
+          "rpc_mem_timing.exercise_batch"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -22375,7 +23105,10 @@
           "arm.pccache",
           "arm.pccache2",
           "arm.stmlookup",
-          "arm.countbitstable"
+          "arm.countbitstable",
+          "arm.arc_rpc_prefix_last",
+          "arm.arc_rpc_prefix_done",
+          "arm.arc_rpc_prefix"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -22898,7 +23631,19 @@
         "roots": [
           "profile"
         ],
-        "citation": "docs/decision-log.md:D-195"
+        "citation": "engine/rpc/rpc_profile.c:9; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      }
+    },
+    "engine/rpc/rpc_crosscheck.c": {
+      "_MergedGlobals": {
+        "classification": "excluded with ruling",
+        "roots": [
+          "rpc_crosscheck.comparisons",
+          "rpc_crosscheck.mismatches",
+          "rpc_crosscheck.first_field"
+        ],
+        "citation": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+        "meaning": "Compiler aggregate; every member is independently inventoried host-only bookkeeping"
       }
     }
   },
@@ -23948,9 +24693,87 @@
     },
     {
       "field": "profile",
-      "class": "diagnostic",
-      "citation": "docs/decision-log.md:D-195",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_profile.c:9; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: profile counters excluded"
+    },
+    {
+      "field": "rpc_mem_timing.arc_rpc_exercise.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.interval_exercise_start.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.interval_exercise_end.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.arc_rpc_exercise_path",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.start",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.integer",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.services",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.live",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.integral",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.batched",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.comparisons",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.mismatches",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.first_field",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     }
   ],
   "cross_quota_projections": {

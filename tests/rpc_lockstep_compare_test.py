@@ -167,6 +167,23 @@ def suite(c=reference, stress=False):
         require(fields[name]['class']=='canonical','M-4 counter class')
         perturb(name)
     require(fields['arm.unpredictable_count']['class']=='diagnostic','M-4 diagnostic class')
+    # Run E / R-e0-2: the new measurement storage must actually participate
+    # in comparisons, including flags and saved captures, at every phase.
+    measurement_fields=(
+        'rpc_mem_timing.endpoint_mode','rpc_mem_timing.previous_valid',
+        'rpc_mem_timing.pending_end','rpc_mem_timing.previous_completion',
+        'rpc_mem_timing.end_completion','rpc_mem_timing.interval.start_fetch_hits',
+        'rpc_mem_timing.interval.end_fetch_hits','arm.arc_rpc_prefix_last',
+        'arm.arc_rpc_prefix_done','arm.arc_rpc_prefix.instructions',
+        'arm.arc_rpc_prefix.issue_ticks','arm.arc_rpc_prefix.now_ns',
+        'arm.arc_rpc_prefix.cpu','arm.arc_rpc_prefix.memory',
+        'arm.arc_rpc_prefix.scheduler','rpc_session.arc_rpc_refused')
+    for name in measurement_fields:
+        require(fields[name]['class']=='measurement','Run E measurement class '+name)
+        for phase in range(4):perturb(name,phase)
+    require(fields['rpc_session.arc_rpc_refused']['type']=='index' and
+            fields['rpc_session.arc_rpc_refused']['index_values'][0] is None,
+            'refusal pointer must use a semantic facility index')
     # M-3: independently mutate just the field, keeping its reviewed contract.
     schema_variants=[('canonical-condition','rpc_session.arc_rpc_bus_until','condition',False),
         ('unruled-mode','scheduler.rate_mips','mode_exclusions',{'cross-quota':'QA over-wide exclusion'}),
