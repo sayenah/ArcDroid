@@ -518,3 +518,18 @@ preprocessor, ABI and sanitizer flag and all assertions. This supplies a second
 optimization level while avoiding five repetitions of the 485-million-attempt
 Debug SA calibration. These temporary correctness cores are never measurement
 cores and never decide benefit.
+## SA-110 selection run 1 and run B (Fable, S67)
+
+**Selection run 1** (Odin3, L1 run A variant measurement cores, the 1a-0 AC-8 procedure: two six-run orders per comparison, A = SA linear, 120 s idle; realtime 60 + 300 s for the synthetics, 031 under the S61 recipe, window 6400–7400; D-201 bands). p50 change of the candidate against linear, per order:
+
+| Workload | Hint only | Hint plus mirror | Band₅₀ / band₉₅ |
+|---|---|---|---|
+| 031 (deciding) | −12.58 % / −13.07 % | −13.50 % / −13.30 % | 0.80 % / 0.62 % |
+| warm (guard) | +4.94 % / +3.59 % (p95 +5.86 % / +3.60 %) | +3.61 % / +3.32 % (p95 +3.46 % / +36.7 %, one run met the clock-step rule) | 0.50 % / 0.50 % |
+| ldm-stm8 (guard) | +4.69 % / +5.40 % (p95 +4.19 % / +5.00 %) | +4.37 % / +4.55 % (p95 +4.57 % / +4.69 %) | 0.50 % / 0.50 % |
+
+Both candidates gain about 13 % on 031 but regress both way-0 guards beyond their bands in both orders, so by the frozen rule neither qualifies and SA-110 stays linear on run A's code.
+
+**Cause (Fable).** The hint path computes its index with `line / c->sets` (a division by a runtime field) on every gated lookup, and after each hit recomputes it and stores the hint with `% c->ways`: about two to three hardware divides per lookup that the linear path, whose way-0 hit is one tag compare, does not pay (19 `udiv` in the object). Every cache geometry is a power of two, so this is an implementation cost, not a property of the design.
+
+**Run B (ruling).** Sol makes the hint index and the way arithmetic division-free (per-cache shifts or masks fixed at bind, valid for the power-of-two geometries, asserted at bind) and stores a hint only when it changes; no other behaviour change, the same tests, mutants and identity checks. Fable then repeats the selection on run B's variant cores with the rule, workloads and bands unchanged. Selection run 1 stays on record; run B's cores supersede its candidates.

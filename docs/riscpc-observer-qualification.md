@@ -72,10 +72,10 @@ The disc evidence covers the disc A and disc B cells.
 
 | Leg | Pairs | Result |
 |---|---|---|
-| `k-*`: `*WimpTask Cat ADFS::FlyingH2.$` with disc 1 of a two-disc set in drive 0 | all seven | Signal A was seen (unspecified device), candidate 2 was inserted automatically, and the catalogue was shown. |
+| `k-*`: `*WimpTask Cat` of disc 2's name with disc 1 of a two-disc set in drive 0 | all seven | Signal A was seen (unspecified device), candidate 2 was inserted automatically, and the catalogue was shown. |
 | `u-*`: `*WimpTask Cat ADFS::ArcNone.$` | all seven | Signal A was seen with no candidate. The request was left to the user, and Escape cancelled it. |
-| `sb-*`: user-mode `OS_File 5` on `ADFS::0.$.EuroBlastr` twice, then once more | all seven | The first miss was ignored and the second inserted disc 2. The final call found the object. |
-| `d-084d`: a real two-disc install | 3.71 SA-110 | "Please insert disc 'FlyingH2'" was satisfied automatically, and the install completed with no manual swap. |
+| `sb-*`: user-mode `OS_File 5` on a directory present only on disc 2 (`ADFS::0.$.<name>`) twice, then once more | all seven | The first miss was ignored and the second inserted disc 2. The final call found the object. |
+| `d-084d`: a real two-disc install | 3.71 SA-110 | The request for disc 2 was satisfied automatically, and the install completed with no manual swap. |
 
 ## Cost
 

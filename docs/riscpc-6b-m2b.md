@@ -625,3 +625,32 @@ L11. The reason hash of a format literal cannot tell apart identical literals at
 - **AS-4 (Astra 4) Online span declarations.** Sparse and compiled spans are declared online in the stream (open and close records with bounded state) with final accounting in End; the header's 256-span cap is removed. Test: more than 256 alternating spans over a FIFO. Full-audit fetch requirements and mandatory helper checkpoints stay enforceable.
 - **AS-5 (Astra 5) Reproduction across encodings.** A compact mismatch is reproduced by recomputing the original compact group hashes from the detail rerun, verifying the original divergence and matching prefix, then reporting the earliest differing leaf. Tests: compact to detail success, changed reproduction, earlier divergence.
 - **AS-6 (Astra 6) Compatibility hash and runner/core pairs.** The stream header carries a wire/projection compatibility hash computed from the compared field layout and rules only; inventory and provenance metadata are hashed and reviewed separately (inventory review stays enforced by its own test). The differential driver takes two explicit runner/core pairs. (The ABI handshake for structure-copy APIs is L1's, AS-L1-6.)
+
+## Fable's rulings on Sol's dispatch stop (S67)
+
+Sol stopped run A before implementation on two conflicts. Both rulings below bind and override earlier text.
+
+- **R-M2b-S1 Measurement-core identity.** The dispatch's "the default measurement core is byte-identical to `main`" is withdrawn; the order governs. The shipping core has no lockstep symbol and its objects are unchanged (AC-2, AC-3). The measurement core carries the new refusing stubs and the `.def` exports in every test DLL (R-M2b-9 with Fable's M8 choice). Its identity check is critic M9's AC-3(d): every measurement-core object except `rpc_session.o`, the enumerated stub, has code sections identical to the M2b merge-base, and 1a-0's AC-5(b) holds on the named hot objects. `rpc_session.o` differs only by the enumerated refusing stubs; AC-3 states that difference explicitly.
+- **R-M2b-S2 Budget fatals in AC-10.** M2a established (`tests/rpc-lockstep-expectations.md`) that the request and packet budgets (`rpc_mem_timing.c:333,344`) are internal invariants that no valid bounded guest can overflow, and that the driver instruction cap (`rpc_session.c:430`) cannot be exceeded within one advance; it delivered no directed ROMs for them. AC-10 is amended:
+  - **Bad mode** (`arm.c:177`) stays a guest-reachable directed ROM, with its record at the ruled key, page hashes, committed logs and the "awaiting emitter" RAM expectations demonstrated.
+  - **The three budget fatals** are demonstrated by a **test-only injection that exists only in the lockstep core class**: it forces the existing check's failure path at a chosen key without changing any budget, constant or condition used by any other build. The fatal records at those sites carry the same fatal-phase content as bad mode (page frames, committed logs, End). The evidence is labelled **injected**, never guest-reachable, in the report, the expectations file and the kill matrix.
+  - AC-3 proves the injection is absent from the shipping core, the measurement core and every other test core.
+  - The clock-time overflow path stays an unexercised, reported limit, as M2a recorded.
+
+## Fable's rulings on run B's cross-quota oracle findings (S67)
+
+Run B's authored point ROM shows three quota 1 against quota 200 differences in comparison mode (b). Each is ruled below; each applies to mode (b) only, strict mode keeps raw comparison, each is pinned with its reason in `tests/rpc_lockstep_reviewed_policy.json`, and each carries a sensitivity test showing that a genuine divergence in the compared or projected value still fails.
+
+- **R-M2b-O1 `rpc_session.arc_rpc_test_quota`:** the requested quota is the independent variable of mode (b), a test configuration value and not guest state. Excluded in mode (b).
+- **R-M2b-O2 `memory.active_kind`:** its value carries no meaning while `memory.active_valid` is false. In mode (b) it is compared only while `active_valid` is true; `active_valid` itself stays compared.
+- **R-M2b-O3 `arm.inscount`:** in the RPC engine it is only incremented at batch return and reset at start (`engine/rpcemu/src/arm.c:279,2007`); nothing reads it, so it cannot affect the guest, and its value at a point depends on batch structure. Mode (b) compares a defined projection of it (stated in the harness note) instead of the raw per-point value.
+
+Also ruled: the two standalone component goldens (CPU and CMOS executables) have no core sink surface and are recorded as component-only coverage; Windows runtime and W4 timeouts are taken from the PR's CI durations by W4's rule (at least twice the worst observed, whole minutes) in a follow-up run if CI shows them short.
+
+## Fable's rulings after the first CI run (S67)
+
+CI at `6dd297f` (PR #506) was green except `windows`, where `rpc-lockstep-inventory` failed with "inventory metadata changed without independent review". Fable traced it: `tests/rpc_lockstep_inventory.py` reads the schema and policy with the platform default encoding; run B added non-ASCII text to the schema, so on Windows (cp1252) the reviewed-inventory hash differs, while under UTF-8 it matches. The run also showed that CI never builds the lockstep class, so none of M2b's emitter tests ran in CI.
+
+- **R-M2b-C1 Encoding.** Every lockstep tool and test reads and writes its text files (schema, policy, inventory, expectations, streams' text metadata) as UTF-8 explicitly; a regression test runs the inventory and schema checks under a simulated cp1252 default.
+- **R-M2b-C2 Host CI.** The `host` CI job (Linux) builds the lockstep class and runs M2b's CI subset: the directed corpus, the CI seed subset (AC-8), full-audit on directed ROMs at the smallest RAM configuration (scope item), the emitter, layout, field, codegen, API, driver and consistency tests and the emitter mutants, with timeouts by W4's rule set from that job's measured durations (worst at most 60 % of the timeout, AC-15). The 75 golden-density checks and the local-full items remain local evidence in the report.
+- **R-M2b-C3 Windows.** Lockstep execution in Windows CI, and AC-15's Windows half, belong to M2c ("cross-platform CI", non-goals). M2b keeps the MinGW compile, layout and export proofs; the existing M2a lockstep tests keep running on Windows.
