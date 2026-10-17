@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef ARCDROID_ETERNA_STUB_H
 #define ARCDROID_ETERNA_STUB_H
 #include <stdint.h>

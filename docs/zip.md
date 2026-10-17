@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Loading game media from zip files
 
 ArcDroid can load `.zip` files containing ADF, ADL, or JFD disc images. A zip

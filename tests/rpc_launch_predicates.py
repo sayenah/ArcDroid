@@ -129,7 +129,7 @@ def main():
  if a.inventory:
   entries=inventory(root)
   entries+=transitions(root)
-  a.inventory.write_text(json.dumps({'sources':{s:hashlib.sha256((root/s).read_bytes()).hexdigest() for s in SCOPE},'predicates':entries,'equivalent':{}},indent=2)+'\n')
+  a.inventory.write_text(json.dumps({'license':'GPL-2.0-only','sources':{s:hashlib.sha256((root/s).read_bytes()).hexdigest() for s in SCOPE},'predicates':entries,'equivalent':{}},indent=2)+'\n')
  else:
   audited=json.loads((root/'tests/rpc_launch_predicates.json').read_text());entries=audited['predicates']
   for source,digest in audited['sources'].items():

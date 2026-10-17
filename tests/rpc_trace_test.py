@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Compare authored component observations to independently stated goldens."""
 from pathlib import Path
 import subprocess

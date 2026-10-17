@@ -5,13 +5,37 @@
 #if defined(ARCDROID_TEST_FAULTS)
 #include "libretro.h"
 #include "rpc/rpc_observer.h"
+typedef struct {
+    uint64_t id;
+    unsigned kind, retained, frontend_allocations;
+    bool engine_rpc, fault, fault_text;
+    ArcEngineCapabilities capabilities;
+} ArcFrontendHygiene;
+RETRO_API void arc_libretro_test_hygiene(ArcFrontendHygiene *);
+/* Existing direct-engine AV/input component tests explicitly admit a frontend
+ * identity. Actual switching evidence uses retro_load_game on the plan core. */
+RETRO_API bool arc_libretro_test_rpc_admit(void);
+RETRO_API bool arc_libretro_test_disc_name(unsigned,ArcGuestName *);
+RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned);
+RETRO_API void arc_libretro_test_plant_cmos(const char *);
+/* phase 0 prepares; phase 1 probes RPC; phase 2 is the Arculator control. */
+RETRO_API bool arc_libretro_test_persistence_guard(unsigned,unsigned,const char *);
 RETRO_API bool arc_engine_test_observers_disc_devices(unsigned forms);
+RETRO_API bool arc_engine_test_observers_error_numbers(ArcErrorNumberClass);
+RETRO_API bool arc_engine_test_observers_firmware(ArcDigest *);
 RETRO_API void arc_engine_test_observers_buttons(uint32_t,uint32_t,uint32_t);
 RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms);
+RETRO_API unsigned arc_engine_test_observers_cells(void);
+/* Trusted tuple injection for authored component/frontend tests only.
+ * Runtime firmware recognition remains a separate, verified admission. */
+RETRO_API void arc_engine_test_observers_production(unsigned,unsigned);
+RETRO_API void arc_engine_test_observers_horizon(unsigned);
+/* UINT32_MAX reads the current binding without rebinding. */
 RETRO_API void arc_engine_test_observers_binding(unsigned,unsigned *,unsigned *);
 RETRO_API bool arc_engine_test_observers_identities(char[11],char[11]);
 void arc_engine_test_observation_trace(bool,bool);
 bool arc_engine_test_observation_select(const ArcRpcTraceSelection *);
+bool arc_engine_test_refuse(const char *);
 void arc_engine_test_observation_profile(bool,unsigned);
 void arc_engine_test_gate_release_fault(bool);
 void arc_engine_test_observation_drain(ArcRpcTraceSink,void *);

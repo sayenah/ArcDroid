@@ -1,4 +1,5 @@
 {
+  "_license": "SPDX-License-Identifier: GPL-2.0-only",
   "schema": 1,
   "project": "RPCEmu",
   "version": "0.9.5",
@@ -37,7 +38,9 @@
         "scheduler-mmu-owned-memory",
         "scheduler-mmu-batching",
         "cpu-smlal-modulo",
-        "observation-r3c1"
+        "observation-r3c1",
+        "profiling-6b-p0i",
+        "measurement-6b-1a0"
       ]
     },
     {
@@ -93,7 +96,9 @@
         "scheduler-mmu-owned-memory",
         "containment-device-scheduler",
         "scheduler-mmu-batching",
-        "observation-r3c1"
+        "observation-r3c1",
+        "profiling-6b-p0i",
+        "measurement-6b-1a0"
       ]
     },
     {
@@ -204,7 +209,9 @@
         "scheduler-mmu-owned-memory",
         "devices-board-cmos-gate",
         "session-preparation-r3b2b",
-        "observation-r3c1"
+        "observation-r3c1",
+        "profiling-6b-p0i",
+        "measurement-6b-1a0"
       ]
     },
     {
@@ -476,6 +483,26 @@
       ],
       "reason": "D-174/D-175 gated CPU observations, pure MMU/backing inspection and internal controller-idle services; run B instantiates the interpreter body for armed and unarmed batch admission and confines SWI/return hooks to armed helpers; policy remains ArcDroid-owned. Run E (D-180 ruling) adds no-watch batch accounting and lazy SWI context while preserving inactive and checked loop instantiations.",
       "group": "observation"
+    },
+    {
+      "id": "profiling-6b-p0i",
+      "group": "test-only profiling",
+      "files": [
+        "src/arm.c",
+        "src/cp15.c",
+        "src/mem.c"
+      ],
+      "reason": "Compile-time attempt/class/exit, backing-write and scoped timing hooks; off by default, no guest intervention or observer selection changes."
+    },
+    {
+      "id": "measurement-6b-1a0",
+      "group": "test-only measurement",
+      "files": [
+        "src/arm.c",
+        "src/cp15.c",
+        "src/mem.c"
+      ],
+      "reason": "D-195 endpoint bounds at common batch admission/return and test-only TLB exercise/ranking counters; shipping preprocessing and hot code retained."
     }
   ],
   "adapted_sources": [

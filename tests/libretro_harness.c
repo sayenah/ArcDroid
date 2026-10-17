@@ -552,7 +552,12 @@ static int32_t vfs_stat(const char *p, int32_t *size)
    return RETRO_VFS_STAT_IS_VALID | (S_ISDIR(st.st_mode) ? RETRO_VFS_STAT_IS_DIRECTORY : 0);
 }
 static int vfs_mkdir(const char *p)
-{ count_install_prefix(p); return fault_once(p, &fault_mkdir_substring) ? -1 : mkdir(p, 0755); }
+{
+   count_install_prefix(p);
+   if (fault_once(p, &fault_mkdir_substring)) return -1;
+   int result = mkdir(p, 0755);
+   return result == 0 ? 0 : errno == EEXIST ? -2 : -1;
+}
 static struct retro_vfs_dir_handle *vfs_opendir(const char *p, bool hidden)
 {
    (void)hidden;

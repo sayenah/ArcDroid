@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pinned 30c0bab comparison; authored inputs and explicit guest projection. GPL-2.0-only.
-Usage: script RUNNER BASE_CORE CANDIDATE_CORE FIXTURES [full|sanitizer]
-BASE_CORE must have been built from git archive 30c0bab, same compiler/settings.
+"""Pinned interpreter comparison; authored inputs and explicit guest projection. GPL-2.0-only.
+Usage: script RUNNER BASE_CORE CANDIDATE_CORE FIXTURES [full|sanitizer] [profile]
+BASE_CORE must be built from the work order's pinned git archive, same compiler/settings.
 Host durations/paths and added diagnostics excluded. No golden rewriting.
 """
 from pathlib import Path
@@ -17,12 +17,18 @@ sys.dont_write_bytecode=True
 runner,baseline,candidate,fixtures=sys.argv[1:5]
 fixtures=Path(fixtures).resolve()
 profile=sys.argv[5] if len(sys.argv)>5 else 'full'
+profiling=len(sys.argv)>6 and sys.argv[6]=='profile'
 def projection(text):
     return '\n'.join(x for x in text.splitlines() if x.startswith(('frame=','regs=','video=','pcm=','first-raster=','ram=','cmos=')))
 def run(core,plan,system,save,frames,pacing='flat'):
+    extra=['--profile',str(plan.parent/'profile-measurements.json')] if profiling and core==candidate else []
     r=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(system),'--save',str(save),
-        '--frames',str(frames),'--pacing',pacing,'--ram-offset','0','--ram-words','64'],capture_output=True,text=True,timeout=120)
+        '--frames',str(frames),'--pacing',pacing,'--ram-offset','0','--ram-words','64',*extra],capture_output=True,text=True,timeout=120)
     if r.returncode:raise RuntimeError(r.stdout+r.stderr)
+    if extra:
+        import json
+        j=json.loads((plan.parent/'profile-measurements.json').read_text())
+        if j['schema']!=1 or not j['records'][-1]['attempts']:raise RuntimeError('profile not active')
     return projection(r.stdout)
 with tempfile.TemporaryDirectory(prefix='arc-observation-baseline-') as temp:
     root=Path(temp)
@@ -62,4 +68,4 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-baseline-') as temp:
             for p in save.rglob('*') if p.is_file() and p.name!='trace.jsonl'}
         results.append((output,files))
     if any(x!=results[0] for x in results[1:]):raise RuntimeError('IDE/CMOS outputs or persisted files differ')
-print(f'30c0bab baseline/off: {compared} authored CPU/AV/input plans + IDE/CMOS persisted files identical; off/unmatched/trace store parity')
+print(f'pinned baseline/off: {compared} authored CPU/AV/input plans + IDE/CMOS persisted files identical; off/unmatched/trace store parity')

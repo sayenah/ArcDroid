@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-16): notice added for existing ArcDroid monitor selection and cold-session state reset. */
 /*Arculator 2.2 by Sarah Walker
   IOEB emulation*/
 #include <string.h>

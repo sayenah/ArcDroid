@@ -1,6 +1,8 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 10b — persisted install hard disc
 
-Exact-profile E-Type, E-Type Compendium and Premier Manager install recipes
+Exact-profile install recipes for three library titles
 can publish to a project-formatted A3020 hard disc. The source package, support
 disc and supplied JFD images remain memory-backed. The saved installation
 gets a content-bound storage ID and a versioned, checksummed manifest. A

@@ -38,6 +38,10 @@ typedef struct {
 } ArcEngineCapabilities;
 
 ArcEngineCapabilities arc_engine_capabilities(void);
+/* Drain raw storage-failure drive bits outside guest execution. */
+unsigned arc_engine_rpc_storage_failure_take(void);
+/* Lifecycle queries are neutral before start and after explicit stop.
+ * Failed-start diagnostics remain available until the caller stops. */
 /* Private backend identity; never selects a shipping launch route. */
 bool arc_engine_is_rpc(void);
 /* Exact production/drain backends only. Unsupported backends return zero;

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC faster CPU translator (roadmap item 6b) — evaluation and plan (D-133, D-141)
 
 Status: **evaluation, research and design only** (D-141, amended by D-142 after the S58 Astra challenge). No translator code lands before R4 qualifies the RiscPC core and the release baseline (item 5) is done, unless the Founder reorders. Private evidence: S57 scratchpad `s57/6b/` (the evaluation report and a fork clone at `94f7c9a`).
@@ -113,6 +115,121 @@ These ranges are research targets, not predictions (Astra S58):
 
 ## Phase 0 evidence (S59, private scratch probes, never Sol sources)
 
+### 6b-P0i instrumentation design (S64)
+
+`ARCDROID_RPC_PROFILE` defaults OFF. Only `arcdroid_rpcplan_libretro_rpc`,
+the non-installed runner and dedicated authored profiling fixtures compile it;
+the shipping core and other interpreter tests never acquire the definition.
+Hooks in the shared interpreter source are compile-time empty when OFF. The
+inactive/observed/cheap selection, observer helpers, quotas and service order
+are unchanged. No hook reads guest bytes beyond the actually fetched opcode,
+walks translations, flushes batches, raises faults or performs host I/O.
+
+Counters count **attempts**, including failed conditions and prefetch aborts.
+Successful fetches have mutually exclusive classes: ALU, multiply, branch,
+scalar load/store, multiple load/store, swap, half/signed transfer, status,
+coprocessor, SWI and other. Classes include failed conditions; a separate
+condition-passed count distinguishes executed bodies. Coverage is conservative:
+condition-failed instructions and ALU/multiply/branch/scalar memory bodies are
+candidates only when they encounter no barrier. It is a scope estimate, never
+proof that a guard can be hoisted or a memory access accelerated.
+
+A dynamic run includes its terminating attempt and carries across interpreter
+batch/frontend returns. A taken branch or executed PC destination ends E1
+(counted separately); slow classes end E3; mode/mask changes, idle and actual
+physical MMIO end E4; actual IRQ/FIQ, data abort, prefetch abort and SWI/Undefined
+end E6/E7a/E7b/E10; a successful write into a recently executed backing page
+ends E9. E11 counts a condition-passed CP15 c7 write whose tuple is classified
+as cache maintenance by the profiling hook: every c7 write on ARM610/710/7500;
+on SA-110, `(opc2,crm)` is `(0,5/6/7)`, `(1,6/10)` or `(4,10)`.
+This is an instruction count, independent of whether timing recording is bound,
+a targeted cache line exists, or the timing model performs work. It uses the
+CP15 CPU model, not the timing model's acceptance decision. Retaining this
+definition keeps schema-1 measurements comparable; it is not a count of
+effective invalidations, castouts or drains. Causes may overlap on one
+attempt: each cause counts once, but the length histogram closes once. E5 counts
+actual batch returns (quota, service/deadline, idle/test stop); it does not truncate
+the shape histogram. E2 is explicitly unavailable: no translator guard exists.
+E8 counts the existing session fatal and abandons the unfinished attempt through
+the existing longjmp, without adding a boundary. Histogram buckets are exact
+lengths 1..64 plus >=65, with total lengths and maximum retained; the open suffix
+is reported separately. Reset/stop suffixes are censored, with their counts and
+lengths separate from the complete-block histogram. Fetch/data/MMIO accesses, scheduled device deliveries,
+cache fills/memo hits and bus-service calls are also recorded. `bus_calls`
+counts entries into both `arc_rpc_mem_batch_service` and `arc_rpc_mem_run`,
+including the nested `batch_service` → `run` entry. It is not a count of unique
+bus transactions or an exclusive service classification.
+
+Code churn uses 4 KiB **allocation-offset** pages (ROM, RAM0, RAM1, VRAM), so
+mirrors alias. A successful fetch marks a page; a functional RAM/VRAM word or
+byte store counts as recent when that page was fetched within the preceding
+1,000,000 attempts (including the current attempt). Ignored ROM/unbacked stores
+and denied stores do not count. Distinct written recent pages and write operations
+are separate; STRH counts its two functional bytes, STM each completed word.
+Lifecycle clears page history before allocations can be reused; counters remain
+cumulative until runner configuration, with reset/fault counts exposed.
+
+Host cost uses deterministic **scoped sampling**, default stride 1024 (0 means
+counts only, 1 times every attempt/service). Sampled CPU attempts split exclusive
+wall-clock nanoseconds into fetch translation, dispatch/body, timing model,
+bus service and MMIO; independently sampled driver bus-service and device
+callbacks cover work outside attempts. Class/block bookkeeping is separately
+attributed to `profiling`; minor hook/wrapper costs remain in their enclosing
+buckets. Nested scopes charge their child once.
+Dispatch includes data translation and ordinary memory effects. Samples include
+clock/profiling overhead, reported without subtraction; `sampled_ns * stride`
+is an estimate, susceptible to periodic-workload bias, not guest timing or an
+exact cost ledger. Reports include sample counts, clock reads, charged probes
+per bucket and an 8192-iteration empty-charge calibration (outside execution).
+For an approximate bias check, subtract `probes * calibration_ns / 8192` from
+raw sampled ns, clamp to zero, then scale by stride. Raw values are preserved;
+calibration is not an exact correction and low residuals are unresolved costs. Compare
+strides and unprofiled `--timing` frame costs before drawing conclusions. Timers
+use the existing test monotonic clock, never guest time. A fatal abandons the
+unfinished scope; already recorded sample fragments stay visible and an
+abandoned-sample counter marks incomplete cost evidence.
+
+Runner options (profile builds only): `--profile FILE`,
+`--profile-interval FRAMES` (default 60), `--profile-sample-stride N` (default
+1024, 0..1048576). The sink opens after preparation, before requested frames; writing occurs only
+after protected execution returns. Open/write/close failures fail the runner, leaving
+guest execution unaffected. JSON schema **2**, object `schema`, `sample_stride`,
+`recent_attempts`, `records`: cumulative snapshots at the chosen frame interval,
+each crossed emulated second (at the first returning frontend boundary), and
+exit. Each record carries frame/guest ns, counters/classes/exits/block histogram,
+open block length, coverage and cost samples, plus interval frame p50/p95/max
+and summed core ns. Differences between successive cumulative snapshots give
+per-second counts; first/last windows may be partial. Reset clock rewinds are
+explicitly epoch-labelled. No opcode, guest address, register, ROM byte, path or
+private title is emitted. Existing runner `--timing` provides individual frame
+tails, so cold start and sustained windows can be compared without host pacing
+feeding the guest. Build/run commands are in the
+[profiling runbook](../tools/rpc-r1-runbook.md#6b-p0i-profiling-test-only).
+
+**Measured overhead (S64 final code).** On the shared development MacBook Pro
+(MacBookPro17,1, Apple M1, 8 CPU cores, 16 GB), macOS 26.6.2, Apple Clang
+21.0.0, RelWithDebInfo, three alternating ON/OFF
+pairs of the authored hot workload (601 frames, excluding frame 0) gave median
+p50 **22.295 → 68.691 ms (+208.10%)**, p95 **23.664 → 93.435 ms (+294.84%)**,
+and **13.667 → 44.631 host ns/instruction (+226.56%)** with stride 1024.
+Each measured leg executed 1,000,000,020 instructions over 10,000,000,200 guest
+ns. No competing test/performance jobs from the measuring Sol session ran;
+ambient host load and thermals were uncontrolled (no load-average sample was
+recorded). Individual pair p50 overhead ranged +139.65–208.10%; the first OFF
+leg had noisy tails. Counts-only stride 0 still cost 67.377 ms p50, and an ON
+build without a profile request cost 44.264 ms p50. Use OFF builds for headroom
+and R-H evidence. These are Mac hot-loop measurements, not Odin3 predictions.
+QA independently reproduced about +150–200% p50 on an 8-core shared Mac at
+load about 7.5 (600 frames, stride 1024).
+
+Tiny-scope clock bias is material: raw sampled ns scaled by stride summed to
+298–311 s against about 45 s measured execution; empty-charge calibration was
+23.80–39.55 ns/probe. Counts-only controls, alternate strides and unprofiled
+frame timings are required when interpreting this cost split. Low calibrated
+residuals remain unresolved costs. Private aggregate evidence stays local;
+no private plan or guest bytes are needed to reproduce the authored hot leg.
+
+
 **Executable memory inside RetroArch on the Odin3.**
 - **Setup:**
   - Android 15, RetroArch 1.22.2, process domain `untrusted_app`, 4 KiB pages.
@@ -207,18 +324,205 @@ These ranges are research targets, not predictions (Astra S58):
 - **Release note:** with Smart App Control on, an unsigned ArcDroid-built executable was blocked (see the handoff's item 5 notes).
 - **Not covered:** inside RetroArch on Windows (RetroArch is not installed on the box).
 
-**Still open in Phase 0:**
-- representative gameplay (after R2c, with AC-10);
-- the block-length distribution, fallback frequency and code churn, which need block instrumentation;
-- cold-start against sustained frame tails;
-- repeated runs on the Odin3 (done on Windows);
-- the Q-3 oracle fix.
+**Representative gameplay (S65, 6b-P0i `1bb22aa`).** 031 from a cold start into racing gameplay (the S61 AC-10 inputs), 8000 frames, flat pacing, 3.71 SA-110 at 100 MIPS, on the Odin3 and the Mac. Profiling legs at sample strides 1024 and 1021, and two unprofiled legs on the Odin3 before and after. Guest output and the frame-7000 image are byte-identical across every leg and across both platforms. Private evidence: `.work/s65/p031/`.
+- **Instruction mix:** 9.45 × 10⁹ instructions in 151.8 guest seconds (62 MIPS executed on average; the rest is idle). ALU 49.7 %, loads 21.7 %, branches 21.0 %, LDM/STM 4.1 %, stores 2.2 %, multiplies 1.3 %, status/coprocessor/SWI under 0.2 %.
+- **Blocks are short.** Dynamic straight-line runs average 4.1 instructions (median 3, 90th percentile 8, 99th 26, longest 193). Only 37 % of instructions sit in runs of 8 or more, and 12 % in runs of 16 or more. Taken branches and PC writes (E1) end 197 runs per 1000 instructions.
+- **Exit causes per 1000 instructions:** E1 197, E3 (helper call inside an instruction) 39, E4 (side exit) 10.4, E9 (store into a recently executed page, page granularity) 7.7, E5 6.0, E10 0.3, E11 0.2. 94.4 % of instructions are candidates for a minimal block foundation; the fetch memo hits 84.4 %.
+- **Code churn is high at page granularity.** 0.9 % of instructions write into a page executed within the last 10⁶ instructions. Invalidation keyed by 4 KiB page would thrash; a translator needs finer-grained (allocation plus offset, D-142(3)) or data/code-separated invalidation, and the churn has to be re-measured at that granularity before any cache design.
+- **Host cost split (sampled, probe-bias corrected, profiling bookkeeping excluded):** timing service 51 % (Odin3) / 58 % (Mac), fetch translation 16 % / 17–20 %, dispatch 16 % / 15 %, bus service 16 % / 6–9 %, devices under 1 %. Both strides agree within a few points. With profiling on, small scopes are probe-dominated; read the split as a ranking, not a ledger.
+- **Odin3 frame cost, unprofiled (T = 19.97 ms, the 50 Hz field).** Two runs agree within 1 %: start-up 32.0 ms p50; loading and menus 30.4 ms p50, 56.3 ms p95; sustained racing (frames 6000–8000) **29.5 ms p50 (1.48 T), 34.0 ms p95 (1.70 T)**, about 28.5 host ns per executed instruction. The AC-10 frame gate (p95 ≤ 0.80 T) needs about **2.1×** on sustained gameplay, and more on the loading tails.
+- **What this means for the plan.**
+  - Exact interpreter work has to attack the timing service first; it is half of the host cost on the Odin3.
+  - A block foundation on its own covers little: with runs of four instructions, block entry and exit overhead is paid every few instructions. Its value is in carrying timing and fetch work across a run, not in dispatch alone.
+  - The S64 Phase 1a candidate set (exact optimisations, about 20–25 % on 031) is consistent with this, and confirms that Phase 1a alone cannot reach AC-10.
 
-## Founder decisions (none needed now)
-- **Q1, design objective — at the end of Phase 0.** Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
+**Still open in Phase 0** (the Q-3 oracle fix merged earlier as `44d007e`; later 6b work is planned in `docs/riscpc-6b-phase1a.md` and `docs/riscpc-6b-plan.md`, D-191):
+- a 3D title, profiled the same way;
+- code churn at allocation-plus-offset granularity;
+
+## Founder decisions
+- **Q1, design objective — answered S65 (D-188): capacity for a ceiling of about 200 MIPS.** Native backends on arm64 and x64 and a cycle-timing review follow Phase 1a. The original question: Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
   - A higher instruction ceiling is not a 202 MHz SA-110: R2a excludes pipeline and per-class cycle modelling. A cycle model would be a separate timing-contract decision. Doubling the ceiling cannot promise native frame rates for bus-limited workloads.
-- **Q2, platform parity — with Q1.** Cross-platform trace equality is a hard requirement, so the question is how to meet one common guest rate on both platforms (the portable path, or a later x64 backend). Per-platform rates are outside the current contract.
+- **Q2, platform parity — answered with Q1 (D-188): native backends on both platforms.** Cross-platform trace equality is a hard requirement, so the question is how to meet one common guest rate on both platforms (the portable path, or a later x64 backend). Per-platform rates are outside the current contract.
 - **Q3, the fork — before the first copied or adapted helper, including in disposable probes.** Reference only, or selective copying of `rpcemu-extended` helpers (GPL-2.0-or-later, compatible with the project's GPL-2.0-only distribution).
   - If copying is chosen, record the exact commit, files and functions, dependencies, original notices and modifications through the existing provenance machinery. Every copied encoder gets independent encoding and bounds checks: several fork helpers mask operands rather than reject invalid ranges.
   - melonDS is GPL-3.0-or-later and stays conceptual reference only.
 - **Q4, default — at qualification.** Fallback behaviour is defined earlier. Whether the translator is on by default, and the kill switch, are decided from evidence.
+
+## Slice 1a-0 measurement design (D-195, amended S66)
+
+This section freezes the implementation contract before executable edits.
+All new instrumentation is authored under SPDX-License-Identifier: GPL-2.0-only.
+The retained intrusive mode remains the independent calibration oracle.
+
+For instruction ordinal k let I(k) be its exact issue tick and C(k) its
+completion tick: I(k) for a request-free instruction, otherwise the ordinary
+`commands()`/committed-shortcut completion tick. C(0)=0. With tick denominator
+D=28×rate, visible(t)=ceil(t/D). An interval [f,l] has start=C(f−1),
+non-drained end=C(l), and drained end=max(C(l),R), where R is the retirement
+tick of the final command/buffer packet still owed at C(l). Empty queues at
+C(l) give end=C(l). Video holds can separate C(f−1) from I(f); subtracting a
+base from I(f) is not a start-time formula.
+
+Capture phases are: preserve C(f−1) on its ordinary completion; sample start
+statistics at admission of f (after prior service, before f's fetch); preserve
+C(l) on completion; and, if needed, sample end on final packet retirement.
+Fast request-free completion is projected at the ordinary batch return using
+the existing integer materialisation formulas or the rational issue tick.
+No capture calls `batch_flush`, `next_base`, service or translation. Interval
+statistics project instructions and completion tick without writing canonical
+statistics. All fields of both interval records are compared, not just elapsed
+time. Measurement state includes the mode, bounds, drained flag, saved prior
+completion, pending end and both interval snapshots. It has a separate explicit
+comparison; the raw inspector snapshot remains unmasked.
+
+The stop mechanism is R-e0-1(i): bound admission at f−1 and l while armed.
+The common interpreter entry wraps all three instantiations and the NULL-batch
+path. Existing driver ready/next gates stop subsequent issue at l while service
+continues to drain. Admission of f captures its start; return after f−1 or l
+captures request-free completion. Unarmed admission changes no quota. The
+proof compares the unarmed instruction-loop disassembly/instruction count with
+the pinned base, in addition to shipping object sections and the three separate
+AC-1 comparisons. Admission/return work is outside the instruction loop. A
+flag branch newly executed on every unarmed instruction is not accepted proof.
+
+Late arming refuses without changing measurement state when `first > 1`,
+`first - 1 == instructions`, and the preceding instruction is no longer
+pending: its unarmed completion was not retained. A pending predecessor can
+still supply its exact completion; a more distant first instruction is also
+accepted. This prevents accepting a window that would fault at next admission.
+
+The macro split retains `ARCDROID_TEST_FAULTS` as the hot-hook part and adds
+`ARCDROID_TEST_API` for test APIs. Ordinary TEST_FAULTS implies the API part.
+`ARCDROID_RPC_MEASUREMENT` selects the API/plan-only measurement target.
+
+| Build | API/plan | Hot test hooks / exercise | Ranking | Cross-check | Frame timer / event diagnostics |
+|---|---|---|---|---|---|
+| Shipping | no / no | no | no | no | no / no |
+| Ordinary test/calibration | yes / no | yes | no | no | yes / yes |
+| Plan | yes / yes | yes | optional profile option | optional | yes / yes |
+| Profile/cross-check | yes / target dependent | yes | profile only | cross-check option only | yes / yes |
+| Measurement (non-installed) | yes / yes | no | no | no | yes / yes |
+
+Measurement has shipping optimisation, visibility and shared hot layouts.
+The four named CPU/timing/translation objects match shipping. The exceptions
+outside that set are session event counting and the observer API differences
+listed below. Intrusive and
+endpoint measurements, observer trace, quota clamp, allocation injection and
+exercise/ranking counter requests refuse explicitly. Runner capability checks
+produce a nonzero exit naming the absent facility. Production observer
+subscription and the frame timer remain functional. Ordinary targets retain
+their existing APIs and forced-slow request-level tests.
+
+Exercise counters live outside both timing structs and reset at timing bind,
+including unbind before an early return: reset/stop/unload/failed start/rate
+rebind and backend switching all retire the timing binding. New ranking counters (schema 2) reset at each G-13 timing binding and report
+`ranking_epoch`, current-binding `ranking_attempts`, and successful-fetch
+`ranking_fetched`. AL resets with those counters. Legacy P0i fields retain
+their cumulative reporting and their existing lifecycle epoch/reset semantics. Neither class participates in guest
+or measurement comparisons. No counter reads guest memory or performs I/O.
+
+Counter units are unsigned integer occurrences (probes count examined ways,
+fills count packets, instructions count attempts including aborted fetches).
+Rates use the reported instruction-attempt denominator; ratios retain numerator
+and denominator separately. Mean probes/hit uses hit-probes/hits, never all
+probes/all lookups. Counter families and increment points:
+
+- Lookup: access and c7 maintenance callers separate; one empty return, searched
+  miss or hit per call; hit-way histogram indexed from zero; total probes and
+  hit probes. Empty returns have zero probes, a searched miss has `ways`, a
+  way-k hit has k+1. Beyond-way-zero hits are L1 opportunities.
+- Service: classify once at batch-service entry, before mutation. Exclusive
+  precedence is pending, video active, valid finish with due≥visible(finish),
+  S1-eligible, other busy, other. S1 is nested within busy-not-pending and
+  requires !pending, !video_active, cycle_active (valid finish), and strict
+  now<due<min(visible(finish),next event,frontend limit). Invalid finish is never
+  used in a due comparison. Report valid/invalid-finish entry counts separately.
+- Fills: increment on actual fill allocation, by fetch/data and memory/ROM.
+  Shortcut attempts increment on admission to prediction; commits only after
+  its boundary test succeeds; rollbacks after failed prediction. B3 counts
+  memory fill packets in committed shortcuts, never predicted/rolled-back fills.
+- TLB: at checked translation entry distinguish tag hit from walk, split by
+  fetch/data. On successful permission return count a hit opportunity only if
+  the entry hit on admission and no abort is pending; denied installs are walks,
+  not hit opportunities. A tag hit denied by DACR/AP or pending abort remains
+  only a raw tag hit. MMU-off accesses are neither walks nor tag hits.
+- Integer instructions: count each integral prefix at its existing flush;
+  rational continuations: successful non-service, non-integer continuation
+  edges, aggregated at batch return from executed prefix, integer prefix and
+  successful service continuations. Keep the three instantiations separate.
+  This adds no increment inside the instruction loop. Counts inside endpoint
+  windows are differences of snapshots taken at the interval boundaries. The
+  interval exercise getter returns false for intrusive windows; cumulative
+  exercise getters remain available there.
+- Profile AL: increment on a successful fetched opcode whose condition is AL,
+  regardless of condition result; denominator is successful fetches. Existing
+  condition-passed/attempt and fetched/attempt counts remain available.
+
+Cross-check is an opt-in, test-hook-only field comparison/reporting contract.
+It counts comparisons and mismatches, names a mismatching field on stderr and
+makes a mismatch fail. Its only 1a-0 client is an authored self-test; isolated
+reference execution for future paths belongs to their own slices.
+
+The implementation adds `arc_rpc_test_capabilities` so the runner never queries
+absent trace diagnostics as if they were available. Unsupported direct trace
+APIs latch a refusal too; ordinary measurement-plan cleanup does not request
+those APIs. The final test target retains frontend test APIs while its forced
+RPC namespace header clears TEST_FAULTS and retains TEST_API. The four named
+CPU/timing/translation objects therefore have the shipping preprocessor shape;
+this is not a claim about every RPC object.
+
+Run C observer comparison caveat (AC-9): `rpc_observer.c` appends API-only
+functions without changing the production source (host QA found those existing
+functions instruction-identical).
+`rpc_observers.c` retains API-controlled policy and reset restoration, so its
+object does not match shipping. The test-only `state.overridden` member shifts
+the offsets of `inserted`, the callbacks/opaque pointer, resolved candidate,
+retry/suppression fields and copied retry work. Event handlers and frame/status
+code addressing those members use the shifted offsets. In `error_event` and
+`disc_event`, the watch/renew budget is loaded from mutable `watch_budget`
+instead of using shipping's constant 1,000,000,000 instruction attempts (the
+`test_watch_budget` API causes this; it is not the launch time horizon).
+The separate `test_horizon` API can redirect `state.launch.profile` to a mutable
+profile for `arc_outcome_frame`/launch handling. Bind/override/rebase retain
+that API state and reset restoration; rebase adds save/restore work per reset.
+These differences add no per-instruction hook, but observer-event code is not
+shipping-identical. With the current single-translation-unit ownership, full
+identity would require an API/state-boundary redesign, removing retained policy
+APIs, or changing shipping state/reset code. Run C keeps those APIs and the
+AC-5(a) shipping identity and uses the authorized documentation fallback: AC-9 measures this
+same measurement core with production cells versus `observer_cells=off`, and
+records these per-event differences as a caveat, not as shipping-object proof.
+
+`observer_cells=off` explicitly disables all eight cells on every firmware/CPU
+pair, including a qualified pair, and logs `RPC observers: TEST OFF; all cells
+disabled (observer_cells=off)`. It applies at attachment and after reset.
+An absent key or numeric `observer_cells=0` retains production qualification;
+a nonzero numeric mask retains the existing candidate override semantics.
+The same setting is supported by plan and measurement cores. Observer trace
+and `observation_profile=unmatched` are separate diagnostic subscriptions;
+omit both for the unobserved AC-9 leg.
+
+`rpc_measure_compare.py --test-loops` checks R-e0-1 on `arcdroid_libretro_test_rpc`,
+which contains the endpoint mechanism: the three preprocessed loop bodies and
+their reachable local/inline helpers must match the pinned base. The single
+`arc_rpc_mem_exercise_begin` call stays in the common dispatch wrapper before
+all three instantiations. Each emitted loop must have no more instructions
+than the base and the same RPC relocation-reference multiset. The
+committed guard self-test rejects added inline work, a new loop call and moving
+batch entry into the instruction loop. Measurement/shipping object identity
+alone does not prove this test-core property.
+
+`--prefix-instructions N` captures an authored functional prefix at the normal
+interpreter return. `--single-step-prefix` supplies the independent unarmed
+quota-one reference. Comparison includes CPU/banks/mode, all RAM/VRAM, exact
+issue tick and live scheduler deadlines; hashes stay on runner stderr. The
+endpoint run intentionally stops afterward; the reference continues. This
+diagnostic is outside canonical and measurement snapshots, is cleared on CPU
+reset and allocation retirement, and is absent from the measurement core.
+
+RPC inline headers apply the same hot-part condition in every translation unit
+(`TEST_FAULTS && !RPC_MEASUREMENT`), so frontend/test-API users of those headers
+see the same shared timing layout as the measurement RPC objects. Prefix
+reference runs set the existing quota-one API; they introduce no additional
+unarmed quota mechanism.

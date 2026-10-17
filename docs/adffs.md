@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Using a user-supplied ADFFS package
 
 ArcDroid can use ADFFS to boot an eligible JASPP JFD image. Put

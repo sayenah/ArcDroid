@@ -33,6 +33,10 @@ typedef struct {
     uint16_t registers, results;
     unsigned kinds;
     ArcRpcObserveCallback callback; void *opaque;
+    /* Optional bounded, host-owned list; it must outlive the filter. Numbers
+     * ignore X, while swi/swi_mask still admit exact decorations. Count zero
+     * preserves the ordinary mask-only subscription. */
+    const uint32_t *swis; unsigned swi_count;
 } ArcRpcObserveFilter;
 typedef enum { ARC_RPC_CAP_OBSERVE, ARC_RPC_CAP_COMPLETE,
                ARC_RPC_CAP_REPLACE, ARC_RPC_CAP_OBSERVE_B, ARC_RPC_CAP_REPLACE_B } ArcRpcObserverCapability;
@@ -46,6 +50,9 @@ ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
 
 bool arc_rpc_observer_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
 bool arc_rpc_observer_watch_live(ArcRpcObserver, uint64_t);
+/* Renew only a live current-generation watch from its owner's SWI callback.
+ * Continuation identity and return state are preserved. */
+bool arc_rpc_observer_watch_renew(ArcRpcObserver, uint64_t, unsigned attempts);
 /* The interpreter tests this before constructing any observation context. */
 extern bool arc_rpc_observer_active, arc_rpc_observer_context;
 void arc_rpc_observe_batch_begin(void);
@@ -87,6 +94,7 @@ bool arc_rpc_inspect_translate(uint32_t va, bool privileged, uint32_t *physical)
 
 typedef struct {
     ArcRpcObserver observer; uint64_t generation, epoch, media_generation, helper_generation, ns;
+    uint64_t previous_ns; /* Previous source observation, copied by the owner. */
     unsigned kind; uint32_t operation, continuation, sp; uint64_t watch;
     size_t size; uint8_t bytes[ARC_RPC_COPY_LIMIT];
 } ArcRpcHostWork;
@@ -97,11 +105,16 @@ typedef struct {
     void *opaque;
 } ArcRpcHostWorkHandler;
 bool arc_rpc_observer_queue(const ArcRpcHostWork *);
+/* Inspect copied work before a possible overflow retires its generation.
+ * No host work runs. */
+bool arc_rpc_observer_queued(ArcRpcObserver,unsigned);
+/* Drop only matching copied payloads, preserving other identities/order. */
+void arc_rpc_observer_drop_queued(ArcRpcObserver,unsigned,const void *,size_t);
 void arc_rpc_observer_host_handler(ArcRpcObserver, const ArcRpcHostWorkHandler *);
 bool arc_rpc_observer_in_host(void);
 void arc_rpc_observer_drain(void); /* Frame boundary only, never guest execution. */
 
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count);
 #include "libretro.h"
 extern uint64_t arc_rpc_observer_integer_attempts;
@@ -138,5 +151,7 @@ RETRO_API uint64_t arc_rpc_observer_test_epoch(void);
 uint64_t arc_rpc_observer_test_attempts(void);
 ArcRpcObservation arc_rpc_observer_test_origin(void); /* Captured metadata only. */
 uint64_t arc_rpc_observer_test_events(void);
+uint64_t arc_rpc_observer_test_captures(void);
+uint64_t arc_rpc_observer_test_number_checks(void);
 #endif
 #endif

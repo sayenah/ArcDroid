@@ -1,0 +1,5 @@
+/* Deterministic build-time source identity. GPL-2.0-only. */
+#ifndef ARC_BUILD_IDENTITY_H
+#define ARC_BUILD_IDENTITY_H
+#define ARC_BUILD_COMMIT "@ARCDROID_SOURCE_REVISION@"
+#endif

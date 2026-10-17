@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Guest KART evidence from project-authored firmware under the test DLL."""
 import os
 from pathlib import Path

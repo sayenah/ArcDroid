@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Fresh-process guest partial merge of a base-allocated omitted sector.
 
 Each step starts a new harness process and libretro core. The ROM poisons RAM,

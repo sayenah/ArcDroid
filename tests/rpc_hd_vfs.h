@@ -88,7 +88,7 @@ static int test_remove(const char *p) {callback_file(p,0,false);if(!before(8))re
 static int test_rename(const char *a,const char *b) {callback_file(b,0,false);if(!before(9))return -1;int i=find(a,false);if(i<0||find(b,false)>=0)return -1;snprintf(files[i].path,sizeof(files[i].path),"%s",b);measure_files();return 0;}
 static int32_t test_stat(const char *p,int32_t *n)
 {callback_file(p,0,false);if(!before(10))return 0;int i=find(p,false);if(i>=0){if(n)*n=(int32_t)files[i].size;return 1;}for(unsigned d=0;d<dir_count;++d)if(!strcmp(p,directories[d]))return 3;return 0;}
-static int test_mkdir(const char *p) {callback_file(p,0,false);if(!before(11)||dir_count==16)return -1;snprintf(directories[dir_count++],1100,"%s",p);return 0;}
+static int test_mkdir(const char *p) {callback_file(p,0,false);if(!before(11))return -1;for(unsigned d=0;d<dir_count;++d)if(!strcmp(p,directories[d]))return -2;if(dir_count==16)return -1;snprintf(directories[dir_count++],1100,"%s",p);return 0;}
 static struct retro_vfs_dir_handle *test_opendir(const char *p,bool hidden)
 {(void)hidden;if(!before(12))return NULL;assert(!directory.used);memset(&directory,0,sizeof(directory));directory.used=true;snprintf(directory.path,sizeof(directory.path),"%s",p);return &directory;}
 static bool test_readdir(struct retro_vfs_dir_handle *d)

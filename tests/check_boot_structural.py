@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Fresh recovery discovery after guest FDC writes, raw and JFD."""
 from pathlib import Path
 import subprocess

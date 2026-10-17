@@ -30,11 +30,22 @@ bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size
 bool arc_io_remove(const char *path);
 bool arc_io_rename(const char *old_path, const char *new_path);
 bool arc_io_file_size(const char *path, size_t *size);
+/* Metadata uncertainty is distinct from a valid non-directory. Invalid VFS
+ * flags cannot establish absence (there is no errno). Size is meaningful only
+ * for FILE; character-special paths are OTHER and must never be read as ROMs. */
+typedef enum { ARC_IO_METADATA_UNKNOWN, ARC_IO_METADATA_FILE,
+   ARC_IO_METADATA_DIRECTORY, ARC_IO_METADATA_OTHER } ArcIoMetadata;
+ArcIoMetadata arc_io_metadata(const char *path, size_t *size);
+bool arc_io_read_available(void);
 bool arc_io_make_path(const char *path);
 bool arc_io_make_path_counted(const char *path, uint64_t *operations);
 bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
                                  size_t failed_path_size, const char **failure);
 bool arc_io_existing_directory(const char *path);
+/* Direct VFS mkdir: no pre-stat. Only the dormant lock module uses this.
+ * EXISTS is not proof of a directory; the caller must re-stat that result. */
+typedef enum { ARC_IO_MKDIR_CREATED, ARC_IO_MKDIR_EXISTS, ARC_IO_MKDIR_ERROR } ArcIoMkdirResult;
+ArcIoMkdirResult arc_io_mkdir(const char *path);
 /* Bounded primitives for preparation; existing synchronous callers unchanged. */
 bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
                           uint64_t *operations, uint64_t *namespace_operations);

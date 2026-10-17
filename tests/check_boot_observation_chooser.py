@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Remembered prompt precedence on a synthetic multi-application disc."""
 from pathlib import Path
 import os

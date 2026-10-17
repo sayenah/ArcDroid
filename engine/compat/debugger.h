@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef ARCDROID_DEBUGGER_STUB_H
 #define ARCDROID_DEBUGGER_STUB_H
 #include <stdint.h>

@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "rpc_scheduler.h"
+#include "rpc_profile.h"
+#include "rpc_exercise.h"
 
 /* Public only to the owned interpreter batch shortcut. Exact service can
  * complete locally before a boundary; intervening events return to the driver. */
@@ -17,7 +19,7 @@ typedef struct {
     uint64_t instructions;
     unsigned memo_shift; uint32_t memo_line;
     uint64_t fetch_hits;
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) && !defined(ARCDROID_RPC_MEASUREMENT)
     bool test_stop, test_measure;
 #endif
     uint32_t denominator;
@@ -34,14 +36,31 @@ typedef struct {
     uint32_t denominator;
 } ArcRpcMemStats;
 
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 typedef struct {
     bool started, done;
     uint64_t start_ticks, end_ticks;
+    uint64_t start_fetch_hits, end_fetch_hits;
     ArcRpcMemStats start, end;
 } ArcRpcMemInterval;
+typedef struct {
+    uint64_t instructions, issue_ticks, now_ns, cpu, memory, scheduler;
+} ArcRpcTestPrefix;
+bool arc_rpc_test_prefix_arm(uint64_t last);
+bool arc_rpc_test_prefix_snapshot(ArcRpcTestPrefix *out);
 void arc_rpc_mem_measure(uint64_t first, uint64_t last, bool drained);
 void arc_rpc_mem_interval(ArcRpcMemInterval *out);
+bool arc_rpc_mem_exercise_interval(ArcRpcExercise *out); /* Endpoint windows only. */
+bool arc_rpc_mem_endpoint(uint64_t first, uint64_t last, bool drained);
+unsigned arc_rpc_mem_endpoint_admit(unsigned count);
+void arc_rpc_mem_endpoint_return(void);
+typedef struct {
+    uint64_t first, last, previous_completion, end_completion;
+    bool drained, endpoint, intrusive, stopped, previous_valid, pending_end;
+    ArcRpcMemInterval interval;
+} ArcRpcMeasureState;
+void arc_rpc_mem_measure_state(ArcRpcMeasureState *out);
+bool arc_rpc_mem_measure_equal(const ArcRpcMeasureState *a, const ArcRpcMeasureState *b);
 #endif
 
 void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate);
@@ -71,7 +90,7 @@ static inline void arc_rpc_mem_instruction_begin(void)
     f->recording=true;f->track_rom=f->rom_sequential;
     if (f->track_rom) f->after_branch=false;
     ++f->instructions; /* Fetch never classifies the previous data opcode. */
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) && !defined(ARCDROID_RPC_MEASUREMENT)
     if (f->test_measure) arc_rpc_mem_begin_slow();
 #endif
 }
@@ -84,7 +103,7 @@ static inline void arc_rpc_mem_batch_begin(ArcRpcCpuBatch *batch)
     f->integer_batch = batch && f->enabled && !f->base_fraction &&
         batch->clock->now_ns == f->issue_floor + (f->issue_fraction != 0) &&
         UINT64_MAX - f->issue_ticks >= 200u * f->base_ticks
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) && !defined(ARCDROID_RPC_MEASUREMENT)
         && !f->test_measure
 #endif
         ;
@@ -105,7 +124,7 @@ static inline void arc_rpc_mem_instruction_end(uint32_t next_pc)
     if (!f->enabled) return;
     if (f->track_rom) f->after_branch |= next_pc != f->fetch_pc + 4u;
     if (f->pending || UINT64_MAX-f->issue_ticks<f->base_ticks
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) && !defined(ARCDROID_RPC_MEASUREMENT)
         || f->test_measure
 #endif
     ) { arc_rpc_mem_end_slow(); return; }
@@ -134,16 +153,19 @@ static inline void arc_rpc_mem_fetch(uint32_t va, uint32_t physical,
      * this virtual-line memo. Match the slow path's pre-lookup eligibility. */
     uint32_t pa = physical & 0x1fffffffu;
     if (backed && (pa < 0x03000000u || pa >= 0x10000000u) &&
-        f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; return; }
+        f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; ARC_RPC_PROFILE(memo()); return; }
     arc_rpc_mem_fetch_slow(va, physical, attributes, backed);
 }
 
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_batch_next arc_rpc_mem_batch_next_profile_body
+#endif
 static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
 {
     ArcRpcMemFast *m = &arc_rpc_mem_fast;
     if (!m->enabled) return arc_rpc_cpu_batch_next(batch, idle);
     if (idle) return false;
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) && !defined(ARCDROID_RPC_MEASUREMENT)
     if (m->test_stop) return false;
 #endif
     if (m->pending || m->bus_busy) {
@@ -160,4 +182,15 @@ static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
     m->issue_floor = m->due_floor; m->issue_fraction = m->due_fraction;
     return true;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_batch_next
+static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
+{
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    bool result=arc_rpc_mem_batch_next_profile_body(batch,idle);
+    arc_rpc_profile_leave(previous);
+    return result;
+}
+#endif
+
 #endif

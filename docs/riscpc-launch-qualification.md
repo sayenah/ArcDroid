@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R3c-3b qualification commands
 
 These are candidate qualification commands, not evidence of promotion. Launch

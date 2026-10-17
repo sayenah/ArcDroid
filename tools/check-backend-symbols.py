@@ -35,7 +35,7 @@ def finish(errors):
         raise ValueError("\n".join(errors))
 
 
-def read_symbols(path, nm, sanitized=False, errors=None):
+def read_symbols(path, nm, sanitized=False, errors=None, keep_sanitizer_references=False):
     local = errors is None
     if local:
         errors = []
@@ -68,7 +68,8 @@ def read_symbols(path, nm, sanitized=False, errors=None):
         if form == "elf" and sanitized:
             if kind == "B" and re.fullmatch(r"__odr_asan\.[A-Za-z_][A-Za-z0-9_.$]*", name):
                 continue
-            if kind == "U" and re.fullmatch(r"__(?:asan|ubsan)_[A-Za-z0-9_]+", name):
+            if (kind == "U" and not keep_sanitizer_references and
+                    re.fullmatch(r"__(?:asan|ubsan)_[A-Za-z0-9_]+", name)):
                 continue
         # Compiler bookkeeping is not an engine variable. Apple ASan emits
         # this one shared registration flag as a common even with -fno-common.
@@ -101,13 +102,16 @@ def objects(directory):
     return paths
 
 
-def verify(arculator, rpc, policy, nm, sanitized=False, errors=None):
+def verify(arculator, rpc, policy, nm, sanitized=False, errors=None, allocation_census=False):
     local = errors is None
     if local:
         errors = []
     definitions = {}
     groups = []
     instrumentation = set(policy["compiler_services"])
+    if allocation_census:
+        instrumentation |= {"arc_alloc_census_" + name for name in
+                            ("malloc", "calloc", "realloc", "free")}
     if sanitized:
         instrumentation |= set(policy["sanitizer_services"])
     for engine, directories in (("arculator", arculator), ("rpc", rpc)):
@@ -175,7 +179,9 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
         for path in objects(directory):
             # CMake preserves the source directory beneath the object target.
             relative = path.relative_to(directory)
-            if relative.parts[0] == "engine":
+            shared = path.name.split('.', 1)[0] in {name for name in (
+                'arc_error_box', 'arc_disc_request', 'arc_launch_outcome', 'arc_boot_watch')}
+            if relative.parts[0] == "engine" and not shared:
                 continue
             try:
                 symbols = read_symbols(path, nm, sanitized, errors)
@@ -183,6 +189,10 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
                 errors.append(str(error))
                 continue
             for name, undefined in symbols:
+                if shared and undefined:
+                    violation(name not in {"exit", "abort", "_exit", "assert", "__assert_fail",
+                                           "__assert_rtn", "_assert", "_wassert"},
+                              f"process termination reference: {path}: {name}", errors)
                 if undefined and name.startswith("arc_rpc_"):
                     violation(name in allowed,
                               f"outside engine references RPCEmu: {path}: {name}", errors)
@@ -193,6 +203,119 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
         print(f"backend symbols: outside engine: {count} objects passed")
 
 
+# Census-only external services, reviewed independently of the backend policy:
+# that policy deliberately permits raw allocators in ordinary cores. Resolve
+# internal references against actual linked definitions, never a name prefix.
+# New external APIs require review here, including allocating libc/Win32 APIs.
+CENSUS_SERVICES = {
+    # Non-owning libc/string/math services and the existing stdio diagnostics.
+    "acos", "asin", "atan", "atexit", "bzero", "ceil", "cos", "exp", "floor",
+    "fmod", "fprintf", "getenv", "hypotl", "isalnum", "isalpha", "isdigit",
+    "isspace", "localtime", "log", "log10", "longjmp", "memchr", "memcmp",
+    "memcpy", "memmove", "memset", "memset_pattern16", "printf", "puts", "qsort",
+    "setjmp", "sin", "snprintf", "sprintf", "sqrt", "sscanf", "strcat", "strchr",
+    "strcmp", "strcpy", "strlen", "strncmp", "strrchr", "strstr", "strtol",
+    "strtoul", "strtoull", "tan", "time", "tolower", "vsnprintf",
+    # glibc bits/mathcalls.h: scalar results only, no heap ownership.
+    "fabs",  # Absolute value of a double; no allocation.
+    "trunc",  # Round a double toward zero; no allocation.
+    "truncf",  # Round a float toward zero; no allocation.
+    "truncl",  # Round a long double toward zero; no allocation.
+    # GCC libgcc soft-fp binary128 (TFmode), used by aarch64 Linux long double.
+    "__addtf3",  # Add binary128 values; no allocation.
+    "__subtf3",  # Subtract binary128 values; no allocation.
+    "__multf3",  # Multiply binary128 values; no allocation.
+    "__divtf3",  # Divide binary128 values; no allocation.
+    "__negtf2",  # Negate a binary128 value; no allocation.
+    "__eqtf2",  # Binary128 equality comparison; no allocation.
+    "__netf2",  # Binary128 inequality comparison; no allocation.
+    "__getf2",  # Binary128 greater-or-equal comparison; no allocation.
+    "__gttf2",  # Binary128 greater-than comparison; no allocation.
+    "__letf2",  # Binary128 less-or-equal comparison; no allocation.
+    "__lttf2",  # Binary128 less-than comparison; no allocation.
+    "__unordtf2",  # Binary128 unordered comparison; no allocation.
+    "__fixtfsi",  # Binary128 to signed SI integer; no allocation.
+    "__fixtfdi",  # Binary128 to signed DI integer; no allocation.
+    "__fixtfti",  # Binary128 to signed TI integer; no allocation.
+    "__fixunstfsi",  # Binary128 to unsigned SI integer; no allocation.
+    "__fixunstfdi",  # Binary128 to unsigned DI integer; no allocation.
+    "__fixunstfti",  # Binary128 to unsigned TI integer; no allocation.
+    "__floatsitf",  # Signed SI integer to binary128; no allocation.
+    "__floatditf",  # Signed DI integer to binary128; no allocation.
+    "__floattitf",  # Signed TI integer to binary128; no allocation.
+    "__floatunsitf",  # Unsigned SI integer to binary128; no allocation.
+    "__floatunditf",  # Unsigned DI integer to binary128; no allocation.
+    "__floatuntitf",  # Unsigned TI integer to binary128; no allocation.
+    "__extendsftf2",  # Extend binary32 to binary128; no allocation.
+    "__extenddftf2",  # Extend binary64 to binary128; no allocation.
+    "__trunctfsf2",  # Narrow binary128 to binary32; no allocation.
+    "__trunctfdf2",  # Narrow binary128 to binary64; no allocation.
+    # Darwin/glibc runtime, locale and process/profile clocks.
+    "_DefaultRuneLocale", "__assert_rtn", "__assert_fail", "__error",
+    "__errno_location", "__maskrune", "__stderrp", "__tolower", "stderr",
+    "__ctype_b_loc", "__ctype_tolower_loc", "__isoc99_sscanf", "__isoc23_sscanf",
+    "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoull",
+    "clock_gettime", "sysctlbyname",
+    "getauxval",  # Linux/Android hash HWCAP query; no allocation.
+    # Existing dormant native lock module: handles/fds, never heap ownership.
+    "close", "flock", "fstat", "open", "stat", "fcntl",
+    # MinGW runtime and existing test-only exception locator. The locator's
+    # handler registration is paired with RemoveVectoredExceptionHandler.
+    "_assert", "_wassert", "_errno", "__acrt_iob_func", "__iob_func",
+    "_localtime64", "_time64", "GetLocalTime", "AddVectoredExceptionHandler",
+    "RemoveVectoredExceptionHandler", "CloseHandle", "CreateFileW",
+    "FlushFileBuffers", "GetCurrentProcess", "GetCurrentThreadId", "GetLastError",
+    "GetModuleFileNameA", "GetStdHandle", "LockFileEx", "MultiByteToWideChar",
+    "QueryPerformanceCounter", "QueryPerformanceFrequency", "ReadProcessMemory",
+    "RtlLookupFunctionEntry", "RtlVirtualUnwind", "UnlockFileEx", "VirtualQuery",
+    "WriteFile",
+}
+CENSUS_ALLOCATORS = {"malloc", "calloc", "realloc", "free"}
+
+
+def verify_census(directories, nm, sanitized, errors, policy):
+    """Allow only reviewed external services in every census-linked object."""
+    services = CENSUS_SERVICES | set(policy["compiler_services"])
+    if sanitized:
+        # GCC libsanitizer asan_interface_internal.h / ubsan_handlers.h:
+        # stack markers and failure diagnostics, never application allocators.
+        runtime = set(policy["sanitizer_services"]) | {
+            "__asan_poison_stack_memory",  # Mark existing stack shadow; no allocation.
+            "__asan_unpoison_stack_memory",  # Clear existing stack shadow; no allocation.
+            "__asan_alloca_poison",  # Mark existing VLA/alloca redzones; no allocation.
+            "__asan_allocas_unpoison",  # Clear existing VLA/alloca shadow; no allocation.
+            # Each UBSan diagnostic and its _abort variant returns no owned allocation.
+            "__ubsan_handle_invalid_builtin",  # Argument diagnostic; no owned allocation.
+            "__ubsan_handle_nonnull_return_v1",  # Result diagnostic; no owned allocation.
+            "__ubsan_handle_vla_bound_not_positive",  # Bound diagnostic; no owned allocation.
+        }
+        # GCC's recovery/abort variants of the same finite runtime services.
+        services |= runtime | {name + "_abort" for name in runtime
+                               if name.startswith("__ubsan_handle_")}
+        services |= {name + "_noabort" for name in runtime
+                     if name.startswith("__asan_report_")}
+        services |= {"__asan_stack_free_8", "__asan_stack_free_10"}
+    # Preserve GCC runtime imports here: the ordinary backend reader accepts
+    # runtime families, but this external-service allowlist must check each name.
+    rows = [(path, read_symbols(path, nm, sanitized, errors, keep_sanitizer_references=True))
+            for directory in directories for path in objects(directory)]
+    own = {name for _, symbols in rows for name, undefined in symbols if not undefined}
+    for path, symbols in rows:
+        bridge = path.name.split('.', 1)[0] == "arc_alloc_census"
+        for name, undefined in symbols:
+            if not undefined:
+                continue
+            referent = name.removeprefix("__imp_")
+            fortified = re.fullmatch(r"__([A-Za-z][A-Za-z0-9_]*)_chk", referent)
+            fortify_ok = (object_format(path) in {"elf", "macho"} and
+                          fortified is not None and fortified[1] in CENSUS_SERVICES)
+            violation(name in own or referent in services or fortify_ok or
+                      (bridge and referent in CENSUS_ALLOCATORS),
+                      f"allocation census bypass: unreviewed external reference: {path}: {name}", errors)
+    if not errors:
+        print("allocation census: all linked objects import only reviewed services; raw allocators confined to bridge")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arculator", type=Path, action="append", default=[])
@@ -201,6 +324,8 @@ def main():
     parser.add_argument("--nm", default="nm")
     parser.add_argument("--sanitized", action="store_true",
                         help="recognise compiler-owned ASan/UBSan instrumentation")
+    parser.add_argument("--allocation-census", type=int, choices=(0, 1), default=0,
+                        help="recognise forced allocator instrumentation in the dedicated test core")
     parser.add_argument("--policy", type=Path,
                         default=Path(__file__).resolve().parents[1] / "engine/backend-symbols.json")
     args = parser.parse_args()
@@ -209,9 +334,11 @@ def main():
         policy = json.loads(args.policy.read_text())
         require(policy["schema"] == 1, "unsupported symbol policy")
         errors = []
-        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors)
+        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors, args.allocation_census)
         if args.outside:
             verify_outside(args.outside, policy, args.nm, args.sanitized, errors)
+        if args.allocation_census:
+            verify_census(args.arculator + args.rpc + args.outside, args.nm, args.sanitized, errors, policy)
         finish(errors)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"backend symbol guard: {error}", file=sys.stderr)

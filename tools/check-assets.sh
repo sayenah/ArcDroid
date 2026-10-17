@@ -1,15 +1,18 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 
 allowed_binary()
 {
   case "$1" in
-    engine/arculator/roms/arcrom_ext|engine/arculator/cmos/arthur/cmos.bin|engine/arculator/cmos/riscos2/cmos.bin|engine/arculator/cmos/riscos3_old/cmos.bin|engine/arculator/cmos/riscos3_new/cmos.bin|tests/fixtures/generated/*) return 0 ;;
+    engine/arculator/cmos/arthur/cmos.bin|engine/arculator/cmos/riscos2/cmos.bin|engine/arculator/cmos/riscos3_old/cmos.bin|engine/arculator/cmos/riscos3_new/cmos.bin) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 git ls-files | while IFS= read -r path; do
+  # A deleted tracked asset remains in the index until the caller stages it.
+  [ -e "$path" ] || continue
   lower=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
   case "$lower" in
     *.rom|*.bin|*.hdf|*.adf|*.apd|*.jfd|*.hfe|*.wav|*.zip)

@@ -38,3 +38,27 @@ with tempfile.TemporaryDirectory(prefix='arc-launch-mutants-') as tmp:
         assert r.returncode!=0,(name,'survived')
         assert b'Traceback' in r.stderr and b'AssertionError' in r.stderr,(name,'invalid mutant')
         print('RPC gate vector mutant killed: '+name,flush=True)
+    # These must be killed by the comparison itself, independently of the
+    # frozen ABI vectors above. Either implementation can drift.
+    for name,c_text,b_text in (
+        ('drift-c',source.replace('get(p+20)!=1','get(p+20)!=2'),gate),
+        ('drift-c-body',source.replace('uint32_t e=get(p+28)',
+                                      'if(p[64])return false;\n    uint32_t e=get(p+28)'),gate),
+        ('drift-basic',source,gate.replace('image%!20<>1','image%!20<>2'))):
+        file.write_text(c_text);gfile.write_text(b_text)
+        subprocess.run([compiler,'-std=c11','-O2','-UNDEBUG','-I'+str(root/'core'),str(root/'tests/rpc_launch_helper_test.c'),str(file),'-o',str(exe)],check=True,capture_output=True,timeout=30)
+        r=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_gate_descriptor_test.py'),str(exe),str(gfile)],capture_output=True,timeout=30)
+        assert r.returncode!=0 and b'descriptor acceptance drift' in r.stderr,(name,'survived or invalid')
+        print('RPC descriptor drift mutant killed: '+name,flush=True)
+    cleanup_mutants={
+        'cleanup-order':('1640 STR R0,[R5]','1640 MOV R0,R0'),
+        'cleanup-release':('1690 SWI &20020','1690 MOV R0,R0'),
+        'claim-error':('1270 BVS cleanup','1270 BVS finished'),
+        'read-error':('1580 BVS cleanup','1580 BVS finished'),
+        'close-ownership':('1760 MOV R8,#0','1760 MOV R8,R8'),
+    }
+    for name,(old,new) in cleanup_mutants.items():
+        assert gate.count(old)==1,(name,'anchor');gfile.write_text(gate.replace(old,new))
+        r=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_gate_cleanup_test.py'),runner,core,str(gfile)],capture_output=True,timeout=90)
+        assert r.returncode!=0 and b'AssertionError' in r.stderr,(name,'survived or invalid')
+        print('RPC gate cleanup mutant killed: '+name,flush=True)

@@ -40,7 +40,8 @@ static int rename_file(const char *a,const char *b)
 { if(!before())return -1;int i=index_of(a,false);if(i<0 || index_of(b,false)>=0)return -1;snprintf(files[i].path,sizeof(files[i].path),"%s",b);after();return 0; }
 static int32_t stat_file(const char *p,int32_t *n)
 { if(!before())return 0;int i=index_of(p,false);if(i>=0){if(n)*n=(int32_t)files[i].size;after();return RETRO_VFS_STAT_IS_VALID;}after();return RETRO_VFS_STAT_IS_VALID|RETRO_VFS_STAT_IS_DIRECTORY; }
-static int mkdir_file(const char *p){(void)p;if(!before())return -1;after();return 0;}
+/* This VFS models every non-file path as an existing directory. */
+static int mkdir_file(const char *p){(void)p;if(!before())return -1;after();return -2;}
 static struct retro_vfs_dir_handle *opendir_file(const char *p,bool hidden){(void)p;(void)hidden;if(!before())return NULL;if(listing_failures){--listing_failures;return NULL;}memset(&directory,0,sizeof(directory));after();return &directory;}
 static bool readdir_file(struct retro_vfs_dir_handle *d){if(!before())return false;if(d->unrelated<unrelated_entries){++d->unrelated;++listed_entries;d->current=64;after();return true;}while(d->at<64){unsigned i=d->at++;if(files[i].exists){d->current=i;after();return true;}}after();return false;}
 static const char *name_file(struct retro_vfs_dir_handle *d){if(!before())return NULL;static char filler[32];if(d->current==64){snprintf(filler,sizeof(filler),"unrelated%u",d->unrelated);after();return filler;}const char *name=strrchr(files[d->current].path,'/')+1;after();return name;}

@@ -33,13 +33,46 @@ static struct {
     struct { bool live, wait_return; uint64_t id, deadline; uint32_t pc,mode,sp; } watches[ARC_RPC_WATCHES];
 } trace;
 uint64_t arc_rpc_observer_integer_attempts;
+static uint64_t event_captures,number_checks;
+uint64_t arc_rpc_observer_test_number_checks(void) { return number_checks; }
+uint64_t arc_rpc_observer_test_captures(void) { return event_captures; }
 static void trace_loss(const ArcRpcObservation *);
 #endif
 static void watch_lost(unsigned slot);
+/* Rebuilt on subscription changes, never on guest instructions. Common OS
+ * numbers and the Wimp chunk fit three words; other lists use the generic path. */
+static struct { uint64_t low[2],wimp; bool unrestricted; } swi_interest;
+static bool cached_swi(uint32_t number)
+{
+    if(number<128)return (swi_interest.low[number>>6]&(UINT64_C(1)<<(number&63)))!=0;
+    return number>=0x400c0u && number<0x40100u &&
+        (swi_interest.wimp&(UINT64_C(1)<<(number-0x400c0u)))!=0;
+}
+static bool filter_swi(const ArcRpcObserveFilter *f,uint32_t swi)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    ++number_checks;
+#endif
+    if(!f->swi_count)return true;
+    swi&=0xfdffffu;
+    for(unsigned n=0;n<f->swi_count;++n)if((f->swis[n]&0xfdffffu)==swi)return true;
+    return false;
+}
 static void gate(void)
 {
-    observers_active=false;
-    for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)observers_active|=observer.owners[i].armed;
+    observers_active=false;memset(&swi_interest,0,sizeof(swi_interest));
+    for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i){
+        observers_active|=observer.owners[i].armed;
+        const ArcRpcObserveFilter *f=&observer.owners[i].filter;
+        if(!observer.owners[i].armed || !(f->kinds&ARC_RPC_OBS_SWI))continue;
+        if(!f->swi_count)swi_interest.unrestricted=true;
+        for(unsigned n=0;n<f->swi_count;++n){
+            uint32_t number=f->swis[n]&0xfdffffu;
+            if(number<128)swi_interest.low[number>>6]|=UINT64_C(1)<<(number&63);
+            else if(number>=0x400c0u && number<0x40100u)swi_interest.wimp|=UINT64_C(1)<<(number-0x400c0u);
+            else swi_interest.unrestricted=true;
+        }
+    }
     arc_rpc_observer_active=observers_active;
     arc_rpc_observer_context=false;
     for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)
@@ -51,7 +84,7 @@ static void gate(void)
 }
 /* D-181: reasons/references are pinned to the adopted qualification record. */
 #define DEFERRED "awaiting R3c-3 launch hook (S64: *WimpTask starts tasks in SVC mode; F12 calls Wimp_Initialise; 3.5+ prompt buffers lie above 0x8000)"
-#define ERROR_EVIDENCE "docs/riscpc-observer-qualification.md: a3-*, b3-*, b14-*, a14-*"
+#define ERROR_EVIDENCE "docs/riscpc-observer-qualification.md: a3-*, b3-*, ga-*, gb-*, gna-*, gnb-*, b14-*, a14-*"
 #define DISC_A_EVIDENCE "docs/riscpc-observer-qualification.md: k-*, u-*"
 #define DISC_B_EVIDENCE "docs/riscpc-observer-qualification.md: sb-*"
 #define CELL(cat,cpu,owner,cap,on,reason) {cat,cpu,1,owner,cap,on,reason}
@@ -169,6 +202,9 @@ void arc_rpc_observe_begin(uint32_t pc)
 }
 static ArcRpcObservation capture_event(ArcRpcObservationKind kind, uint16_t mask)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+    ++event_captures;
+#endif
     ArcRpcObservation e={.instruction=observer.origin.instruction,.epoch=observer.origin.epoch,
         .ns=observer.origin.ns,.pc=observer.origin.pc,.mode=observer.origin.mode,
         .backing=arc_rpc_observer_backing(observer.origin.word)};
@@ -329,7 +365,8 @@ static bool owner_matches(unsigned i,const ArcRpcObservation *e)
     const ArcRpcObserveFilter *f=&observer.owners[i].filter;
     return observer.owners[i].armed && (f->kinds&e->kind) &&
         (f->modes&(1u<<e->mode)) &&
-        (e->kind!=ARC_RPC_OBS_SWI || (e->swi&f->swi_mask)==(f->swi&f->swi_mask));
+        (e->kind!=ARC_RPC_OBS_SWI || ((e->swi&f->swi_mask)==(f->swi&f->swi_mask) &&
+            filter_swi(f,e->swi)));
 }
 static void deliver(unsigned i,ArcRpcObservation *e)
 {
@@ -352,6 +389,18 @@ bool arc_rpc_observer_watch_live(ArcRpcObserver owner,uint64_t id)
 {
     for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live &&
         observer.watches[i].owner==owner && observer.watches[i].id==id)return true;
+    return false;
+}
+bool arc_rpc_observer_watch_renew(ArcRpcObserver owner,uint64_t id,unsigned attempts)
+{
+    if((unsigned)owner>=ARC_RPC_OBSERVERS || !observer.in_swi ||
+        observer.current_owner!=(unsigned)owner || observer.current_kind!=ARC_RPC_OBS_SWI ||
+        !observer.owners[owner].armed || !attempts || attempts>ARC_RPC_WATCH_ATTEMPT_LIMIT)return false;
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live &&
+        observer.watches[i].owner==owner && observer.watches[i].id==id &&
+        observer.watches[i].generation==observer.owners[owner].generation){
+        observer.watches[i].deadline=observer.instruction+attempts;return true;
+    }
     return false;
 }
 void arc_rpc_observe_fetched(const uint32_t *page)
@@ -399,15 +448,22 @@ void arc_rpc_observe_mode(void)
     trace_event(&e);
     for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)if(owner_matches(i,&e))deliver(i,&e);
 }
-bool arc_rpc_observe_swi_at(uint32_t opcode,uint32_t pc,const uint32_t *page)
+static bool swi_wanted(uint32_t opcode)
 {
-    observer.origin.instruction=observer.instruction;observer.origin.epoch=observer.epoch;
-    observer.origin.ns=arc_rpc_mem_fast.clock?arc_rpc_mem_fast.clock->now_ns:0;
-    observer.origin.pc=pc;observer.origin.mode=arm.mode;
-    observer.origin.word=page+((pc&0x3ffu)>>2);
-    return arc_rpc_observe_swi(opcode);
+    bool wanted=false;
+#if defined(ARCDROID_TEST_FAULTS)
+    wanted=trace.status.enabled;
+#endif
+    if(!wanted && !swi_interest.unrestricted && !cached_swi(opcode&0xfdffffu))return false;
+    for(unsigned i=0;!wanted && i<ARC_RPC_OBSERVERS;++i){
+        const ArcRpcObserveFilter *f=&observer.owners[i].filter;
+        wanted=observer.owners[i].armed && (f->kinds&ARC_RPC_OBS_SWI) &&
+            (f->modes&(1u<<arm.mode)) && ((opcode&0xffffffu&f->swi_mask)==(f->swi&f->swi_mask)) &&
+            filter_swi(f,opcode);
+    }
+    return wanted;
 }
-bool arc_rpc_observe_swi(uint32_t opcode)
+static bool selected_swi(uint32_t opcode)
 {
     ArcRpcObservation e=event(ARC_RPC_OBS_SWI,0x3f);
     e.swi=opcode&0xffffffu;
@@ -435,6 +491,21 @@ bool arc_rpc_observe_swi(uint32_t opcode)
     observer.in_swi=false;
     return observer.completed;
 }
+bool arc_rpc_observe_swi_at(uint32_t opcode,uint32_t pc,const uint32_t *page)
+{
+    if(!swi_wanted(opcode)){if(observers_active)++observer.order;return false;}
+    observer.origin.instruction=observer.instruction;observer.origin.epoch=observer.epoch;
+    observer.origin.ns=arc_rpc_mem_fast.clock?arc_rpc_mem_fast.clock->now_ns:0;
+    observer.origin.pc=pc;observer.origin.mode=arm.mode;
+    observer.origin.word=page+((pc&0x3ffu)>>2);
+    return selected_swi(opcode);
+}
+bool arc_rpc_observe_swi(uint32_t opcode)
+{
+    if(!swi_wanted(opcode)){if(observers_active)++observer.order;return false;}
+    return selected_swi(opcode);
+}
+
 uint64_t arc_rpc_observer_watch(ArcRpcObserver owner,uint32_t pc,uint32_t mode,uint32_t sp,unsigned attempts)
 {
     if((unsigned)owner>=ARC_RPC_OBSERVERS || !observer.in_swi || observer.current_owner!=(unsigned)owner ||
@@ -477,6 +548,26 @@ bool arc_rpc_observer_take_answer(ArcRpcObserver owner,uint32_t *value)
         observer.current_order<=observer.owners[owner].answer_order)return false;
     *value=observer.owners[owner].value;observer.owners[owner].answer=false;return true;
 }
+bool arc_rpc_observer_queued(ArcRpcObserver owner,unsigned kind)
+{
+    if((unsigned)owner>=ARC_RPC_OBSERVERS)return false;
+    for(unsigned i=0;i<observer.work_count;++i){
+        const ArcRpcHostWork *w=&observer.work[i];
+        if(w->observer==owner && w->kind==kind)return true;
+    }
+    return false;
+}
+void arc_rpc_observer_drop_queued(ArcRpcObserver owner,unsigned kind,const void *bytes,size_t size)
+{
+    if((unsigned)owner>=ARC_RPC_OBSERVERS || !bytes || !size || size>ARC_RPC_COPY_LIMIT)return;
+    unsigned count=0;
+    for(unsigned i=0;i<observer.work_count;++i){
+        const ArcRpcHostWork *w=&observer.work[i];
+        if(w->observer==owner && w->kind==kind && w->size==size && !memcmp(w->bytes,bytes,size))continue;
+        observer.work[count++]=*w;
+    }
+    observer.work_count=count;
+}
 bool arc_rpc_observer_queue(const ArcRpcHostWork *work)
 {
     if(!work || (unsigned)work->observer>=ARC_RPC_OBSERVERS || work->size>ARC_RPC_COPY_LIMIT ||
@@ -510,7 +601,7 @@ void arc_rpc_observer_drain(void)
 }
 bool arc_rpc_observer_filter(ArcRpcObserver owner,const ArcRpcObserveFilter *filter)
 {
-    if((unsigned)owner>=ARC_RPC_OBSERVERS || (filter && ((filter->results&~0x1fffu) || (filter->registers&~0x1fffu))))return false;
+    if((unsigned)owner>=ARC_RPC_OBSERVERS || (filter && ((filter->results&~0x1fffu) || (filter->registers&~0x1fffu) || filter->swi_count>32 || (filter->swi_count && !filter->swis))))return false;
     arc_rpc_observer_cancel(owner);observer.owners[owner].filter=filter?*filter:(ArcRpcObserveFilter){0};
     observer.owners[owner].armed=filter!=NULL;gate();return true;
 }
@@ -588,4 +679,33 @@ RETRO_API bool arc_rpc_observer_test_clean(void)
     for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)if(observer.owners[i].answer||observer.owners[i].armed)return false;
     return trace.status.count==0;
 }
+#endif
+
+#if defined(ARCDROID_TEST_API) && !defined(ARCDROID_TEST_FAULTS)
+/* API-only measurement core: explicit refusal, never successful trace no-ops. */
+extern bool arc_rpc_test_refuse(const char *facility);
+RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver o,const ArcRpcObserveFilter *f)
+{ return arc_rpc_observer_filter(o,f); }
+RETRO_API void arc_rpc_observer_trace(bool enabled,bool private_paths)
+{ (void)enabled;(void)private_paths;arc_rpc_test_refuse("observer trace"); }
+RETRO_API bool arc_rpc_observer_trace_select(const ArcRpcTraceSelection *selection)
+{ (void)selection;return arc_rpc_test_refuse("observer trace"); }
+RETRO_API void arc_rpc_observer_trace_status(ArcRpcTraceStatus *out)
+{ if(out)*out=(ArcRpcTraceStatus){.failed=true,.incomplete=true};arc_rpc_test_refuse("observer trace"); }
+RETRO_API size_t arc_rpc_observer_trace_read(ArcRpcObservationTrace *out,size_t n)
+{ (void)out;(void)n;arc_rpc_test_refuse("observer trace");return 0; }
+RETRO_API void arc_rpc_observer_trace_drain(ArcRpcTraceSink sink,void *opaque)
+{ (void)sink;(void)opaque;arc_rpc_test_refuse("observer trace"); }
+RETRO_API void arc_rpc_observer_test_seed_pending(void)
+{ arc_rpc_test_refuse("observer fault injection"); }
+RETRO_API bool arc_rpc_observer_test_clean(void)
+{
+    if(observer.work_count || observer.in_swi || observer.batch.live)return false;
+    for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)if(observer.owners[i].armed || observer.owners[i].answer)return false;
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live)return false;
+    return true;
+}
+RETRO_API uint64_t arc_rpc_observer_test_epoch(void) { return observer.epoch; }
+const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count)
+{ *count=sizeof(qualifications)/sizeof(qualifications[0]);return qualifications; }
 #endif

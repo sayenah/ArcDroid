@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """A validated JFD-store change invalidates a remembered prompt."""
 from pathlib import Path
 import subprocess

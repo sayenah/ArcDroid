@@ -39,7 +39,9 @@ static bool observation_final_failure;
 RETRO_API bool arc_test_plan_observation_complete(void) { return !observation_final_failure; }
 static unsigned observer_cells,verified_catalogue;
 static bool gate_release_fail;
+static bool observers_off;
 static unsigned observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
+static ArcErrorNumberClass observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
 static uint32_t observer_poll_r1,observer_poll_r2,observer_forms;
 static uint32_t observer_buttons[3];static bool observer_buttons_set;
 static char observer_launch[256];
@@ -148,12 +150,17 @@ static bool preparation_media_identity(void *opaque,uint8_t identity[32])
 {(void)opaque;return media_callbacks.media_identity && media_callbacks.media_identity(identity);}
 static void observer_start(void)
 {
-    if(observer_cells){arc_engine_test_observers_override(observer_cells,observer_poll_r1,observer_poll_r2,observer_forms);
+    if(observers_off){
+        arc_engine_test_observers_override(0,0,0,0);
+        if(plan_log)plan_log("RPC observers: TEST OFF; all cells disabled (observer_cells=off)");
+    }else if(observer_cells){arc_engine_test_observers_override(observer_cells,observer_poll_r1,observer_poll_r2,observer_forms);
         (void)arc_engine_test_observers_disc_devices(observer_disc_devices);
+        (void)arc_engine_test_observers_error_numbers(observer_error_numbers);
         if(observer_buttons_set)arc_engine_test_observers_buttons(observer_buttons[0],observer_buttons[1],observer_buttons[2]);
         if(plan_log){char line[256];snprintf(line,sizeof(line),
-            "RPC observers: TEST OVERRIDE; unqualified candidate profile revision=1 cells=0x%02x poll-r1=%u poll-r2=%u forms=0x%08x disc-devices=0x%x",
-            observer_cells,observer_poll_r1,observer_poll_r2,observer_forms,observer_disc_devices);plan_log(line);}}
+            "RPC observers: TEST OVERRIDE; unqualified candidate profile revision=1 cells=0x%02x poll-r1=%u poll-r2=%u forms=0x%08x disc-devices=0x%x error-numbers=%s",
+            observer_cells,observer_poll_r1,observer_poll_r2,observer_forms,observer_disc_devices,
+            observer_error_numbers==ARC_ERROR_NUMBER_ORDINARY?"ordinary":"zero");plan_log(line);}}
     observer_armed=false;observer_last_status=UINT_MAX;observer_last_generation=UINT64_MAX;
 }
 static void preparation_attached(void *opaque)
@@ -311,13 +318,17 @@ void arc_test_plan_clear(void)
     }
     observation_unmatched=false;observation_quota=200;
     verified_catalogue=0;gate_release_fail=false;
+    observers_off=false;
     observer_cells=observer_poll_r1=observer_poll_r2=observer_forms=0;observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
     launch_last_delivery=launch_last_outcome=UINT_MAX;
+    observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
     observer_buttons_set=false;memset(observer_buttons,0,sizeof(observer_buttons));observer_launch[0]=0;
     observer_boot=observer_armed=false;observer_arm_frame=0;observer_last_status=UINT_MAX;
     observation_selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
     observation_file=NULL;observation_enabled=observation_paths=observation_failed=false;observation_path[0]=0;
+#if !defined(ARCDROID_RPC_MEASUREMENT)
     arc_engine_test_observation_trace(false,false);
+#endif
     char error[256]={0};(void)arc_riscpc_preparation_free(preparation,error,sizeof(error));preparation=NULL;hard_disc=NULL;
     hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     event_count=next_event=disk_count=disk_next=0;media_content[0]=media_helper[0]=0;script_frame=0;script_active=false;
@@ -333,7 +344,9 @@ void arc_test_plan_reset(void)
     if(script_active)arc_engine_test_plan_input_ready();
 }
 void arc_test_plan_reset_input(void)
-{ next_event=disk_next=0;script_frame=0;observer_armed=false;if(script_active)arc_engine_test_plan_input_ready(); }
+{ next_event=disk_next=0;script_frame=0;observer_armed=false;
+    if(observers_off)observer_start();
+    if(script_active)arc_engine_test_plan_input_ready(); }
 void arc_test_plan_input(ArcInputState *input)
 {
     if(script_active && !observer_armed && script_frame>=observer_arm_frame){
@@ -463,7 +476,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     arc_test_plan_clear();observation_final_failure=false;
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "gate_release_fail", "observation_status", "launch_action", "launch_session", "launch_target", "launch_index"};
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "gate_release_fail", "observation_status", "launch_action", "launch_session", "launch_target", "launch_index", "observer_error_numbers"};
     enum {KEY_COUNT=sizeof(keys)/sizeof(keys[0])};
     char *values[KEY_COUNT] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
@@ -531,12 +544,18 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         observation_selection.capacity=(unsigned)n;
     }
     if(valid && values[18]){valid=!strcmp(values[18],"unmatched");observation_unmatched=valid;}
+#if defined(ARCDROID_RPC_MEASUREMENT)
+    if(valid && (values[16] || values[17] || values[19] || values[20] || values[21] || values[22])){
+        arc_engine_test_refuse(values[19]?"quota clamp":"observer trace");valid=false;
+    }
+#endif
     if(valid && values[19]){uint64_t q=0;valid=number(values[19],200,&q) && (q==1||q==7||q==200);observation_quota=(unsigned)q;}
     if(valid && values[16]){
         valid=resolve(values[16],save,observation_path) && (!values[17] || !strcmp(values[17],"private"));
         observation_enabled=valid;observation_paths=values[17]!=NULL;
     }else if(values[17])valid=false;
     for(unsigned k=23;k<=26 && valid;++k)if(values[k]){
+        if(k==23 && !strcmp(values[k],"off")){observers_off=true;continue;}
         char *end=NULL;unsigned long long value=strtoull(values[k],&end,0);
         valid=*values[k]!='-' && *values[k]!='+' && end && !*end && value<=UINT32_MAX && (k!=23 || value<=255);
         if(valid){if(k==23)observer_cells=(unsigned)value;if(k==24)observer_poll_r1=(uint32_t)value;
@@ -563,6 +582,10 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         observation_selection.authored_status=valid;
     }
     if(!persist && (values[36] || values[37] || values[38] || values[39]))valid=false;
+    if(valid && values[40]){
+        valid=!strcmp(values[40],"zero") || !strcmp(values[40],"ordinary");
+        if(valid)observer_error_numbers=!strcmp(values[40],"ordinary")?ARC_ERROR_NUMBER_ORDINARY:ARC_ERROR_NUMBER_ZERO;
+    }
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&
         (rom_size == 2097152 || rom_size == 4194304 || rom_size == 8388608) &&

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 13 — session-scoped ROM-module unplugging
 
 On RISC OS 3, loaders that write an older ROM-module unplug mask can now boot

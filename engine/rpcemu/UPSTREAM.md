@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RPCEmu upstream snapshot
 
 - Source: http://www.marutan.net/rpcemu/ (also named in upstream `readme.txt`).
@@ -407,3 +409,23 @@ ends that batch after normal instruction/event processing. Subscribed mode/trace
 or live-watch execution selects the checked instantiation. Inactive code remains
 the original run B instantiation. Policy, counters and lazy metadata construction
 remain in the owned adapter; no upstream hash or licence attribution changes.
+
+### 6b-P0i profiling (test-only)
+
+`profiling-6b-p0i` (`src/arm.c`, `src/cp15.c`, `src/mem.c`): compile-time
+attempt/class/exception, fetch and successful backing-write hooks plus sampled
+host scopes. Only the non-installed plan RPC object enables them; shipping and
+option-OFF preprocessing retain the original paths. No speculative fetch,
+translation walk, guest timing change, observer selection or fault boundary.
+Owned aggregation lives in `engine/rpc/rpc_profile.*`; JSON is runner-owned.
+Original hashes and licence headers remain unchanged.
+
+### 6b-1a0 measurement enabler (2026-10-16)
+
+`measurement-6b-1a0` adds test-only common-entry ordinal bounds and boundary
+captures in `src/arm.c`, plus checked-translation exercise/ranking counters in
+`src/cp15.c`; `src/mem.c` retires the authored prefix diagnostic before allocation reuse. No instruction body, translation, permission or guest-timing rule
+changes. The API-only measurement RPC objects compile without these hot hooks;
+shipping object code and the selected measurement hot objects are compared by
+`tools/rpc_measure_compare.py`. Profile output is schema 2. Original source
+hashes and GPL notices remain intact.

@@ -10,6 +10,9 @@ ninja=next(s.split('=',1)[1] for s in (build/'CMakeCache.txt').read_text().split
 commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-C',str(build),'-t','compdb','-x'],text=True))]
 compile,link=rebuild_commands(commands,source,'rpc_orchestration_test',build,os.name=='nt')
 mutants=[
+ ('explicit-image','if(p->request.populate && !p->request.helper && !p->request.helper_override &&','if(p->request.populate && !p->request.helper_override &&'),
+ ('populate-gate','if(p->request.populate && !p->request.helper &&','if(!p->request.helper &&'),
+ ('notice-every-open','receipt.authored_revision==1)','receipt.authored_revision>=1)'),
  ('helper-explicit-empty','if(p->request.populate && !p->request.helper && !p->request.helper_override &&','if(p->request.populate && !p->request.helper &&'),
  ('helper-revision','r.authored_revision==2','r.authored_revision>=1'),
  ('helper-attachment','p->generated_helper?&p->helper:p->request.helper','p->request.helper'),

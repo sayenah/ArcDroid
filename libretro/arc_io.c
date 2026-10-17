@@ -106,6 +106,25 @@ static int arc_io_memory_slot(const char *path)
 
 void arc_io_set_vfs(struct retro_vfs_interface *vfs) { arc_io_vfs = vfs; }
 
+ArcIoMetadata arc_io_metadata(const char *path, size_t *size)
+{
+   int32_t length = -1;
+   if (size) *size = 0;
+   if (!path || !arc_io_vfs || !arc_io_vfs->stat) return ARC_IO_METADATA_UNKNOWN;
+   int32_t flags = arc_io_vfs->stat(path, &length);
+   if (flags < 0 || !(flags & RETRO_VFS_STAT_IS_VALID)) return ARC_IO_METADATA_UNKNOWN;
+   if (flags & RETRO_VFS_STAT_IS_DIRECTORY) return ARC_IO_METADATA_DIRECTORY;
+   if (flags & RETRO_VFS_STAT_IS_CHARACTER_SPECIAL) return ARC_IO_METADATA_OTHER;
+   if (size && length < 0) return ARC_IO_METADATA_UNKNOWN;
+   if (size) *size = (size_t)length;
+   return ARC_IO_METADATA_FILE;
+}
+bool arc_io_read_available(void)
+{
+   return arc_io_vfs && arc_io_vfs->open && arc_io_vfs->size &&
+      arc_io_vfs->read && arc_io_vfs->close;
+}
+
 bool arc_io_read_all_limit(const char *path, void **data, size_t *size,
                            size_t limit, bool *limit_exceeded)
 {
@@ -233,6 +252,14 @@ static bool arc_io_is_directory(const char *path)
 { return arc_io_is_directory_counted(path, NULL); }
 bool arc_io_existing_directory(const char *path)
 { return path && arc_io_is_directory(path); }
+
+ArcIoMkdirResult arc_io_mkdir(const char *path)
+{
+   if (!path || !*path || !arc_io_vfs || !arc_io_vfs->mkdir) return ARC_IO_MKDIR_ERROR;
+   int result = arc_io_vfs->mkdir(path);
+   return result == 0 ? ARC_IO_MKDIR_CREATED :
+      result == -2 ? ARC_IO_MKDIR_EXISTS : ARC_IO_MKDIR_ERROR;
+}
 
 bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
                           uint64_t *operations, uint64_t *namespace_operations)

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R1 non-shipping plan core and runner
 
 The shipping core stays dormant. `arcdroid_libretro_test` retains the existing
@@ -372,3 +374,336 @@ changes the core's acknowledgement checks or promises directory/power-loss
 durability. Always record the save path and flush mode alongside timing.
 The two modes are checked by `rpc-vfs-conformance`; the real kill sweeps keep
 the default sync mode. Reject other `--vfs-flush` values.
+
+## 6b-P0i profiling (test-only)
+
+`ARCDROID_RPC_PROFILE` defaults OFF. ON instruments only the non-installed
+plan core and runner; the shipping core remains uninstrumented. Schema 1,
+counter definitions, sampling limits and measured Mac overhead are in
+[the instrumentation design](../docs/riscpc-translator.md#6b-p0i-instrumentation-design-s64).
+Use a copy of the same initial save store for each ON/OFF leg. Keep private
+plans, ROMs, saves and logs local. Profiling never controls guest progression.
+
+Mac build and run, from the clone root (replace the three private paths):
+
+```sh
+cmake -S . -B build/profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DARCDROID_RPC_PROFILE=ON
+cmake --build build/profile --target rpc_runner arcdroid_rpcplan_libretro -j 4
+P0I_PLAN='/absolute/private/private.arcplan'
+P0I_SYSTEM='/absolute/private/system'
+P0I_SAVE='/absolute/private/copied-save'
+mkdir -p .evidence/p0i-mac
+build/profile/rpc_runner --core "$PWD/build/profile/arcdroid_rpcplan_libretro.dylib" \
+  --plan "$P0I_PLAN" --system "$P0I_SYSTEM" --save "$P0I_SAVE" \
+  --frames 18001 --pacing flat --profile .evidence/p0i-mac/profile.json \
+  --profile-interval 60 --profile-sample-stride 1024 \
+  --timing .evidence/p0i-mac/frames.csv --preparation-timing .evidence/p0i-mac/preparation.csv \
+  > .evidence/p0i-mac/guest.txt 2> .evidence/p0i-mac/runner.log
+```
+
+Odin3 build and run, after Fable finishes other serial device work and confirms
+the device is available. This kit does not replace an installed RetroArch core.
+The device plan, system and copied save directory must already exist; private
+paths below are placeholders. Path variables must contain no single quotes
+because they are quoted inside the remote shell command.
+
+```sh
+P0I_NDK=/opt/homebrew/share/android-commandlinetools/ndk/29.0.14206865
+cmake -S . -B build/android-on -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="$P0I_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 \
+  -DARCDROID_ANDROID_TEST_CORE=ON -DARCDROID_RPC_PROFILE=ON
+cmake --build build/android-on --target rpc_runner arcdroid_rpcplan_libretro -j 4
+P0I_ADB=/opt/homebrew/share/android-commandlinetools/platform-tools/adb
+"$P0I_ADB" shell mkdir -p /data/local/tmp/arcdroid-p0i
+"$P0I_ADB" push build/android-on/rpc_runner /data/local/tmp/arcdroid-p0i/rpc_runner
+"$P0I_ADB" push build/android-on/arcdroid_rpcplan_libretro_android.so /data/local/tmp/arcdroid-p0i/plan.so
+"$P0I_ADB" shell chmod 755 /data/local/tmp/arcdroid-p0i/rpc_runner
+P0I_DEVICE_PLAN=/storage/emulated/0/RetroArch/private.arcplan
+P0I_DEVICE_SYSTEM=/storage/emulated/0/BIOS
+P0I_DEVICE_SAVE=/storage/emulated/0/arcdroid-p0i-save
+"$P0I_ADB" shell "/data/local/tmp/arcdroid-p0i/rpc_runner --core /data/local/tmp/arcdroid-p0i/plan.so --plan '$P0I_DEVICE_PLAN' --system '$P0I_DEVICE_SYSTEM' --save '$P0I_DEVICE_SAVE' --frames 18001 --pacing flat --profile /data/local/tmp/arcdroid-p0i/profile.json --profile-interval 60 --profile-sample-stride 1024 --timing /data/local/tmp/arcdroid-p0i/frames.csv --preparation-timing /data/local/tmp/arcdroid-p0i/preparation.csv > /data/local/tmp/arcdroid-p0i/guest.txt 2> /data/local/tmp/arcdroid-p0i/runner.log"
+# Check the preceding exit status before accepting results.
+mkdir -p .evidence/p0i-odin
+"$P0I_ADB" pull /data/local/tmp/arcdroid-p0i/profile.json .evidence/p0i-odin/
+"$P0I_ADB" pull /data/local/tmp/arcdroid-p0i/frames.csv .evidence/p0i-odin/
+"$P0I_ADB" pull /data/local/tmp/arcdroid-p0i/preparation.csv .evidence/p0i-odin/
+"$P0I_ADB" pull /data/local/tmp/arcdroid-p0i/runner.log .evidence/p0i-odin/
+```
+
+Repeat with strides 1021 and 0, restoring the initial save store each time.
+Build OFF into a separate directory with `-DARCDROID_RPC_PROFILE=OFF`; omit
+all `--profile*` options for that leg. Alternate both orders and record machine,
+load, settings, thermal state, toolchain and binary hashes. Compare guest
+projections and persisted bytes. Use OFF frame timings for actual headroom;
+compare cold and sustained windows by guest second in the profile and CSV.
+Preparation timing is separate from requested-session profiling.
+
+## 6b-1a0 endpoint and measurement cores
+
+D-195's amended capability matrix and exact endpoint equations are in
+`docs/riscpc-translator.md`, "Slice 1a-0 measurement design". All workloads
+below are authored locally. Keep private plans, stores and results in private
+local evidence directories; do not commit or upload them.
+
+Host verification (use two jobs on a shared machine):
+
+```sh
+cmake -S . -B /private/tmp/arcdroid-1a0-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DARCDROID_RPC_PROFILE=ON -DARCDROID_RPC_CROSSCHECK=ON
+cmake --build /private/tmp/arcdroid-1a0-host -j 2
+ctest --test-dir /private/tmp/arcdroid-1a0-host --output-on-failure -j 2
+cmake -S . -B /private/tmp/arcdroid-1a0-sanitize -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON \
+  -DARCDROID_RPC_PROFILE=ON -DARCDROID_RPC_CROSSCHECK=ON
+cmake --build /private/tmp/arcdroid-1a0-sanitize -j 2
+ctest --test-dir /private/tmp/arcdroid-1a0-sanitize --output-on-failure -R '^rpc-' -j 2
+```
+
+Linux sanitizer CI enables cross-check and runs its success/injected-mismatch
+self-test. Local sanitizer runtime settings should match the host's supported
+runtime; a Mac run without LeakSanitizer is not leak evidence.
+
+`rpc-memory-timing-0..3` each run every declared interval in intrusive and
+endpoint modes, compare complete records and emit the measured-interval
+integer/rational/S1 totals on stderr. `rpc-endpoint-directed`,
+`rpc-endpoint-cpu`, `rpc-counter-profile-directed`, `rpc-endpoint-plan-prefix`,
+`rpc-measurement-mutants` and `rpc-crosscheck-selftest` are the new directed
+checks. Existing forced-slow memory-service, fetch-memo, hot-video and long
+request-level checks retain their capabilities. `rpc-measurement-core` checks
+stdout/count parity, frame timing and refusals on hot plus four synthetics.
+
+The deciding core is **arcdroid_rpcmeasure_libretro** (`.dylib`, `.so`, `.dll`
+according to platform), not the instrumented plan core. It is not installed.
+It supports plans, production observers, frame `core_ns` and event diagnostics.
+Intrusive/endpoint measurement, observer tracing, quota clamps, fault injection
+and exercise/ranking getters refuse. The runner reports the facility and exits
+nonzero. For example, append `--exercise`, `--ranking`,
+`--intrusive-instructions 1:2:0`, `--endpoint-instructions 1:2:0`,
+`--fail-alloc 1` or `--fault-at 0`; plan `observation_quota` or trace keys also
+refuse. Ordinary plan/calibration cores still support their existing requests.
+
+For authored endpoint experiments on an ordinary plan core, use
+`--endpoint-instructions FIRST:LAST:DRAIN` (DRAIN is 0/1). A functional prefix
+is captured with `--prefix-instructions LAST`; `--single-step-prefix` uses the
+existing quota-one test API for the unarmed reference. Prefix aggregates are
+stderr-only, and default goldens remain unchanged. Run these diagnostics on
+authored inputs; they are absent from the deciding core.
+
+Code and layout comparison, with base/candidate built using the same compiler,
+optimisation, architecture, visibility and source-revision define:
+
+```sh
+python3 -B tools/rpc_measure_compare.py --base "$BASE_BUILD" \
+  --candidate "$CANDIDATE_BUILD" --readobj "$LLVM_READOBJ"
+```
+
+The script checks every shipping object's executable sections (Mach-O, ELF or
+COFF), then the full code/relocations/constants of `arm.c`, `cp15.c`, `mem.c`
+and `rpc_mem_timing.c` between measurement and shipping. This includes all
+three interpreter loops and the named timing/translation/fetch functions and
+inline callers. Every shared timing/cache/packet member offset, size and
+alignment is checked by compiling a constant probe with those targets' flags.
+No code, relocation, constant or address masking is used. The separate
+R-e0-1 check (`--test-loops`) compares the endpoint-containing `arcdroid_libretro_test_rpc`
+with the base: all three preprocessed loops and reachable local/inline helpers
+match; exercise-begin is in the common wrapper before dispatch. Emitted
+instruction counts do not grow and RPC relocation references match. Build the
+ordinary test core in both trees, and supply `--test-loops --objdump LLVM_OBJDUMP` as well
+as `--readobj LLVM_READOBJ` if they are not on PATH. Its CTest self-test is
+`rpc-test-loop-guard`. Keep source identity pinned identically for archive
+builds (`-DARCDROID_SOURCE_REVISION=<base revision>`).
+
+AC-9 observer caveat (Run C's authorized F-4 fallback): the four compared
+CPU/timing/translation objects match shipping; observer objects are outside
+that identity claim. `rpc_observer.c` adds API functions without changing the
+production source (host QA found existing functions instruction-identical).
+In `rpc_observers.c`, `state.overridden` shifts offsets
+for inserted-media, callback, candidate, retry and suppression state. Observer
+events/frame/status functions addressing them use those shifted offsets.
+`error_event` and `disc_event` load the mutable `watch_budget` instead of
+shipping's constant 1,000,000,000 attempts for watch/renew calls. This is the
+watch-budget API, not the launch horizon. The horizon API separately makes
+`state.launch.profile` redirectable for launch/frame handling; rebase saves
+and restores test override policy per reset. Full observer-object identity
+would require redesigning the current API/state boundary, removing retained
+policy capabilities, or changing shipping state/reset code. Run C keeps these
+APIs and shipping identity and uses the authorized documentation fallback.
+Record this per-event cost caveat with
+AC-9 results; no such work is added per instruction.
+
+For AC-9 on **any** pair, including qualified 031 firmware, write a copy of the
+plan with `observer_cells=off` for the unobserved leg. Confirm the distinct
+`RPC observers: TEST OFF; all cells disabled (observer_cells=off)` log. Use an
+absent `observer_cells` key for the production leg. Numeric zero still means
+no candidate override and is not an off switch. Omit observation trace and
+`observation_profile=unmatched` in both cost legs; those are separate diagnostic
+subscriptions. Both plan and measurement cores support the off setting,
+including attachment/reset. `rpc-observers-off-plan` and
+`rpc-observers-off-measure` exercise all cells off on a qualified 3.71/SA110
+binding via the existing trusted table seam, with absent/zero controls.
+
+Windows cross-build on the development host:
+
+```sh
+cmake -S . -B /private/tmp/arcdroid-1a0-mingw -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw-w64-x86_64.cmake \
+  -DARCDROID_RPC_PROFILE=ON -DARCDROID_RPC_CROSSCHECK=ON
+cmake --build /private/tmp/arcdroid-1a0-mingw -j 2
+```
+
+Native Windows runs the same CTest suite and comparison script with
+`llvm-readobj` available. The Windows test-export guard includes the
+measurement DLL. Fable's private native Windows runs use the measurement DLL,
+`rpc_runner.exe` and the same authored/private inputs as Android; cross-building
+alone is not native Windows execution evidence.
+
+Android shell kit (NDK path is local configuration):
+
+```sh
+ARCDROID_NDK="${ANDROID_NDK_HOME:?set the NDK path}"
+cmake -S . -B /private/tmp/arcdroid-1a0-android -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_TOOLCHAIN_FILE="$ARCDROID_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 \
+  -DARCDROID_ANDROID_TEST_CORE=ON -DARCDROID_RPC_PROFILE=ON
+cmake --build /private/tmp/arcdroid-1a0-android -j 2
+python3 -B tools/rpc_hot_workload.py /private/tmp/arcdroid-1a0-workloads/hot
+python3 -B tools/rpc_measure_workloads.py --out /private/tmp/arcdroid-1a0-workloads
+adb shell mkdir -p /data/local/tmp/arcdroid-1a0
+adb push /private/tmp/arcdroid-1a0-android/rpc_runner /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-android/rpc_timing_test /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-android/rpc_endpoint_test /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-android/rpc_endpoint_cpu_test /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-android/arcdroid_libretro_test_android.so /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-android/arcdroid_rpcplan_libretro_android.so /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-android/arcdroid_rpcmeasure_libretro_android.so /data/local/tmp/arcdroid-1a0/
+adb push /private/tmp/arcdroid-1a0-workloads /data/local/tmp/arcdroid-1a0/workloads
+adb shell '/data/local/tmp/arcdroid-1a0/rpc_endpoint_test && /data/local/tmp/arcdroid-1a0/rpc_endpoint_cpu_test'
+adb shell '/data/local/tmp/arcdroid-1a0/rpc_timing_test /data/local/tmp/arcdroid-1a0/arcdroid_libretro_test_android.so'
+```
+
+The filenames above are from the configured Android build. The device must
+be available and unused before Fable starts these serial legs. Record only aggregate public
+results in tracked reports. Use the normal Android shipping guard too.
+
+The four fixed synthetic recipes are `warm` (16 load/store pairs on a warmed
+line), `stream-sa110` and `stream-arm710` (16384-word ring, buffered stores), and
+`ldm-stm8` (eight-register load/store). `--kind NAME` generates one; the default
+`--kind all` generates all. Committed plan templates live in
+`tests/fixtures/measure/`. Models/rates are SA-110/100 except ARM710/35 for its
+streaming recipe. Video DMA and input are absent, like the existing hot recipe.
+Each uses realtime **60 s warm + 300 s measured**, production observer setup,
+no watch and trace off. For example (Fable's device leg):
+
+```sh
+adb shell '/data/local/tmp/arcdroid-1a0/rpc_runner --core /data/local/tmp/arcdroid-1a0/arcdroid_rpcmeasure_libretro_android.so --plan /data/local/tmp/arcdroid-1a0/workloads/warm.arcplan --system /data/local/tmp/arcdroid-1a0/workloads --frames 1000000 --pacing realtime --warmup-seconds 60 --measure-seconds 300 --timing /data/local/tmp/arcdroid-1a0/warm-A.csv > /data/local/tmp/arcdroid-1a0/warm-A-guest.txt 2> /data/local/tmp/arcdroid-1a0/warm-A.log'
+```
+
+For AC-5(c), compare the plan and measurement cores' complete stdout and guest
+instruction counts on hot and the private 031 recipe, and verify timing CSV
+`core_ns`. For private 031, keep S61's exact input schedule and fresh store copy,
+8000 frames, decision window 6400–7400 and report window 6000–8000. Substitute
+only private environment-provided plan/system/save paths in local commands.
+Never copy those values into this runbook or public evidence.
+
+AC-8 uses measurement cores only: A/A under two tags on each platform/workload,
+orders A B B A A B and B A A B B A, 120 s idle between runs, closed RetroArch,
+screen on, temperature/frequencies recorded. Per run p50/p95; per order medians
+of three A and three B runs. Bands are max absolute per-order A/A deltas, each
+floored at 0.5%. Apply the work order's ten-block/8%/three-consecutive clock-step
+rule and its single replacement, repeated-flag and candidate-throttling rules.
+Later slices use the frozen gain/regression/retest/inconclusive procedure, with
+Windows no-regression on hot and 031. Do not silently exclude tail regressions.
+
+AC-9 uses the same measurement core with observers off versus production cells:
+≤3% at both p50/p95 on hot and 031. Held-watch, SWI-dense and idle desktop are
+reported upper bounds. Existing `tools/rpc_observer_cost.py` generates authored
+hot/held/SWI inputs; retain the work order's two orders, windows and clock-step
+policy for the deciding evidence. No device leg is run concurrently with another.
+
+AC-10 uses the **profile** plan core, never the measurement core. Run private
+031 with S61 inputs and the authored hot workload on ARM710 (change only that
+plan's model/rate to `arm710`/35). Request `--profile PROFILE.json
+--profile-interval 1 --profile-sample-stride 0`; repeat sampled profiling at a
+recorded stride if cost attribution is needed. Schema 2 carries lookup
+outcomes/ways/probes, exclusive service classes, TLB walks/hit opportunities,
+fill/shortcut counts, AL share and integer/rational counts. New ranking counters
+reset with `ranking_epoch`; their denominator is `ranking_attempts` (AL share uses `ranking_fetched`).
+AL and both denominators reset at the same binding. Legacy
+P0i report fields retain cumulative semantics. Derive a precise aggregate:
+
+```sh
+python3 -B tools/rpc_rank_report.py --profile "$PRIVATE_PROFILE" \
+  --first-frame 6400 --last-frame 7400 > "$PRIVATE_RANK_REPORT"
+```
+
+The report contains integer counts and explicit numerator/denominator pairs,
+including probes per hit. It does not choose an optimisation: Fable records
+L1/S1 order from both required workloads before authorising follow-on slices.
+AC-5(c), AC-8, AC-9 and AC-10 remain Fable's private legs.
+
+Concrete private-leg command forms (set each variable locally; never paste its
+value into public logs). For AC-5(c), restore the same initial save-store bytes
+into `PRIVATE_SAVE_COPY` before **each** invocation, then compare the complete
+stdout files with `cmp` on the host or `fc /b` on native Windows:
+
+```sh
+"$RUNNER" --core "$PLAN_CORE" --plan "$PRIVATE_PLAN" --system "$PRIVATE_SYSTEM" \
+  --save "$PRIVATE_SAVE_COPY" --frames 8000 --pacing realtime \
+  --timing "$PRIVATE_PLAN_TIMING" > "$PRIVATE_PLAN_TRACE" 2> "$PRIVATE_PLAN_LOG"
+# Restore the identical initial save-store copy here.
+"$RUNNER" --core "$MEASUREMENT_CORE" --plan "$PRIVATE_PLAN" --system "$PRIVATE_SYSTEM" \
+  --save "$PRIVATE_SAVE_COPY" --frames 8000 --pacing realtime \
+  --timing "$PRIVATE_MEASURE_TIMING" > "$PRIVATE_MEASURE_TRACE" 2> "$PRIVATE_MEASURE_LOG"
+cmp "$PRIVATE_PLAN_TRACE" "$PRIVATE_MEASURE_TRACE"
+```
+
+On Android, use these same runner arguments inside `adb shell` with device-side
+variables/paths supplied locally. Repeat hot with the generated hot plan and
+its fixed 60/300 second warm/measure window. AC-8 repeats the measurement leg
+under A and B result names in both frozen six-run orders; restore initial
+stores each time and leave 120 s idle between runs. A and B use identical core
+bytes for the initial A/A band. Preserve per-run CSVs before applying the
+work order's clock-step and p50/p95 rules.
+
+For AC-9, supply locally prepared off/production plans that differ only in
+observer configuration, and repeat both orders with the same measurement
+core and input/store recipe. One leg's command form is:
+
+```sh
+"$RUNNER" --core "$MEASUREMENT_CORE" --plan "$PRIVATE_OBSERVER_PLAN" \
+  --system "$PRIVATE_SYSTEM" --save "$PRIVATE_SAVE_COPY" --frames 8000 \
+  --pacing realtime --timing "$PRIVATE_OBSERVER_TIMING" \
+  > "$PRIVATE_OBSERVER_TRACE" 2> "$PRIVATE_OBSERVER_LOG"
+```
+
+For AC-10, use the profile core and interval-one capture, restoring the same
+initial private store first. For the second required workload substitute the
+authored hot plan configured for ARM710/35; preserve its 60/300 second window.
+
+```sh
+"$RUNNER" --core "$PROFILE_CORE" --plan "$PRIVATE_PLAN" --system "$PRIVATE_SYSTEM" \
+  --save "$PRIVATE_SAVE_COPY" --frames 8000 --pacing realtime \
+  --profile "$PRIVATE_PROFILE" --profile-interval 1 --profile-sample-stride 0 \
+  > "$PRIVATE_PROFILE_TRACE" 2> "$PRIVATE_PROFILE_LOG"
+python3 -B tools/rpc_rank_report.py --profile "$PRIVATE_PROFILE" \
+  --first-frame 6400 --last-frame 7400 > "$PRIVATE_RANK_REPORT"
+```
+
+For the authored ARM710 ranking leg, copy the generated hot plan locally and
+change `model` to `arm710` and `rate_mips` to `35`, then run:
+
+```sh
+"$RUNNER" --core "$PROFILE_CORE" --plan "$ARM710_HOT_PLAN" --system "$HOT_SYSTEM" \
+  --save "$HOT_SAVE_COPY" --frames 1000000 --pacing realtime \
+  --warmup-seconds 60 --measure-seconds 300 --profile "$HOT_PROFILE" \
+  --profile-interval 1 --profile-sample-stride 0 \
+  > "$HOT_PROFILE_TRACE" 2> "$HOT_PROFILE_LOG"
+```
+
+Select exact recorded frame bounds within that workload's measured window for
+`rpc_rank_report.py`. The fixed 6400–7400 decision window belongs to private
+031; the hot wall-clock window remains 60/300 seconds.

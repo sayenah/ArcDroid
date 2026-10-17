@@ -1,5 +1,6 @@
 #include <limits.h>
 #include <assert.h>
+#include <errno.h>
 /* Non-shipping confined runner VFS. GPL-2.0-only. */
 /* Reads remain unrestricted. Mutations require an existing canonical parent
  * below --save; existing symlinks/junctions must also resolve below that root. */
@@ -11,8 +12,11 @@
 static bool vfs_flush_fsync = true;
 static char save_directory[4096];
 static unsigned vfs_open_handles,vfs_open_directories;
+#ifndef ARC_RUNNER_VFS_CHECK
+#define ARC_RUNNER_VFS_CHECK(files,dirs) assert((files)==0&&(dirs)==0)
+#endif
 static inline void vfs_assert_no_open_handles(void)
-{assert(vfs_open_handles==0&&vfs_open_directories==0);}
+{ARC_RUNNER_VFS_CHECK(vfs_open_handles,vfs_open_directories);}
 #if defined(_WIN32)
 #include <direct.h>
 #include <sys/stat.h>
@@ -124,12 +128,14 @@ static int32_t vfs_stat(const char *p,int32_t *size)
 }
 static int vfs_mkdir(const char *p)
 {
+    if(vfs_stat(p,NULL)&RETRO_VFS_STAT_IS_DIRECTORY)return -2;
     if(!writable(p))return -1;
 #if defined(_WIN32)
-    return _mkdir(p);
+    int result = _mkdir(p);
 #else
-    return mkdir(p,0700);
+    int result = mkdir(p,0700);
 #endif
+    return result == 0 ? 0 : errno == EEXIST ? -2 : -1;
 }
 struct retro_vfs_dir_handle {
     char path[4096], name[4096];bool directory;

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC launch contract — R3c-3b
 
 This note fixes the contract before implementation, under W2, D-184 and D-185.

@@ -14,6 +14,16 @@ int main(int argc,char **argv)
     if(argc==3 && !strcmp(argv[1],"--write")){
         FILE *f=fopen(argv[2],"wb");assert(f);assert(fwrite(disc,1,ARC_RPC_HELPER_SIZE,f)==ARC_RPC_HELPER_SIZE);assert(!fclose(f));free(disc);return 0;
     }
+    if(argc==3 && !strcmp(argv[1],"--descriptors")){
+        FILE *f=fopen(argv[2],"rb");assert(f);uint32_t size;
+        while(fread(&size,sizeof(size),1,f)==1){
+            assert(size<=ARC_RPC_HELPER_MAX+4);uint8_t packet[ARC_RPC_HELPER_MAX+4];
+            assert(fread(packet,1,size,f)==size);uint32_t entry=0;
+            bool accepted=arc_riscpc_helper_descriptor(packet,size,&entry);
+            printf("%u %u\n",accepted,entry);
+        }
+        assert(feof(f)&&!ferror(f));assert(!fclose(f));free(disc);return 0;
+    }
     uint8_t original[144];memcpy(original,disc+1792,144);
     uint32_t entry=0;assert(arc_riscpc_helper_descriptor(original,144,&entry)&&entry==64);
     assert(!arc_riscpc_helper_descriptor(NULL,144,NULL));

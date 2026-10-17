@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R1 D2 independent guest expectations
 
 These are authored ARM instruction streams, not firmware-derived ROMs. The

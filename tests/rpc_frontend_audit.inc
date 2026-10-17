@@ -47,6 +47,7 @@ RETRO_API void arc_predicate_frontend_audit(void)
  bool owned=arc_disc_owned,ejected=arc_ejected,attempt=arc_boot_attempt,adffs=arc_adffs_active;
  unsigned index=arc_image_index,count=arc_media_count,read=arc_disc_notice_read,write=arc_disc_notice_write;
  uint64_t generation=arc_disc_generation;ArcDiscMode mode=arc_disc_mode;
+ ArcSessionKind kind=arc_kind;
  ArcInputState input=arc_inputs;bool keys[ARC_INPUT_KEY_COUNT];memcpy(keys,arc_keyboard_raw,sizeof(keys));
  retro_input_state_t input_state=arc_input_state;retro_input_poll_t input_poll=arc_input_poll;
  audit_active=audit_rpc=audit_pending=true;arc_disc_owned=true;arc_disc_notice_read=1;arc_disc_notice_write=2;
@@ -55,7 +56,7 @@ RETRO_API void arc_predicate_frontend_audit(void)
  assert(arc_disc_owned && arc_disc_notice_read==1 && arc_disc_notice_write==2 && arc_disc_generation==generation);
  assert(!audit_input && !audit_media && !audit_launch_cancel && !audit_boot_cancel);
  audit_pending=false;arc_adffs_active=false;
- for(unsigned rpc=0;rpc<2;++rpc){audit_rpc=rpc!=0;
+ for(unsigned rpc=0;rpc<2;++rpc){audit_rpc=rpc==0;arc_kind=rpc?ARC_SESSION_KIND_RISCPC:ARC_SESSION_KIND_ARCULATOR;
   for(unsigned down=0;down<2;++down)for(unsigned armed=0;armed<2;++armed){
    arc_boot_attempt=armed!=0;audit_counters();arc_keyboard(down!=0,RETROK_SPACE,0,0);
    assert(audit_input==rpc && audit_launch_cancel==!rpc && audit_boot_cancel==(!rpc && down && armed));
@@ -77,7 +78,7 @@ RETRO_API void arc_predicate_frontend_audit(void)
   audit_counters();assert(arc_media_count<ARC_PLAYLIST_MAX_ENTRIES && arc_disk_add());
   assert(audit_media==rpc && audit_launch_cancel==!rpc && audit_boot_cancel==!rpc);arc_media_count=count;
  }
- audit_rpc=true;
+ audit_rpc=true;arc_kind=ARC_SESSION_KIND_RISCPC;
  if(count>=2 && arc_media[0].info.kind!=ARC_MEDIA_JFD && arc_media[1].info.kind!=ARC_MEDIA_JFD){
   arc_disc_mode=ARC_DISC_MODE_AUTO;arc_image_index=0;arc_ejected=false;audit_insert_fail=true;audit_counters();
   assert(arc_disc_commit(1,arc_disc_generation,ARC_DISC_SIGNAL_A)==ARC_DISC_COMMIT_FAILED);
@@ -87,7 +88,7 @@ RETRO_API void arc_predicate_frontend_audit(void)
   assert(audit_media==1 && !audit_launch_cancel && !audit_boot_cancel);
  }
  audit_restage();
- audit_active=false;arc_disc_owned=owned;arc_ejected=ejected;arc_image_index=index;arc_disc_mode=mode;
+ arc_kind=kind;audit_active=false;arc_disc_owned=owned;arc_ejected=ejected;arc_image_index=index;arc_disc_mode=mode;
  arc_boot_attempt=attempt;arc_adffs_active=adffs;arc_disc_notice_read=read;arc_disc_notice_write=write;
  arc_input_state=input_state;arc_input_poll=input_poll;arc_inputs=input;memcpy(arc_keyboard_raw,keys,sizeof(keys));
 }

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Executed-SWI confirmation-frame cancellation and horizon timing."""
 from pathlib import Path
 import re

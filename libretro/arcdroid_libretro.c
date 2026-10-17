@@ -1,6 +1,8 @@
 /* ArcDroid libretro adapter. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "libretro.h"
 #include "arc_io.h"
+#include "arc_session.h"
+#include "arc_build_identity.h"
 #include "rpc_inventory.h"
 #include "install_store.h"
 #include "arcdroid_core.h"
@@ -32,6 +34,9 @@
 #ifndef ARCDROID_VERSION
 #define ARCDROID_VERSION "0.1.0"
 #endif
+#ifndef ARC_BUILD_SUBSTITUTIONS
+#define ARC_BUILD_SUBSTITUTIONS ""
+#endif
 
 #define ARC_WIDTH 640u
 #define ARC_HEIGHT 480u
@@ -61,6 +66,13 @@ _Static_assert(ARC_INPUT_CURATED_KEY_ROWS - ARC_INPUT_SHARED_KEY_ALIASES +
                ARC_INPUT_FIFO_CAPACITY,
                "supported input surface exceeds reconciliation capacity");
 
+static ArcSessionKind arc_kind;
+static ArcSessionIdSource arc_session_ids;
+static uint64_t arc_session_id, arc_rpc_input_session, arc_rpc_input_generation;
+static bool arc_rpc_refusal_pending, arc_rpc_refusal_noticed;
+static unsigned arc_rpc_storage_noticed;
+ArcSessionKind arc_frontend_session_kind(void) { return arc_kind; }
+uint64_t arc_frontend_session_id(void) { return arc_session_id; }
 static retro_environment_t arc_environment;
 static retro_video_refresh_t arc_video;
 static retro_audio_sample_t arc_audio;
@@ -69,6 +81,8 @@ static retro_input_poll_t arc_input_poll;
 static retro_input_state_t arc_input_state;
 static struct retro_vfs_interface *arc_vfs;
 static retro_log_printf_t arc_log;
+static uint64_t arc_init_count;
+static void arc_build_identity(void);
 static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
 static size_t arc_video_pitch;
 /* Frontends may reread the most recently presented frame during an A/V
@@ -381,7 +395,7 @@ static unsigned arc_media_count;
 static const ArcRpcFirmwareFingerprint *arc_test_rpc_catalogue;
 static size_t arc_test_rpc_catalogue_count;
 RETRO_API void arc_libretro_test_rpc_catalogue(const ArcRpcFirmwareFingerprint *table, size_t count)
-{ arc_test_rpc_catalogue=table; arc_test_rpc_catalogue_count=count; }
+{ arc_test_rpc_catalogue=table; arc_test_rpc_catalogue_count=count; arc_build_identity(); }
 RETRO_API bool arc_libretro_test_rpc_media(unsigned i, ArcRpcCompatibility *out)
 {
    if (i>=arc_media_count || !out) return false;
@@ -427,6 +441,19 @@ static unsigned arc_disc_launch_index, arc_disc_previous_index;
 static uint64_t arc_disc_swapped_us;
 static char arc_disc_notices[8][64];
 static unsigned arc_disc_notice_read, arc_disc_notice_write;
+static bool arc_disc_back_request(unsigned candidate,uint64_t now)
+{
+   return arc_disc_owned && candidate==arc_disc_previous_index && now>=arc_disc_swapped_us &&
+      now-arc_disc_swapped_us<UINT64_C(10000000);
+}
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_libretro_test_disc_back_request(unsigned candidate,unsigned *previous,uint64_t *time,unsigned *notices)
+{
+   *previous=arc_disc_previous_index;*time=arc_disc_swapped_us;
+   *notices=(arc_disc_notice_write+8u-arc_disc_notice_read)%8u;
+   return arc_disc_back_request(candidate,arc_engine_disc_time_us());
+}
+#endif
 static void arc_disc_invalidate(void)
 {
    ++arc_disc_generation;
@@ -1147,8 +1174,15 @@ static const char *arc_os_slug(ArcOsClass os)
    }
 }
 
+#if defined(ARCDROID_TEST_PLANS)
+static void arc_plan_notice(const char *message, bool error);
+#endif
+static void arc_input_sampling_reset(bool release_engine_levels);
 static void arc_release_session(void)
 {
+#if defined(ARCDROID_TEST_PLANS)
+   if (arc_kind == ARC_SESSION_KIND_RISCPC) arc_plan_notice("", false);
+#endif
 #if defined(ARCDROID_TEST_FAULTS)
    arc_test_plan_clear();
 #endif
@@ -1177,6 +1211,10 @@ static void arc_release_session(void)
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
+   arc_kind = ARC_SESSION_KIND_EMPTY;
+   arc_session_id = arc_rpc_input_session = arc_rpc_input_generation = 0;
+   arc_rpc_refusal_pending = arc_rpc_refusal_noticed = false;
+   arc_rpc_storage_noticed = 0;
 #if defined(ARCDROID_TEST_PLANS)
    arc_jfd_free(&arc_rpc_helper_entry.jfd);
    memset(&arc_rpc_helper_entry,0,sizeof(arc_rpc_helper_entry));
@@ -1204,6 +1242,9 @@ static void arc_release_session(void)
    snprintf(arc_hd_reason, sizeof(arc_hd_reason), "not-attachable");
    arc_power_on_shift = false;
    arc_input_reset(&arc_inputs);
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_input_sampling_reset(false);
+   memset(arc_keyboard_raw, 0, sizeof(arc_keyboard_raw));
    arc_adffs_discard();
    free(arc_firmware);
    arc_firmware = NULL;
@@ -1238,7 +1279,7 @@ static void arc_sync_cmos(void)
 {
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
-   if (!arc_loaded || !arc_engine_active()) return;
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR || !arc_loaded || !arc_engine_active()) return;
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
    {
       if (!arc_cmos_default(arc_plan.os, machine->io, payload)) return;
@@ -1251,6 +1292,7 @@ static void arc_sync_cmos(void)
 
 static void arc_seed_cmos(void)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return;
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE] = {0};
    void *existing = NULL;
@@ -1302,7 +1344,7 @@ static void arc_persist_cmos(void)
 {
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
-   if (!arc_cmos_path[0] || arc_session != ARC_SESSION_RUNNING ||
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR || !arc_cmos_path[0] || arc_session != ARC_SESSION_RUNNING ||
        !arc_engine_active()) return;
    arc_sync_cmos();
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
@@ -1323,7 +1365,7 @@ static void arc_persist_cmos(void)
 
 static void arc_boot_persist_seed(void)
 {
-   if (!arc_boot_post_chooser || !arc_cmos_path[0]) return;
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR || !arc_boot_post_chooser || !arc_cmos_path[0]) return;
    if ((!arc_cmos_last_written_valid ||
         memcmp(arc_cmos_prepared, arc_cmos_last_written,
                sizeof(arc_cmos_prepared))) &&
@@ -2688,12 +2730,29 @@ static void arc_adf_log_refusal(unsigned drive, unsigned track,
    uint8_t *seen = &entry->jfd_refusal_seen[track * 2u + side][sector >> 3u];
    uint8_t mask = (uint8_t)(1u << (sector & 7u));
    arc_engine_launch_outcome_refused(0u);
+   if (arc_kind == ARC_SESSION_KIND_RISCPC) arc_rpc_refusal_pending = true;
    if (*seen & mask) return;
    *seen |= mask;
    if (arc_log)
       arc_log(RETRO_LOG_INFO,
               "ADF write refused: image=%u track=%u side=%u sector=%u\n",
               arc_image_index + 1u, track, side, sector);
+}
+
+/* Player notices are emitted only after returning from protected execution. */
+static void arc_rpc_refusal_boundary(void)
+{
+   unsigned failed = arc_engine_rpc_storage_failure_take();
+   if (arc_kind != ARC_SESSION_KIND_RISCPC) return;
+   unsigned fresh = failed & ~arc_rpc_storage_noticed;
+   if (fresh) {
+      arc_rpc_storage_noticed |= fresh;
+      arc_message("RiscPC disc writes can no longer be saved. Check free space and storage access, then reload the content.", RETRO_LOG_WARN);
+   } else if (arc_rpc_refusal_pending && !arc_rpc_refusal_noticed) {
+      arc_message("RiscPC disc write refused; this operation cannot be saved.", RETRO_LOG_INFO);
+   }
+   if (arc_rpc_refusal_pending) arc_rpc_refusal_noticed = true;
+   arc_rpc_refusal_pending = false;
 }
 
 static void arc_jfd_log_map_unavailable(unsigned image_number)
@@ -3203,6 +3262,7 @@ static void arc_hd_store_log(void *opaque, const char *line)
 
 static void arc_hd_reconcile(void)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return;
    arc_install_store_close(arc_hd_store);
    arc_hd_store = NULL;
    arc_hd_option_auto = arc_core_options.hard_disc_auto;
@@ -3665,6 +3725,7 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
 static bool arc_launch_binding_publish(const char *path, bool replacing,
                                        const uint8_t *data, size_t size)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return false;
    if (!replacing)
       return arc_atomic_publish(path, data, size, NULL, NULL, 0u);
 
@@ -3996,6 +4057,7 @@ static bool arc_choice_publish(const ArcLaunchDiscovery *discovery,
 static bool arc_boot_record_path(char path[ARC_MEDIA_PATH_CAPACITY],
                                  bool create_directory)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return false;
    char directory[ARC_MEDIA_PATH_CAPACITY];
    int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch", arc_save_path);
    int p = d >= 0 && (size_t)d < sizeof(directory) ?
@@ -4172,6 +4234,7 @@ static bool arc_boot_record_load(const ArcBootObservation *current)
 
 static void arc_boot_record_publish(void)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return;
    if (!arc_boot_stamp_ready || arc_boot_record_suppressed ||
        arc_install_store_wrote(arc_hd_store)) return;
    ArcBootObservation current;
@@ -4761,7 +4824,7 @@ static bool arc_disk_insert_entry(ArcMediaEntry *entry, ArcInsertPhase phase,
 {
    if (phase != ARC_INSERT_COMMIT)
    {
-      if ((!arc_engine_is_rpc() && !arc_machine_accepts_media(arc_session_machine, entry,
+      if ((!(arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_machine_accepts_media(arc_session_machine, entry,
                                      error, error_size)) ||
           !arc_refresh_jfd(entry, arc_plan.disk_writes,
                            arc_core_options.jfd_write_policy, error, error_size))
@@ -4839,13 +4902,13 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
 {
    if (arc_disc_mode != ARC_DISC_MODE_AUTO || !arc_loaded ||
        arc_session != ARC_SESSION_RUNNING || arc_adffs_active || arc_ejected ||
-       (!arc_engine_is_rpc() && arc_hd_mode != ARC_HD_HELPER_FLOPPY) ||
+       (!(arc_kind == ARC_SESSION_KIND_RISCPC) && arc_hd_mode != ARC_HD_HELPER_FLOPPY) ||
        candidate >= arc_media_count || candidate == arc_image_index ||
        !arc_media[candidate].populated || generation != arc_disc_generation ||
        !arc_engine_disc_controller_idle()) return ARC_DISC_COMMIT_BUSY;
    ArcErrorBox box;
    arc_engine_error_snapshot(&box);
-   if(arc_engine_is_rpc()){
+   if(arc_kind == ARC_SESSION_KIND_RISCPC){
       if(!arc_engine_rpc_observers_replace(signal))return ARC_DISC_COMMIT_BUSY;
    }else if (box.stage == ARC_ERROR_READY) return ARC_DISC_COMMIT_BUSY;
    ArcMediaEntry *entry = &arc_media[candidate];
@@ -4863,7 +4926,7 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
       arc_test_disc_preflight_callback=NULL;callback();
    }
 #endif
-   if(arc_engine_is_rpc() && (generation!=arc_disc_generation ||
+   if((arc_kind == ARC_SESSION_KIND_RISCPC) && (generation!=arc_disc_generation ||
       !arc_engine_disc_controller_idle() || !arc_engine_rpc_observers_replace(signal)))return ARC_DISC_COMMIT_BUSY;
    unsigned old_index = arc_image_index;
    ArcEngineMedia old_media = arc_engine_media(&arc_media[old_index]);
@@ -4876,7 +4939,7 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
       arc_image_index = old_index;
       if (arc_engine_media_insert(&old_media, NULL, 0u)) arc_ejected = false;
       else { arc_ejected = true;
-         if (arc_engine_is_rpc()) {
+         if ((arc_kind == ARC_SESSION_KIND_RISCPC)) {
             arc_engine_rpc_launch_interrupt(ARC_RPC_INTERRUPT_SWAP_ROLLBACK);
             arc_engine_stop();
          }
@@ -4890,9 +4953,9 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
    arc_disc_previous_index = old_index;
    arc_disc_swapped_us = arc_engine_disc_time_us();
    arc_disc_invalidate();
-   if (arc_engine_is_rpc()) arc_engine_rpc_launch_media_changed();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
    else arc_engine_launch_outcome_cancel("media");
-   if (!arc_engine_is_rpc()) arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    arc_disc_setup();
    char notice[64];
    snprintf(notice, sizeof(notice), "Disc %u inserted", candidate + 1u);
@@ -4947,11 +5010,9 @@ static bool arc_disc_observation(void *opaque, const char *path,
    if (trigger)
    {
       uint64_t now = arc_engine_disc_time_us();
-      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
-         now >= arc_disc_swapped_us &&
-         now - arc_disc_swapped_us < UINT64_C(10000000);
+      bool backwards = arc_disc_back_request(candidate,now);
       if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards ||
-          (arc_engine_is_rpc() && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)))
+          ((arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)))
       {
          char notice[64];
          snprintf(notice, sizeof(notice), "Insert disc %u with Disk Control",
@@ -5045,7 +5106,7 @@ static void arc_disc_setup(void)
       arc_media_count >= 2u && !arc_adffs_active && !arc_ejected &&
       arc_image_index < arc_media_count &&
       arc_session == ARC_SESSION_RUNNING &&
-      (arc_engine_is_rpc() || arc_hd_mode == ARC_HD_HELPER_FLOPPY);
+      ((arc_kind == ARC_SESSION_KIND_RISCPC) || arc_hd_mode == ARC_HD_HELPER_FLOPPY);
    ArcGuestName disc = {0};
    if (enabled && arc_disc_name(arc_image_index, &disc) && disc.length <= 10u)
    {
@@ -5080,7 +5141,7 @@ static void arc_disc_option_refresh(void)
 static void arc_rpc_disc_log(const char *action,const char *reason,const char *candidate)
 {
    static struct {char line[384];uint64_t time,generation;} history[4];
-   if(!arc_engine_is_rpc() || !arc_log)return;
+   if(!(arc_kind == ARC_SESSION_KIND_RISCPC) || !arc_log)return;
    unsigned slot=!strcmp(action,"resolved")?1u:!strcmp(action,"busy")?2u:
       (!strcmp(action,"inserted") || !strcmp(action,"hint") || !strcmp(action,"ignored"))?3u:0u;
    /* Waiting/terminal decisions end the previous attempt. A later retry
@@ -5090,7 +5151,7 @@ static void arc_rpc_disc_log(const char *action,const char *reason,const char *c
    char line[384];snprintf(line,sizeof(line),
       "RPC disc: signal=%s gate=%s name=%s active=%u notified=%u replacement=%s candidate=%s action=%s reason=%s observation=%s:%s\n",
       status.signal,status.gate,status.name,status.active,status.notified,status.replacement,candidate,action,reason,status.last_signal,status.last_reason);
-   uint64_t time=arc_engine_disc_time_us(),session=arc_engine_session_generation();
+   uint64_t time=arc_engine_disc_time_us(),session=arc_session_id;
    if(time<history[slot].time)history[slot].time=time;
    bool busy_repeat=slot==2u && time-history[slot].time>=UINT64_C(2000000);
    if(session!=history[slot].generation || strcmp(line,history[slot].line) || busy_repeat){
@@ -5136,11 +5197,9 @@ static void arc_disc_boundary(void)
    else if (count == 1u)
    {
       uint64_t now = arc_engine_disc_time_us();
-      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
-         now >= arc_disc_swapped_us &&
-         now - arc_disc_swapped_us < UINT64_C(10000000);
+      bool backwards = arc_disc_back_request(candidate,now);
       if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards ||
-          (arc_engine_is_rpc() && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_A)))
+          ((arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_A)))
       {
          char notice[64];
          snprintf(notice, sizeof(notice), "Insert disc %u with Disk Control",
@@ -5187,12 +5246,12 @@ static bool arc_disk_set_eject(bool ejected)
    arc_engine_disc_clear();
    arc_disc_invalidate();
    char error[512] = {0};
-   if (arc_engine_is_rpc()) arc_engine_rpc_launch_media_changed();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
    else arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
 
    if (ejected == arc_ejected) return true;
-   if (!arc_engine_is_rpc()) arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    if (ejected)
    {
       if (!arc_engine_media_eject()) return false;
@@ -5225,13 +5284,13 @@ static bool arc_disk_set_index(unsigned index)
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
-   if (arc_engine_is_rpc()) arc_engine_rpc_launch_media_changed();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
    else arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
    if (!arc_ejected) return false;
 
    if (index < arc_media_count && !arc_media[index].populated) return false;
-   if (!arc_engine_is_rpc()) arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    arc_image_index = index < arc_media_count ? index : arc_media_count;
    return true;
 }
@@ -5243,12 +5302,12 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
-   if (arc_engine_is_rpc()) arc_engine_rpc_launch_media_changed();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
    else arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
    if (!arc_ejected || index >= arc_media_count) return false;
 
-   if (!arc_engine_is_rpc()) arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    if (!info)
    {
       bool selected = arc_image_index == index;
@@ -5281,7 +5340,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
       arc_message(error[0] ? error : "Replacement floppy image is invalid.", RETRO_LOG_ERROR);
       return false;
    }
-   if (!arc_engine_is_rpc() && !arc_machine_accepts_media(arc_session_machine, &replacement,
+   if (!(arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_machine_accepts_media(arc_session_machine, &replacement,
                                   error, sizeof(error)))
    {
       arc_discard_candidate(&replacement);
@@ -5301,12 +5360,12 @@ static bool arc_disk_add(void)
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
-   if (arc_engine_is_rpc()) arc_engine_rpc_launch_media_changed();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
    else arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
    if (arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
 
-   if (!arc_engine_is_rpc()) arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    memset(&arc_media[arc_media_count++], 0, sizeof(arc_media[0]));
    return true;
 }
@@ -5332,9 +5391,9 @@ static bool arc_disk_get_label(unsigned index, char *label, size_t length)
 static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
                          uint16_t modifiers)
 {
-   if (arc_engine_is_rpc()) arc_engine_rpc_launch_input();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_input();
    else arc_engine_launch_outcome_cancel("input");
-   if (!arc_engine_is_rpc() && down && arc_boot_attempt) arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC) && down && arc_boot_attempt) arc_engine_boot_watch_cancel();
    (void)character;
    (void)modifiers;
    if (keycode < ARC_INPUT_KEY_COUNT) arc_keyboard_raw[keycode] = down;
@@ -5954,7 +6013,7 @@ static void arc_poll_inputs(void)
       arc_left_sticks[port].polled = false;
    ArcErrorBox error_box;
    arc_engine_error_snapshot(&error_box);
-   bool rpc_error=arc_engine_is_rpc();
+   bool rpc_error=(arc_kind == ARC_SESSION_KIND_RISCPC);
    bool error_ready = rpc_error ? error_box.answer_available : error_box.stage == ARC_ERROR_READY;
    bool error_hint_open = rpc_error ? error_box.recognised_open : error_ready;
    if (error_ready != arc_error_was_ready ||
@@ -6023,16 +6082,19 @@ static void arc_poll_inputs(void)
    bool error_b = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
                                   RETRO_DEVICE_ID_JOYPAD_B) != 0;
    if (!error_a && !error_b) arc_error_pad_gate = false;
-   bool error_hint_unknown=rpc_error && error_box.modal_unknown && arc_error_hint_state &&
-      arc_error_hint_generation==error_box.generation;
-   unsigned hint_state=error_hint_unknown?3u:error_box.answer_available?2u:1u;
+   bool error_hint_unknown=rpc_error && error_box.modal_unknown &&
+      (error_box.recognised_open || (error_box.flags&0x60u) ||
+       (arc_error_hint_state && arc_error_hint_generation==error_box.generation));
+   bool answered=rpc_error && (error_box.pending!=ARC_ERROR_NONE || error_box.consumed!=ARC_ERROR_NONE);
+   bool hint_answerable=error_box.answer_available || answered;
+   unsigned hint_state=error_hint_unknown?3u:hint_answerable?2u:1u;
    if ((error_hint_open || error_hint_unknown) && !arc_osk.visible &&
        (arc_session == ARC_SESSION_RUNNING || (rpc_error && arc_engine_active())) &&
        (arc_error_hint_generation != error_box.generation ||
         (rpc_error && arc_error_hint_state != hint_state)))
    {
       if(error_hint_unknown)arc_message("Error box state unknown; use keyboard or mouse to respond.",RETRO_LOG_INFO);
-      else if(rpc_error && !error_box.answer_available)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
+      else if(rpc_error && !hint_answerable)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
       else arc_error_hint(&error_box);
       arc_error_hint_generation = error_box.generation;
       arc_error_hint_state = hint_state;
@@ -6077,7 +6139,7 @@ static void arc_poll_inputs(void)
          if (port == 0u && (input == ARC_PAD_A || input == ARC_PAD_B) &&
              (error_ready || arc_error_pad_gate)) continue;
          const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
-         bool joystick_owned = !arc_engine_is_rpc() && arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
+         bool joystick_owned = !(arc_kind == ARC_SESSION_KIND_RISCPC) && arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
                                arc_core_options.pad[port][input].automatic;
          if (!joystick_owned && sampled[port][input] && binding->bound &&
              binding->key < ARC_INPUT_KEY_COUNT)
@@ -6111,7 +6173,7 @@ static void arc_poll_inputs(void)
             !(port == 0u && input == ARC_PAD_A &&
               (error_ready || arc_error_pad_gate)) &&
             arc_core_options.pad[port][input].automatic;
-   arc_platform_joystick_snapshot(!arc_engine_is_rpc() && arc_loaded && arc_plan.a3010_joystick,
+   arc_platform_joystick_snapshot(!(arc_kind == ARC_SESSION_KIND_RISCPC) && arc_loaded && arc_plan.a3010_joystick,
                                   joystick_levels);
 
    bool pad_pointer = !arc_osk.visible &&
@@ -6192,7 +6254,7 @@ static void arc_poll_inputs(void)
       { arc_boot_input = true; break; }
    if (arc_inputs.effective_buttons || arc_osk_toggle_level)
       arc_boot_input = true;
-   if (arc_boot_input && arc_engine_is_rpc()) arc_engine_rpc_launch_input();
+   if (arc_boot_input && (arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_input();
    else if (arc_boot_input) {
       if (arc_boot_attempt) arc_engine_boot_watch_cancel();
       arc_engine_launch_outcome_cancel("input");
@@ -6488,11 +6550,33 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
    memset(info, 0, sizeof(*info));
    info->geometry.base_width = arc_video_width;
    info->geometry.base_height = arc_video_height;
-   info->geometry.max_width = arc_engine_is_rpc() ? 2048u : 4096u;
+   info->geometry.max_width = 4096u;
    info->geometry.max_height = 2048u;
    info->geometry.aspect_ratio = 4.0f / 3.0f;
    info->timing.fps = arc_video_rate;
    info->timing.sample_rate = ARC_AUDIO_RATE;
+}
+
+static void arc_build_identity(void)
+{
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "ArcDroid build: version=%s commit=%s target=%s config=%s gate=closed substitutions=%s catalogue=%s init=%llu\n",
+      ARCDROID_VERSION, ARC_BUILD_COMMIT, ARC_BUILD_TARGET, ARC_BUILD_CONFIG,
+#if defined(ARCDROID_RPC_MEASUREMENT)
+      "measurement,test-plans",
+#elif defined(ARCDROID_TEST_PLANS)
+      "test-faults,test-plans",
+#elif defined(ARCDROID_TEST_FAULTS)
+      "test-faults",
+#else
+      ARC_BUILD_SUBSTITUTIONS[0] ? ARC_BUILD_SUBSTITUTIONS : "none",
+#endif
+#if defined(ARCDROID_TEST_FAULTS)
+      arc_test_rpc_catalogue ? "test-override" : "production",
+#else
+      "production",
+#endif
+      (unsigned long long)arc_init_count);
 }
 
 #if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
@@ -6560,6 +6644,7 @@ RETRO_API void retro_init(void)
    }
    arc_engine_set_log_callback(arc_engine_log, NULL);
    arc_engine_adf_refusal_callback_set(arc_adf_log_refusal);
+   ++arc_init_count;arc_build_identity();
 }
 
 RETRO_API void retro_deinit(void)
@@ -6589,6 +6674,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
                                   ArcEngineMedia *mounted,
                                   char *error, size_t error_size)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return false;
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
    uint8_t locked_cmos_mask[32];
@@ -6843,6 +6929,7 @@ fallback:
 
 static bool arc_hd_outcome_boundary(void)
 {
+   if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return false;
    if (arc_hd_reset_cancel_pending) {
       if (arc_log) arc_log(RETRO_LOG_INFO,"Launch outcome: cancelled=reset\n");
       arc_hd_reset_cancel_pending=false;
@@ -7261,6 +7348,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    if (arc_loaded) arc_persist_cmos();
    arc_loaded = false;
    arc_release_session();
+   arc_video_width = ARC_WIDTH; arc_video_height = ARC_HEIGHT; arc_video_rate = ARC_RATE;
+   arc_rpc_av_attempted = false;
    arc_boot_attempt = true;
    arc_input_sampling_reset(false);
    arc_osk_reset(&arc_osk, &arc_inputs);
@@ -7315,12 +7404,18 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       arc_message("A native writable save directory is required; SAF save directories cannot publish staged media.", RETRO_LOG_ERROR);
       return false;
    }
+   if (!arc_session_id_allocate(&arc_session_ids, &arc_session_id)) {
+      if (arc_log) arc_log(RETRO_LOG_ERROR,"Session identity exhausted; reload the core library.\n");
+      return false;
+   }
+   arc_kind = ARC_SESSION_KIND_ARCULATOR;
    strcpy(arc_save_path, save_dir);
    arc_riscpc_notice_shown = false;
    if (!arc_prepare_media_list(game->path, arc_core_options.disk_writes,
                                error, sizeof(error)))
    {
       arc_message(error, RETRO_LOG_ERROR);
+      arc_release_session();
       return false;
    }
    arc_image_index = 0u;
@@ -7381,8 +7476,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       rpc_discs[i] = arc_media[i].compatibility;
       if (arc_riscpc_notice_required(rpc_discs[i])) rpc_scan_needed = true;
    }
-   ArcRpcFirmwareInventory rpc_inventory = {0};
-   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(arc_vfs,
+   ArcRpcFirmwareInventory rpc_inventory = {.state=ARC_RPC_INVENTORY_SKIPPED};
+   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(
       firmware_dir, rpc_table, rpc_count);
    ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
       &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
@@ -7564,7 +7659,8 @@ static bool arc_rpc_plan_media(const char *content,const char *helper,char *erro
         ArcEngineMedia m=arc_engine_media(entry);
         if(!arc_engine_media_insert(&m,error,size))return false;
     }
-    arc_loaded=true;arc_session=ARC_SESSION_RUNNING;return true;
+    arc_loaded=true;arc_session=ARC_SESSION_RUNNING;
+    arc_io_set_write_observer(arc_disc_write_observer);return true;
 }
 static bool arc_rpc_plan_restage_drive0(char *error,size_t size)
 {
@@ -7721,12 +7817,23 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
 #if defined(ARCDROID_TEST_PLANS)
    if (game && arc_test_plan_path(game->path)) {
+      if (arc_loaded) arc_persist_cmos();
       arc_loaded = false;
       arc_release_session();
+      arc_video_width = ARC_WIDTH; arc_video_height = ARC_HEIGHT; arc_video_rate = 60.0;
+      arc_audio_fraction = arc_rpc_fault_audio_fraction = 0;
+      arc_input_sampling_reset(false); arc_osk_reset(&arc_osk, &arc_inputs);
+      arc_osk_free_surface(); memset(arc_keyboard_raw, 0, sizeof(arc_keyboard_raw));
+      arc_guest_time_us = 0;
+      if (!arc_session_id_allocate(&arc_session_ids, &arc_session_id)) {
+         if (arc_log) arc_log(RETRO_LOG_ERROR,"Session identity exhausted; reload the core library.\n");
+         return false;
+      }
+      arc_kind = ARC_SESSION_KIND_RISCPC;
       const char *system = NULL, *save = NULL; char error[256]={0};
       enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
       static const struct retro_keyboard_callback keyboard = {arc_keyboard};
-      if (!arc_environment || !arc_environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) return false;
+      if (!arc_environment || !arc_environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) { arc_release_session(); return false; }
       arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
       arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save);
@@ -7776,12 +7883,18 @@ RETRO_API void retro_reset(void)
 {
 #if defined(ARCDROID_TEST_PLANS)
    if(arc_test_plan_pending()) {
+      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
+      arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;
+      arc_disc_notice_read=arc_disc_notice_write=0;
       arc_input_reset(&arc_inputs);memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_input_sampling_reset(false);arc_guest_time_us=0;arc_test_plan_reset();
       arc_rpc_av_attempted=false;return;
    }
 #endif
-   if(arc_engine_is_rpc() && arc_engine_active()) {
+   if((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {
+      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
+      arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;
+      arc_disc_notice_read=arc_disc_notice_write=0;
 #if defined(ARCDROID_TEST_PLANS)
       if(arc_test_plan_cmos_phase())arc_plan_notice("",false);
 #endif
@@ -8093,9 +8206,10 @@ static void arc_present(const ArcEngineFrame *frame)
  * one fresh attempt. Size+rate changes require only the full AV notification. */
 static void arc_rpc_present_run(void)
 {
-   static uint64_t input_generation;
-   if(input_generation!=arc_engine_session_generation()) {
-      input_generation=arc_engine_session_generation();
+   if(arc_rpc_input_session!=arc_session_id || arc_rpc_input_generation!=arc_engine_session_generation()) {
+      arc_rpc_input_session=arc_session_id;
+      arc_rpc_input_generation=arc_engine_session_generation();
+      arc_io_set_write_observer(arc_disc_write_observer);
       arc_rpc_fault_audio_fraction=0;
       arc_input_reset(&arc_inputs);arc_input_sampling_reset(false);
       memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
@@ -8134,6 +8248,7 @@ static void arc_rpc_present_run(void)
 #endif
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
+   arc_rpc_refusal_boundary();
 #if defined(ARCDROID_TEST_PLANS)
    arc_test_plan_diagnostics();
 #endif
@@ -8232,7 +8347,7 @@ RETRO_API void retro_run(void)
       return;
    }
 #endif
-   if (arc_engine_is_rpc() && arc_engine_active()) { arc_rpc_present_run(); return; }
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) { arc_rpc_present_run(); return; }
    ArcEngineFrame frame;
    size_t count;
    bool frame_ran;
@@ -8544,3 +8659,95 @@ RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
       arc_port_device[port] = device;
    }
 }
+
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_libretro_test_rpc_admit(void)
+{
+   if (!arc_engine_is_rpc() || !arc_session_id_allocate(&arc_session_ids, &arc_session_id)) return false;
+   arc_kind=ARC_SESSION_KIND_RISCPC;
+   arc_rpc_input_session=arc_rpc_input_generation=0;
+   arc_rpc_av_attempted=false;
+   arc_video_width=ARC_WIDTH;arc_video_height=ARC_HEIGHT;arc_video_rate=60.0;
+   return true;
+}
+RETRO_API void arc_libretro_test_hygiene(ArcFrontendHygiene *out)
+{
+   memset(out,0,sizeof(*out));
+   out->id=arc_session_id;out->kind=arc_kind;out->engine_rpc=arc_engine_is_rpc();
+   out->capabilities=arc_engine_capabilities();
+   const char *fault=NULL;out->fault=arc_engine_faulted(&fault);out->fault_text=fault && *fault;
+   out->retained=(arc_osk.visible || arc_osk.busy?1u:0u) |
+      (arc_error_pad_gate || arc_error_was_ready || arc_error_seen_generation ||
+       arc_error_hint_generation || arc_error_hint_state?2u:0u) |
+      (arc_disc_notice_read!=arc_disc_notice_write?4u:0u);
+   for(unsigned i=0;i<RETROK_LAST;++i)if(arc_keyboard_raw[i])out->retained|=8u;
+   for(unsigned p=0;p<2;++p)for(unsigned i=0;i<10;++i)if(arc_pad_keys[p][i])out->retained|=16u;
+#if defined(ARCDROID_TEST_PLANS)
+   if(arc_plan_terminal[0] || arc_plan_terminal_refresh)out->retained|=32u;
+#endif
+   out->frontend_allocations=(arc_firmware?1u:0u)+(arc_osk_surface?1u:0u)+
+      (arc_hd_store?1u:0u)+(arc_adffs_carrier?1u:0u)+(arc_adffs_support?1u:0u);
+   for(unsigned i=0;i<ARC_PLAYLIST_MAX_ENTRIES;++i)
+      if(arc_media[i].jfd.decoded)++out->frontend_allocations;
+}
+/* Plant a former Arculator destination to test persistence's kind guard even
+ * when cleanup is separately broken. No corresponding shipping seam exists. */
+RETRO_API void arc_libretro_test_plant_cmos(const char *path)
+{ snprintf(arc_cmos_path,sizeof(arc_cmos_path),"%s",path); }
+/* Exercise each boundary in isolation: a valid retained Arculator machine and
+ * plan, with only the frontend kind changed. No release or downstream guard is
+ * needed by the oracle (boot publication is observed at its media read). */
+RETRO_API bool arc_libretro_test_persistence_guard(unsigned site, unsigned phase,
+                                                 const char *path)
+{
+   ArcSessionKind previous=arc_kind;
+   bool changed=false;
+   uint8_t before[ARC_CMOS_RECORD_SIZE];
+   char result[ARC_MEDIA_PATH_CAPACITY]="guard-probe";
+   char error[256]={0};
+   if(!phase){
+      snprintf(arc_cmos_path,sizeof(arc_cmos_path),"%s",path);
+      arc_cmos_last_written_valid=false;
+      if(site==0 || site==9)memset(arc_cmos_record,0,sizeof(arc_cmos_record));
+      if(site==1)memset(arc_cmos_prepared,0,sizeof(arc_cmos_prepared));
+      if(site==3)arc_boot_post_chooser=true;
+      if(site==4)snprintf(arc_hd_reason,sizeof(arc_hd_reason),"guard-probe");
+      if(site==5){
+         arc_boot_stamp_ready=arc_boot_stamp(&arc_boot_start_stamp);
+         arc_boot_record_suppressed=false;
+         if(!arc_boot_stamp_ready)return true; /* Invalid fixture must fail. */
+      }
+      if(site==6)arc_hd_reset_cancel_pending=true;
+      return false;
+   }
+   memcpy(before,site==1?arc_cmos_prepared:arc_cmos_record,sizeof(before));
+   arc_kind=phase==2?ARC_SESSION_KIND_ARCULATOR:ARC_SESSION_KIND_RISCPC;
+   switch(site){
+      case 0:arc_sync_cmos();break;
+      case 1:arc_seed_cmos();break;
+      case 2:arc_persist_cmos();break;
+      case 3:arc_boot_persist_seed();break;
+      case 4:arc_hd_reconcile();changed=strcmp(arc_hd_reason,"guard-probe")!=0;break;
+      case 5:arc_boot_record_publish();break;
+      case 6:(void)arc_hd_outcome_boundary();changed=!arc_hd_reset_cancel_pending;break;
+      case 7:changed=arc_boot_record_path(result,true) || strcmp(result,"guard-probe");break;
+      case 8:changed=arc_launch_binding_publish(path,false,(const uint8_t *)"probe",5);break;
+      case 9:(void)arc_construct_machine(arc_machine_descriptor(arc_plan.machine),NULL,error,sizeof(error));break;
+      default:changed=true;break;
+   }
+   if(site==0 || site==1 || site==9)
+      changed=memcmp(before,site==1?arc_cmos_prepared:arc_cmos_record,sizeof(before))!=0;
+   arc_kind=previous;
+   return changed;
+}
+RETRO_API bool arc_libretro_test_disc_name(unsigned index,ArcGuestName *name)
+{ return arc_disc_name(index,name); }
+RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned count)
+{
+   char journal[4096];snprintf(journal,sizeof(journal),"%s/arcdroid/hd-riscpc/journal.1",arc_save_path);
+   uint64_t start=arc_test_clock_ns();
+   void (*volatile observer)(const char *)=arc_disc_write_observer;
+   for(unsigned i=0;i<count;++i)observer(journal);
+   return arc_test_clock_ns()-start;
+}
+#endif

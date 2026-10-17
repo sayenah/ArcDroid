@@ -22,6 +22,8 @@
  * checked translations and in-object pointers; no desktop allocations. */
 /* Memory handling */
 #include "rpc_memory.h"
+/* ArcDroid modification (2026-10-14, profiling-6b-p0i): backing writes/MMIO. */
+#include "rpc_profile.h"
 #include "rpc_observer.h"
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): charge successful CPU attempts only;
@@ -75,6 +77,11 @@ bool arc_rpc_memory_load_rom(const uint8_t *bytes, size_t size)
 
 void arc_rpc_memory_close(void)
 {
+    /* ArcDroid modification (2026-10-16, 6b-1a0): retire the authored
+     * prefix diagnostic before guest allocations can be reused. */
+#if defined(ARCDROID_TEST_FAULTS)
+    (void)arc_rpc_test_prefix_arm(0);
+#endif
     free(rom); free(vram); free(ram00); free(ram01); free(ram1);
     rom = vram = ram00 = ram01 = ram1 = NULL;
     romb = ramb00 = ramb01 = ramb1 = vramb = NULL;
@@ -179,6 +186,10 @@ const uint32_t *arc_rpc_phys_page(uint32_t addr)
  * @param addr Physical address
  * @return 32-bit word read from given physical address
  */
+#if defined(ARCDROID_RPC_PROFILE)
+#undef mem_phys_read32
+#define mem_phys_read32 arc_rpc_mem_phys_read32_profile_body
+#endif
 uint32_t
 mem_phys_read32(uint32_t addr)
 {
@@ -263,6 +274,23 @@ mem_phys_read32(uint32_t addr)
 	}
 	return 0;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef mem_phys_read32
+#define mem_phys_read32 arc_rpc_mem_phys_read32
+
+uint32_t
+mem_phys_read32(uint32_t addr)
+{
+    uint32_t pa=addr&0x1fffffffu;
+    bool io=(pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u);
+    if(!io)return arc_rpc_mem_phys_read32_profile_body(addr);
+    arc_rpc_profile_mmio(false);
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_MMIO);
+    uint32_t result = arc_rpc_mem_phys_read32_profile_body(addr);
+    arc_rpc_profile_leave(previous);
+    return result;
+}
+#endif
 
 /**
  * Read a byte from a physical address.
@@ -270,6 +298,9 @@ mem_phys_read32(uint32_t addr)
  * @param addr Physical address
  * @return Byte read from given physical address
  */
+#if defined(ARCDROID_RPC_PROFILE)
+#define mem_phys_read8 mem_phys_read8_profile_body
+#endif
 static uint32_t
 mem_phys_read8(uint32_t addr)
 {
@@ -372,6 +403,22 @@ mem_phys_read8(uint32_t addr)
 	}
 	return 0xff;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef mem_phys_read8
+
+static uint32_t
+mem_phys_read8(uint32_t addr)
+{
+    uint32_t pa=addr&0x1fffffffu;
+    bool io=(pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u);
+    if(!io)return mem_phys_read8_profile_body(addr);
+    arc_rpc_profile_mmio(false);
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_MMIO);
+    uint32_t result = mem_phys_read8_profile_body(addr);
+    arc_rpc_profile_leave(previous);
+    return result;
+}
+#endif
 
 /**
  * Write a 32-bit word to a physical address.
@@ -379,6 +426,9 @@ mem_phys_read8(uint32_t addr)
  * @param addr Physical address
  * @param val  32-bit word to write
  */
+#if defined(ARCDROID_RPC_PROFILE)
+#define mem_phys_write32 mem_phys_write32_profile_body
+#endif
 static void
 mem_phys_write32(uint32_t addr, uint32_t val)
 {
@@ -394,6 +444,7 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 		if (mem_vrammask == 0)
 			return;
 		vram[(addr & mem_vrammask) >> 2] = val;
+    ARC_RPC_PROFILE(store(vram,addr&mem_vrammask));
 		dirtybuffer[(addr & mem_vrammask) >> 12] = 1;
 		break;
 
@@ -458,6 +509,7 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x12000000:
 	case 0x13000000:
 		ram00[(addr & mem_rammask) >> 2] = val;
+    ARC_RPC_PROFILE(store(ram00,addr&mem_rammask));
 		/* In 0MB VRAM modes allow up to 4MB of writes to DRAM video data to update the dirty buffer */
 		if ((mem_vrammask == 0) && ((addr & 0xffc00000) == (iomd.vidstart & 0xffc00000))) {
 			dirtybuffer[(addr & 0x3fffffu) >> 12] = 1;
@@ -469,6 +521,7 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x16000000:
 	case 0x17000000:
 		ram01[(addr & mem_rammask) >> 2] = val;
+    ARC_RPC_PROFILE(store(ram01,addr&mem_rammask));
 		return;
 
 	case 0x18000000: /* SIMM 1 bank 0 */
@@ -485,6 +538,21 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 		return;
 	}
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef mem_phys_write32
+
+static void
+mem_phys_write32(uint32_t addr, uint32_t val)
+{
+    uint32_t pa=addr&0x1fffffffu;
+    bool io=(pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u);
+    if(!io){mem_phys_write32_profile_body(addr,val);return;}
+    arc_rpc_profile_mmio(true);
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_MMIO);
+    mem_phys_write32_profile_body(addr,val);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 
 /**
  * Write a byte to a physical address.
@@ -492,6 +560,9 @@ mem_phys_write32(uint32_t addr, uint32_t val)
  * @param addr Physical address
  * @param val  Byte to write
  */
+#if defined(ARCDROID_RPC_PROFILE)
+#define mem_phys_write8 mem_phys_write8_profile_body
+#endif
 static void
 mem_phys_write8(uint32_t addr, uint8_t val)
 {
@@ -510,6 +581,7 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 		addr ^= 3;
 #endif
 		vramb[addr & mem_vrammask] = val;
+    ARC_RPC_PROFILE(store(vram,addr&mem_vrammask));
 		dirtybuffer[(addr & mem_vrammask) >> 12] = 1;
 		return;
 
@@ -576,6 +648,7 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 		addr ^= 3;
 #endif
 		ramb00[addr & mem_rammask] = val;
+    ARC_RPC_PROFILE(store(ram00,addr&mem_rammask));
 		/* In 0MB VRAM modes allow up to 4MB of writes to DRAM video data to update the dirty buffer */
 		if ((mem_vrammask == 0) && ((addr & 0xffc00000) == (iomd.vidstart & 0xffc00000))) {
 			dirtybuffer[(addr & 0x3fffffu) >> 12] = 1;
@@ -590,6 +663,7 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 		addr ^= 3;
 #endif
 		ramb01[addr & mem_rammask] = val;
+    ARC_RPC_PROFILE(store(ram01,addr&mem_rammask));
 		return;
 
 	case 0x18000000: /* SIMM 1 bank 0 */
@@ -609,6 +683,21 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 		return;
 	}
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef mem_phys_write8
+
+static void
+mem_phys_write8(uint32_t addr, uint8_t val)
+{
+    uint32_t pa=addr&0x1fffffffu;
+    bool io=(pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u);
+    if(!io){mem_phys_write8_profile_body(addr,val);return;}
+    arc_rpc_profile_mmio(true);
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_MMIO);
+    mem_phys_write8_profile_body(addr,val);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 
 /* Every data path, including LDRT/STRT, checks tagged permissions before
  * touching the physical bus. No privilege-dependent host-pointer cache. */
@@ -616,6 +705,7 @@ uint32_t readmemfl(uint32_t addr)
 {
     uint32_t physical = mmu ? translateaddress(addr, 0, 0) : addr;
     if (arm.event & 0x40) return 0;
+    ARC_RPC_PROFILE(access(physical,false));
     arc_rpc_mem_access(addr, physical, 4, false, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     return mem_phys_read32(physical);
@@ -624,6 +714,7 @@ uint32_t readmemfb(uint32_t addr)
 {
     uint32_t physical = mmu ? translateaddress(addr, 0, 0) : addr;
     if (arm.event & 0x40) return 0;
+    ARC_RPC_PROFILE(access(physical,false));
     arc_rpc_mem_access(addr, physical, 1, false, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     return mem_phys_read8(physical);
@@ -632,6 +723,7 @@ void writememfl(uint32_t addr, uint32_t val)
 {
     uint32_t physical = mmu ? translateaddress(addr, 1, 0) : addr;
     if (arm.event & 0x40) return;
+    ARC_RPC_PROFILE(access(physical,true));
     arc_rpc_mem_access(addr, physical, 4, true, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     mem_phys_write32(physical, val);
@@ -640,6 +732,7 @@ void writememfb(uint32_t addr, uint8_t val)
 {
     uint32_t physical = mmu ? translateaddress(addr, 1, 0) : addr;
     if (arm.event & 0x40) return;
+    ARC_RPC_PROFILE(access(physical,true));
     arc_rpc_mem_access(addr, physical, 1, true, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     mem_phys_write8(physical, val);

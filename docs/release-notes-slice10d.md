@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 10d: persistent saves for proven native JFD titles
 
 Ten exact decoded-JFD identities now boot on ArcDroid's native path by default,
