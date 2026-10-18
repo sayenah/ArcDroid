@@ -3184,10 +3184,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     DEPENDS tests/rpc_hd_retroarch_rom.py tests/rpc_video_rom.py tests/generate_fixtures.py VERBATIM)
   add_custom_target(rpc-hd-retroarch-fixtures ALL DEPENDS "${RPC_HD_RETROARCH_DIR}/hd.arcplan")
   add_dependencies(rpc_runner rpc-hd-retroarch-fixtures)
+  set(RPC_HD_RETROARCH_TIMEOUT 600)
   add_test(NAME rpc-hd-retroarch-guest COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
-    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
-  set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}"
+    "${RPC_HD_RETROARCH_TIMEOUT}")
+  set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT ${RPC_HD_RETROARCH_TIMEOUT})
   set(RPC_HD_COST_PROFILE)
   if(ARCDROID_SANITIZERS)
     list(APPEND RPC_HD_COST_PROFILE --sanitizer)
@@ -3407,7 +3409,7 @@ if(BUILD_TESTING)
   foreach(test IN LISTS arcdroid_ci_tests)
     if(test MATCHES "(mutants|mutations|faults)" OR
         test STREQUAL "rpc-lockstep-sensitivity-variants" OR
-        test MATCHES "^(native-hd-(guest|stress)-process|power-on-shift-harness|jfd-tab-.*-process|libretro-harness|rpc-memory-long-.*|rpc-session-frontend-switch|rpc-endpoint-late-arm|rpc-floppy-guest|rpc-hot-throughput|rpc-memory-timing-2|rpc-hd-store-(process-.*|bounds))$")
+        test MATCHES "^(native-hd-(guest|stress)-process|native-hard-disc-store|power-on-shift-harness|jfd-tab-.*-process|libretro-harness|rpc-memory-long-.*|rpc-session-frontend-switch|rpc-endpoint-late-arm|rpc-floppy-guest|rpc-hot-throughput|rpc-memory-timing-[012]|rpc-hash-identity|rpc-boot-packages|rpc-hd-store-(process-.*|bounds))$")
       set_property(TEST ${test} APPEND PROPERTY LABELS slow)
     endif()
   endforeach()
