@@ -4,6 +4,13 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "rpc_preparation.h"
+#include "../engine/rpc/rpc_lockstep.h"
+#if defined(ARCDROID_RPC_LOCKSTEP)
+uint64_t arc_rpc_lockstep_preparation_generation=0;
+#define ARC_RPC_PREPARATION_DIRTY() (++arc_rpc_lockstep_preparation_generation)
+#else
+#define ARC_RPC_PREPARATION_DIRTY() ((void)0)
+#endif
 #include "install_disc.h"
 #include "rpc_launch_helper.h"
 #include "rpc_launch_record_store.h"
@@ -17,6 +24,7 @@
 #endif
 uint64_t arc_riscpc_preparation_clock(void *opaque)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     (void)opaque;
 #if defined(_WIN32)
     LARGE_INTEGER v,f;
@@ -69,6 +77,7 @@ struct ArcRpcPreparation {
 };
 static const char *status(const ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcPreparationState state=p->state;
     if(state>=ARC_RPC_PREP_RECORD && p->receipted) return "Starting RiscPC";
     if (state <= ARC_RPC_PREP_RECOVER) return "Checking the RiscPC hard disc";
@@ -78,9 +87,11 @@ static const char *status(const ArcRpcPreparation *p)
     return "";
 }
 static void notice(ArcRpcPreparation *p,const char *s,bool terminal)
-{ if (p->host.notice) p->host.notice(p->host.opaque,s,terminal); }
+{
+    ARC_RPC_PREPARATION_DIRTY(); if (p->host.notice) p->host.notice(p->host.opaque,s,terminal); }
 static void refresh(ArcRpcPreparation *p,bool tick)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     const char *s=status(p);
     if (p->state >= ARC_RPC_PREP_RUNNING || p->refusal_reported) return;
     if (p->status != s || (tick && !p->notice_frames)) {
@@ -90,11 +101,13 @@ static void refresh(ArcRpcPreparation *p,bool tick)
 }
 static void snapshot_cmos(uint8_t payload[240])
 {
+    ARC_RPC_PREPARATION_DIRTY();
     uint8_t b[256],m[32];uint64_t w,l,now;unsigned s;
     arc_engine_rpc_evidence(b,m,&w,&l,&now,&s);memcpy(payload,b+16,240);
 }
 static void release(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(p->attempt.live)arc_riscpc_attempt_interrupt(&p->attempt,ARC_RPC_INTERRUPT_UNLOAD);
     p->retirement_pending=false;
     arc_engine_stop(); /* Detach IDE and both borrowed media before any free. */
@@ -108,6 +121,7 @@ static void release(ArcRpcPreparation *p)
 }
 static void failed(ArcRpcPreparation *p,const char *s)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     p->retirement_pending=false;
     if(p->attempt.live)arc_riscpc_attempt_interrupt(&p->attempt,ARC_RPC_INTERRUPT_FAULT);
     arc_engine_rpc_diagnostics();if(p->host.diagnostics)p->host.diagnostics(p->host.opaque);
@@ -120,10 +134,12 @@ static void failed(ArcRpcPreparation *p,const char *s)
 }
 static bool copied(char out[1024],const char *in)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     int n=snprintf(out,1024,"%s",in?in:"");return n>=0 && n<1024;
 }
 static void restart(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     p->launch_prepared=p->launch_captured=p->record_attempted=p->launch_unconfigured=false;
     memset(&p->record,0,sizeof(p->record));memset(&p->defaults,0,sizeof(p->defaults));
     p->state=ARC_RPC_PREP_VERIFY;p->substep=0;p->verify_at=0;p->crc=0;p->verified_catalogue=0;
@@ -134,6 +150,7 @@ static void restart(ArcRpcPreparation *p)
 static ArcRpcPreparation *begin(const ArcRpcPreparationRequest *r,
     const ArcRpcPreparationHost *h,bool low,char *e,size_t n)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(r && !r->firmware){
         if(e&&n)snprintf(e,n,"RISC OS %s firmware is missing; check <system>/arcdroid/firmware/",arc_riscpc_selection_os_name(r->selection.os));
         return NULL;
@@ -176,34 +193,42 @@ invalid:
     free(p->firmware);free(p);return NULL;
 }
 ArcRpcPreparation *arc_riscpc_preparation_begin(const ArcRpcPreparationRequest *r,const ArcRpcPreparationHost *h,char *e,size_t n)
-{ return begin(r,h,false,e,n); }
+{
+    ARC_RPC_PREPARATION_DIRTY(); return begin(r,h,false,e,n); }
 ArcRpcPreparation *arc_riscpc_preparation_low_level(const ArcRpcPreparationRequest *r,const ArcRpcPreparationHost *h,char *e,size_t n)
-{ return begin(r,h,true,e,n); }
+{
+    ARC_RPC_PREPARATION_DIRTY(); return begin(r,h,true,e,n); }
 static bool start(ArcRpcPreparation *p,bool factory)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     return arc_engine_rpc_start_begin(p->request.key.model,p->firmware,p->request.firmware_size,
         factory?NULL:p->seed,factory?ARC_RPC_CMOS_GENERATION_EPOCH:p->request.epoch,
         factory,p->error,sizeof(p->error));
 }
 static void record_begin(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(arc_riscpc_cmos_store_begin(&p->record,p->save,&p->request.key,p->error,sizeof(p->error))<0)failed(p,p->error);
     else p->state=ARC_RPC_PREP_RECORD;
 }
 static void after_cmos(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(p->needs_population){p->state=ARC_RPC_PREP_POPULATE;p->substep=0;}
     else {p->substep=0;p->state=ARC_RPC_PREP_START;}
 }
 static void save_record(ArcRpcPreparation *p,const uint8_t payload[240])
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!arc_riscpc_cmos_store_put_begin(&p->record,payload,NULL,p->error,sizeof(p->error)))failed(p,p->error);
     else p->state=ARC_RPC_PREP_SAVE_RECORD;
 }
 static void digest(const void *bytes,size_t n,uint8_t out[32])
-{ArcSha256 hash;arc_sha256_init(&hash);arc_sha256_update(&hash,bytes,n);arc_sha256_final(&hash,out);}
+{
+    ARC_RPC_PREPARATION_DIRTY();ArcSha256 hash;arc_sha256_init(&hash);arc_sha256_update(&hash,bytes,n);arc_sha256_final(&hash,out);}
 static bool product_read(void *opaque,uint32_t offset,void *out,size_t n)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcPreparation *p=opaque;
     for(unsigned i=0;i<p->product.count;++i)if(offset>=p->product.ranges[i].offset &&
         offset-p->product.ranges[i].offset<=p->product.ranges[i].size && n<=p->product.ranges[i].size-(offset-p->product.ranges[i].offset)){
@@ -214,6 +239,7 @@ static bool product_read(void *opaque,uint32_t offset,void *out,size_t n)
 /* 0 pending, 1 verified, -1 refused; one bounded read or pure discovery/unit. */
 static int product_step(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(p->launch.action!=ARC_RPC_PLAN_PRODUCT || p->product.verified)return 1;
     if(!p->product.bytes){
         if(!arc_riscpc_hd_identity(p->disc,&p->product.identity))return -1;
@@ -239,6 +265,7 @@ static int product_step(ArcRpcPreparation *p)
 }
 static bool launch_bindings(ArcRpcPreparation *p,ArcRpcBootKey *key)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcHdIdentity identity;
     if(!p->request.launch || !p->host.media_identity || !arc_riscpc_hd_identity(p->disc,&identity))return false;
     memset(key,0,sizeof(*key));key->cpu=p->request.key.model+1;key->plan_revision=2;key->profile_revision=ARC_RPC_LAUNCH_PROFILE_REVISION;key->action=p->launch.action;
@@ -258,6 +285,7 @@ static bool launch_bindings(ArcRpcPreparation *p,ArcRpcBootKey *key)
 }
 static bool launch_record_valid(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcHdIdentity identity;
     /* Firmware/plan are immutable copies. Relevant live CMOS excludes RTC.
      * Neither CMOS snapshot nor identity acquisition performs host I/O. */
@@ -272,13 +300,16 @@ static bool launch_record_valid(ArcRpcPreparation *p)
 }
 static void launch_revalidate(void *opaque)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcPreparation *p=opaque;bool valid=launch_record_valid(p);
     if(!valid)arc_riscpc_launch_record_discard(&p->observations);
 }
 static void launch_media_changed(void *opaque)
-{ArcRpcPreparation *p=opaque;p->launch_captured=false;arc_riscpc_launch_record_discard(&p->observations);}
+{
+    ARC_RPC_PREPARATION_DIRTY();ArcRpcPreparation *p=opaque;p->launch_captured=false;arc_riscpc_launch_record_discard(&p->observations);}
 static void launch_aborted(void *opaque,ArcRpcAttemptInterrupt reason)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcPreparation *p=opaque;
     if(reason!=ARC_RPC_INTERRUPT_SWAP_ROLLBACK)return;
     p->execution_barrier=true;p->launch_suppressed=true;p->launch_captured=false;
@@ -290,9 +321,11 @@ static void launch_aborted(void *opaque,ArcRpcAttemptInterrupt reason)
 /* This lease is preparation-owned, never queued observer work. The loaded
  * controller image remains intact for subsequent status validation. */
 static void launch_consumed(void *opaque)
-{ArcRpcPreparation *p=opaque;p->retirement_pending=true;}
+{
+    ARC_RPC_PREPARATION_DIRTY();ArcRpcPreparation *p=opaque;p->retirement_pending=true;}
 static bool launch_boundary(void *opaque)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     ArcRpcPreparation *p=opaque;
     if(!p->retirement_pending)return true;
     if(!p->generated_helper || !arc_riscpc_helper_build(p->generated_helper,ARC_RPC_HELPER_SIZE) ||
@@ -302,9 +335,11 @@ static bool launch_boundary(void *opaque)
     p->retirement_pending=false;return true;
 }
 static bool cmos_namespace(const ArcRpcCmosStore *s)
-{ return s->phase==0 || s->phase==12 || s->phase==14 || s->phase==15; }
+{
+    ARC_RPC_PREPARATION_DIRTY(); return s->phase==0 || s->phase==12 || s->phase==14 || s->phase==15; }
 static bool next_namespace(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     switch(p->state){
     case ARC_RPC_PREP_RECOVER:return !p->observations.ready?
         arc_riscpc_launch_record_namespace(&p->observations):p->disc && arc_riscpc_hd_next_namespace(p->disc,0);
@@ -327,6 +362,7 @@ static bool next_namespace(ArcRpcPreparation *p)
 }
 static void unit(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     bool done=false;
     switch(p->state){
     case ARC_RPC_PREP_VERIFY:{
@@ -558,6 +594,7 @@ static void unit(ArcRpcPreparation *p)
  * uses the ceiling; a valid clock replaces it with the last sixteen costs. */
 static unsigned cost_kind(const ArcRpcPreparation *p,bool advance)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(advance)return ARC_RPC_PREP_RUNNING;
     if(p->state==ARC_RPC_PREP_START && p->substep==2 && p->request.launch &&
         !p->launch_suppressed && p->launch.action==ARC_RPC_PLAN_PRODUCT && !p->product.verified)return ARC_RPC_PREP_PRODUCT_KIND;
@@ -570,12 +607,14 @@ static unsigned cost_kind(const ArcRpcPreparation *p,bool advance)
 }
 static uint64_t estimate(const ArcRpcPreparation *p,unsigned kind,bool ns,uint64_t ceiling)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     uint64_t cost=0;
     for(unsigned i=0;i<ARC_RPC_COST_SAMPLES;++i)if(p->costs[kind][ns][i]>cost)cost=p->costs[kind][ns][i];
     return cost && cost<ceiling?cost:ceiling;
 }
 ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || p->state>=ARC_RPC_PREP_RUNNING)return p?p->state:ARC_RPC_PREP_CANCELLED;
     uint64_t start_ns=p->host.clock(p->host.opaque),previous=start_ns,used=0,reserved=0;
     bool generation=p->state==ARC_RPC_PREP_GENERATE,faulty=false;
@@ -632,40 +671,51 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
     p->stats.state=p->state;return p->state;
 }
 ArcRpcPreparationState arc_riscpc_preparation_state(const ArcRpcPreparation *p)
-{ return p?p->state:ARC_RPC_PREP_CANCELLED; }
+{
+    ARC_RPC_PREPARATION_DIRTY(); return p?p->state:ARC_RPC_PREP_CANCELLED; }
 const char *arc_riscpc_preparation_error(const ArcRpcPreparation *p)
-{ return p?p->error:""; }
+{
+    ARC_RPC_PREPARATION_DIRTY(); return p?p->error:""; }
 void arc_riscpc_preparation_stats(const ArcRpcPreparation *p,ArcRpcPreparationStats *s)
-{ if(p&&s)*s=p->stats; }
+{
+    ARC_RPC_PREPARATION_DIRTY(); if(p&&s)*s=p->stats; }
 ArcRpcHdStore *arc_riscpc_preparation_disc(ArcRpcPreparation *p)
-{ return p?p->disc:NULL; }
+{
+    ARC_RPC_PREPARATION_DIRTY(); return p?p->disc:NULL; }
 bool arc_riscpc_preparation_helper_override(ArcRpcPreparation *p,const ArcEngineMedia *view)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || !p->request.helper_override || p->state!=ARC_RPC_PREP_START || !view)return false;
     if(view->path && !copied(p->helper_path,view->path))return false;
     p->helper=*view;if(view->path)p->helper.path=p->helper_path;p->request.helper=&p->helper;return true;
 }
 bool arc_riscpc_preparation_helper_write_policy(ArcRpcPreparation *p,bool writable)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || !p->execution_barrier || p->state!=ARC_RPC_PREP_RUNNING)return false;
     if(p->request.helper_override && p->request.helper)p->helper.writable=writable;
     return true;
 }
 void arc_riscpc_preparation_attempt(const ArcRpcPreparation *p,ArcRpcLaunchAttempt *out)
-{if(out){if(p)*out=p->attempt;else memset(out,0,sizeof(*out));}}
+{
+    ARC_RPC_PREPARATION_DIRTY();if(out){if(p)*out=p->attempt;else memset(out,0,sizeof(*out));}}
 bool arc_riscpc_preparation_execution_allowed(const ArcRpcPreparation *p)
-{return p && p->state==ARC_RPC_PREP_RUNNING && !p->execution_barrier && arc_engine_active() && arc_engine_is_rpc();}
+{
+    ARC_RPC_PREPARATION_DIRTY();return p && p->state==ARC_RPC_PREP_RUNNING && !p->execution_barrier && arc_engine_active() && arc_engine_is_rpc();}
 bool arc_riscpc_preparation_observation(ArcRpcPreparation *p,ArcRpcBootRecord *out)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || !out || !p->observations.have_old || !launch_record_valid(p) ||
         !arc_riscpc_boot_record_matches(&p->observations.old,&p->launch_key)){
         if(p)arc_riscpc_launch_record_discard(&p->observations);return false;
     }*out=p->observations.old;return true;
 }
 void arc_riscpc_preparation_interrupt(ArcRpcPreparation *p,ArcRpcAttemptInterrupt reason)
-{if(p && p->attempt.live){arc_riscpc_attempt_interrupt(&p->attempt,reason);p->launch_captured=false;}}
+{
+    ARC_RPC_PREPARATION_DIRTY();if(p && p->attempt.live){arc_riscpc_attempt_interrupt(&p->attempt,reason);p->launch_captured=false;}}
 bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p)return false;
     notice(p,"",false);
     p->execution_barrier=true;p->launch_suppressed=true;
@@ -703,15 +753,18 @@ bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
     return true;
 }
 void arc_riscpc_preparation_cancel(ArcRpcPreparation *p)
-{ if(p){notice(p,"",false);release(p);p->state=ARC_RPC_PREP_CANCELLED;p->status=NULL;} }
+{
+    ARC_RPC_PREPARATION_DIRTY(); if(p){notice(p,"",false);release(p);p->state=ARC_RPC_PREP_CANCELLED;p->status=NULL;} }
 bool arc_riscpc_preparation_persist(ArcRpcPreparation *p,char *e,size_t n)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || p->state!=ARC_RPC_PREP_RUNNING || !arc_engine_is_rpc() || !arc_engine_active())return true;
     uint8_t payload[240];snapshot_cmos(payload);
     return arc_riscpc_cmos_store_put(&p->record,payload,NULL,e,n);
 }
 void arc_riscpc_preparation_maintenance(ArcRpcPreparation *p)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || p->state!=ARC_RPC_PREP_RUNNING)return;
     const char *fault=NULL;if(arc_engine_faulted(&fault)){
         failed(p,fault&&*fault?fault:"RiscPC session faulted");return;}
@@ -739,6 +792,7 @@ void arc_riscpc_preparation_maintenance(ArcRpcPreparation *p)
 }
 bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p)return true;
     bool ok=true;
     if(p->state==ARC_RPC_PREP_RUNNING && arc_engine_active()){
@@ -757,8 +811,17 @@ bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
 }
 bool arc_riscpc_preparation_pacing(ArcRpcPreparation *p,unsigned quanta)
 {
+    ARC_RPC_PREPARATION_DIRTY();
     if(!p || (quanta!=1 && quanta!=8) || p->state>ARC_RPC_PREP_GENERATE)return false;
     if(p->state==ARC_RPC_PREP_GENERATE){uint8_t b[256],m[32];uint64_t w,l,now;unsigned s;
         arc_engine_rpc_evidence(b,m,&w,&l,&now,&s);if(now)return false;}
     p->pacing=quanta;return true;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+/* Pure owning-TU read: foreign test bindings have no preparation obligation. */
+bool arc_rpc_lockstep_retirement_pending(const void *opaque,bool (*boundary)(void *))
+{
+    return opaque && boundary==launch_boundary && ((const ArcRpcPreparation *)opaque)->retirement_pending;
+}
+#endif

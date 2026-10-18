@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -18,6 +19,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed; D1 line scanout and clipping-independent DMA. */
 
 
@@ -31,6 +34,7 @@
    ARM 7500FE Datasheet - ARM DDI 0077B
    Cirrus Logic CL-PS7500FE Advance Data Book
 */
+#include "rpc_lockstep.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -86,15 +90,18 @@ static bool control_written, line_armed, begun, new_field, clip_pending;
 
 static uint32_t rgb(uint32_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     return 0xff000000u | ((value & 255u) << 16) |
         (value & 0xff00u) | ((value >> 16) & 255u);
 }
 static bool interlace(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     return machine.model != Model_A7000 && (vidc.control & 0x1000u);
 }
 static void pixel_clock(uint64_t *num, uint64_t *den)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     *num = machine.model == Model_A7000 ? 32000000u : 24000000u;
     *den = 1;
     if (!(vidc.control & 3u)) {
@@ -110,6 +117,7 @@ static void pixel_clock(uint64_t *num, uint64_t *den)
 }
 static void video_arm_line(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     unsigned source = vidc.control & 3u;
     /* Unconnected HCLK/reserved clock has no edges. Powerdown suppresses
      * data, not the raster counters. Starting/stopping a clock is explicit. */
@@ -131,6 +139,7 @@ static void video_arm_line(void)
 }
 static void crop_grow(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     int w = (int)vidc.hder - xorigin, h = (int)vidc.vder + 1 - yorigin;
     if (w > (int)crop_width) crop_width = (unsigned)w;
     if (h > (int)crop_height) crop_height = (unsigned)h;
@@ -140,6 +149,7 @@ static void crop_grow(void)
 }
 static void begin_field(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     xorigin = (int)vidc.hdsr; yorigin = (int)vidc.vdsr + 1;
     crop_width = crop_height = 0; crop_grow();
     initial_border = rgb(vidc.border_colour);
@@ -149,10 +159,13 @@ static void begin_field(void)
 }
 static bool active(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     return raster >= vidc.vdsr + 1u && raster < vidc.vder + 1u;
 }
 static void dma_reload(bool init)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     if (init) iomd.vidcur = iomd.vidinit & 0x1ffffff0u;
     serial_quad = iomd.vidcur; bit_offset = 0;
     unsigned inc = (iomd.vidcr & 31u) * 256u;
@@ -162,6 +175,7 @@ static void dma_reload(bool init)
 }
 void arc_rpc_video_dma_write(unsigned reg)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     if (reg == 0x1d0) dma_reload(false);
     if (reg == 0x1dc && !active()) {
         dma_reload(true);
@@ -170,6 +184,7 @@ void arc_rpc_video_dma_write(unsigned reg)
 /* DMA reads only the memory aperture: never MMIO or a host service. */
 static uint32_t dma_word(uint32_t address)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     const uint32_t *page = arc_rpc_phys_page(address);
     return page ? page[(address & 1023u) >> 2] : UINT32_MAX;
 }
@@ -180,6 +195,7 @@ static uint32_t dma_word(uint32_t address)
 typedef struct { uint32_t address, word; bool valid; } DmaSample;
 static uint32_t dma_sample(uint32_t address, DmaSample *sample)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     address &= ~3u;
     if (!sample->valid || sample->address != address) {
         sample->address = address; sample->word = dma_word(address); sample->valid = true;
@@ -188,6 +204,7 @@ static uint32_t dma_sample(uint32_t address, DmaSample *sample)
 }
 static void palette_word(uint32_t *dest, uint32_t word)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     if (!((word ^ (word >> 8)) & 0xffffffu)) {
         uint32_t colour = 0xff000000u | vidc.rgb_palette[word & 255u];
         dest[0] = dest[1] = dest[2] = dest[3] = colour;
@@ -200,11 +217,14 @@ static void palette_word(uint32_t *dest, uint32_t word)
 }
 static bool dma_dram(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     return machine.iomd_type == IOMDType_ARM7500 ||
         machine.iomd_type == IOMDType_ARM7500FE || (iomd.vidcr & 0x40u);
 }
 static uint32_t next_quad(uint32_t address, unsigned *transfers)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     if (dma_dram()) {
         ++*transfers;
         uint32_t next = (address + 16u) & 0x1fffffffu;
@@ -231,6 +251,7 @@ static uint32_t next_quad(uint32_t address, unsigned *transfers)
 }
 static void scan_line(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     static const unsigned depths[8] = {1,2,4,8,16,0,32,0};
     crop_grow();
     int row = (int)raster - yorigin;
@@ -361,6 +382,7 @@ static void scan_line(void)
 }
 void initvideo(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     memset(&vidc, 0, sizeof(vidc)); memset(dirty, 0xff, sizeof(dirty));
     memset(&video, 0, sizeof(video)); memset(rows, 0, sizeof(rows));
     raster = bit_offset = serial_quad = 0; vram_last = false; line_fraction = fraction_clock = 0;
@@ -370,11 +392,19 @@ void initvideo(void)
 }
 void closevideo(void)
 {
-    arc_rpc_event_cancel(ARC_RPC_EVENT_VIDEO); free(presentation); presentation = NULL;
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
+    arc_rpc_event_cancel(ARC_RPC_EVENT_VIDEO);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    arc_rpc_lockstep_free(presentation);
+#else
+    free(presentation);
+#endif
+ presentation = NULL;
     line_armed = false; memset(&video, 0, sizeof(video));
 }
 void arc_rpc_video_event(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     line_armed = false;
     if (!begun || new_field) begin_field();
     raster = (raster + 1u) % (vidc.vcycle + 2u);
@@ -404,21 +434,30 @@ void arc_rpc_video_event(void)
     video_arm_line();
 }
 uint32_t arc_rpc_video_current(void)
-{ return iomd.vidcur | (!dma_dram() && vram_last ? 0x40000000u : 0); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); return iomd.vidcur | (!dma_dram() && vram_last ? 0x40000000u : 0); }
 void arc_rpc_video_status(ArcRpcVideoStatus *out)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     *out = video; out->raster = raster; out->vidcur = arc_rpc_video_current(); out->bit_offset = bit_offset;
 }
-const uint32_t *arc_rpc_video_pixels(void) { return video.width && video.height ? presentation : NULL; }
-bool arc_rpc_video_take_clip(void) { bool pending = clip_pending; clip_pending = false; return pending; }
-int vidc_get_xsize(void) { return vidc.hder >= vidc.hdsr ? (int)(vidc.hder - vidc.hdsr) : 0; }
-int vidc_get_ysize(void) { return vidc.vder >= vidc.vdsr ? (int)(vidc.vder - vidc.vdsr) : 0; }
-void vidc_get_doublesize(int *x, int *y) { *x = *y = 0; }
-void drawscr(void) { }
+const uint32_t *arc_rpc_video_pixels(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); return video.width && video.height ? presentation : NULL; }
+bool arc_rpc_video_take_clip(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); bool pending = clip_pending; clip_pending = false; return pending; }
+int vidc_get_xsize(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); return vidc.hder >= vidc.hdsr ? (int)(vidc.hder - vidc.hdsr) : 0; }
+int vidc_get_ysize(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); return vidc.vder >= vidc.vdsr ? (int)(vidc.vder - vidc.vdsr) : 0; }
+void vidc_get_doublesize(int *x, int *y) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); *x = *y = 0; }
+void drawscr(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20)); }
 
 void
 writevidc20(uint32_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
 	int index;
 
 	switch (val >> 28) {
@@ -604,5 +643,19 @@ writevidc20(uint32_t val)
 void
 resetbuffer(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
 	memset(dirtybuffer, 0xff, 512 * 4);
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_vidc20
+void arc_rpc_lockstep_video_output(void)
+{
+    unsigned width=video.width,height=video.height;
+    arc_rpc_lockstep_output_word(width);arc_rpc_lockstep_output_word(height);
+    /* Only the published rectangle is initialized and future-output live.
+     * Untouched rows outside it must never be read from malloc storage. */
+    if(presentation)for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x)
+        arc_rpc_lockstep_output_word(presentation[(size_t)y*ARC_RPC_VIDEO_LIMIT+x]);
+}
+#endif

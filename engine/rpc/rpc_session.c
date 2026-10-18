@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): mirror outer advance locals only in the lockstep class. */
 /* ArcDroid contained RPCEmu backend. GPL-2.0-only.
  * Logging callbacks run only after protected guest execution returns. Device/CPU
  * entries have a live non-returning fault boundary. Unsupported entries touch no guest
@@ -5,6 +6,7 @@
 #include "engine_backend.h"
 #include "rpc_session.h"
 #include "rpc_profile.h"
+#include "rpc_lockstep.h"
 #include "rpc_observer.h"
 #include "rpc_observers.h"
 #include "rpc_timing.h"
@@ -98,10 +100,20 @@ RETRO_API unsigned arc_rpc_test_capabilities(void)
 #if defined(ARCDROID_RPC_PROFILE)
     caps|=ARC_RPC_TEST_RANKING;
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    caps|=ARC_RPC_TEST_LOCKSTEP;
+#endif
     return caps;
 }
 RETRO_API const char *arc_rpc_test_refusal(void) { return arc_rpc_refused; }
 bool arc_rpc_test_refuse(const char *facility) { arc_rpc_refused=facility;return false; }
+#if !defined(ARCDROID_RPC_LOCKSTEP)
+RETRO_API bool arc_rpc_test_lockstep_sink(ArcRpcLockstepSink sink, void *opaque, const ArcRpcLockstepConfig *config)
+{ (void)sink;(void)opaque;(void)config;return arc_rpc_test_refuse("lockstep stream"); }
+RETRO_API const char *arc_rpc_test_lockstep_status(void)
+{ arc_rpc_test_refuse("lockstep stream");return "lockstep stream unavailable"; }
+RETRO_API bool arc_rpc_test_lockstep_end(void) { return arc_rpc_test_refuse("lockstep stream"); }
+#endif
 #endif
 
 void *arc_rpc_alloc(size_t bytes)
@@ -110,7 +122,11 @@ void *arc_rpc_alloc(size_t bytes)
 #if defined(ARCDROID_TEST_FAULTS)
     if (arc_rpc_allocations == arc_rpc_fail_alloc) return NULL;
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    void *allocation = arc_rpc_lockstep_alloc(bytes);
+#else
     void *allocation = malloc(bytes);
+#endif
     if (allocation) ++arc_rpc_live_allocations;
     return allocation;
 }
@@ -120,6 +136,8 @@ void fatal(const char *format, ...)
     va_start(args, format);
     vsnprintf(arc_rpc_fault_text, sizeof(arc_rpc_fault_text), format, args);
     va_end(args);
+    ARC_RPC_LOCKSTEP(fatal(format,arc_rpc_fault_text));
+    ARC_RPC_LOCKSTEP(fatal_guard());
     arc_rpc_fault = true;
     ARC_RPC_PROFILE(fault());
     arc_rpc_observer_retire(false);
@@ -152,6 +170,7 @@ ARC_RPC_ABSENT_WRITE(8) ARC_RPC_ABSENT_WRITE(16) ARC_RPC_ABSENT_WRITE(32)
 
 static void arc_rpc_stop(void)
 {
+    ARC_RPC_LOCKSTEP(epoch_begin());
     arc_rpc_observer_retire(false);
     arc_rpc_observers_retire();
     ARC_RPC_PROFILE(reset());
@@ -175,6 +194,7 @@ static void arc_rpc_stop(void)
     arc_rpc_firmware_valid=false;
     arc_rpc_live = false;arc_rpc_start_pending=false;arc_rpc_start_rom=NULL;
     arc_rpc_cpu_idle = false;
+    ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,false));
 }
 static void arc_rpc_reset_devices(void)
 {
@@ -218,6 +238,7 @@ bool arc_rpc_session_start_begin(ArcRpcModel model, const uint8_t *bytes, size_t
     const uint8_t seed[256], uint64_t epoch, bool factory, char *failure, size_t failure_size)
 {
     ArcRpcCalendar calendar;
+    ARC_RPC_LOCKSTEP(epoch_begin());
     arc_rpc_stop();
     arc_rpc_fault = false;
     arc_rpc_fault_text[0] = 0;
@@ -226,11 +247,13 @@ bool arc_rpc_session_start_begin(ArcRpcModel model, const uint8_t *bytes, size_t
         (size != 2u*1024u*1024u && size != 4u*1024u*1024u && size != 8u*1024u*1024u) ||
         !arc_rpc_calendar(epoch, 0, &calendar)) {
         if (failure && failure_size) snprintf(failure, failure_size, "Invalid RPC model, ROM, CMOS seed or RTC epoch");
+        ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,false));
         return false;
     }
     if (setjmp(arc_rpc_jump)) {
         arc_rpc_stop();
         if (failure && failure_size) snprintf(failure, failure_size, "%s", arc_rpc_fault_text);
+        ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,false));
         return false;
     }
     memset(&config, 0, sizeof(config));
@@ -259,7 +282,8 @@ bool arc_rpc_session_start_step(bool *done,char *failure,size_t failure_size)
     *done=false;
     if(!arc_rpc_start_pending)return false;
     if(setjmp(arc_rpc_jump)){
-        arc_rpc_stop();if(failure&&failure_size)snprintf(failure,failure_size,"%s",arc_rpc_fault_text);return false;
+        arc_rpc_stop();if(failure&&failure_size)snprintf(failure,failure_size,"%s",arc_rpc_fault_text);
+        ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,false));return false;
     }
     arc_rpc_inject_entry();
     /* Hash exactly the actual copied image, incrementally within the existing
@@ -273,6 +297,7 @@ bool arc_rpc_session_start_step(bool *done,char *failure,size_t failure_size)
         arc_rpc_firmware_digest.crc32=arc_crc32_append(arc_rpc_firmware_digest.crc32,copied,take);
     }
     if(!prepared)return true;
+    ARC_RPC_LOCKSTEP(prepared(true));
     arc_sha1_final(&arc_rpc_firmware_hash,arc_rpc_firmware_digest.sha1);arc_rpc_firmware_valid=true;
     arc_rpc_cmos_seed(arc_rpc_start_seed);
     arc_rpc_cmos_set_write_clock(arc_rpc_cmos_clock);arc_rpc_reset_devices();arc_rpc_sound_reset(true);
@@ -281,6 +306,7 @@ bool arc_rpc_session_start_step(bool *done,char *failure,size_t failure_size)
         arc_rpc_input_factory(true);
     }
     arc_rpc_start_pending=false;arc_rpc_start_rom=NULL;arc_rpc_live=true;++arc_rpc_generation;*done=true;
+    ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,true));
     if(failure&&failure_size)*failure=0;return true;
 }
 bool arc_rpc_session_start(ArcRpcModel model,const uint8_t *bytes,size_t size,
@@ -325,8 +351,10 @@ static bool arc_rpc_reset(char *failure, size_t failure_size)
             arc_rpc_fault ? arc_rpc_fault_text : "RPC session inactive");
         return false;
     }
+    ARC_RPC_LOCKSTEP(epoch_begin());
     if (setjmp(arc_rpc_jump)) {
         if (failure && failure_size) snprintf(failure, failure_size, "%s", arc_rpc_fault_text);
+        ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,arc_rpc_live));
         return false;
     }
     arc_rpc_observer_retire(true);
@@ -339,6 +367,7 @@ static bool arc_rpc_reset(char *failure, size_t failure_size)
     if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING || arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)
         arc_rpc_capture.state=ARC_RPC_CAPTURE_CANCELLED;
     if (failure && failure_size) failure[0] = 0;
+    ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,true));
     return true;
 }
 
@@ -362,9 +391,9 @@ static void arc_rpc_deliver(ArcRpcEvent event)
     switch (event) {
     case ARC_RPC_EVENT_TIMER0: arc_rpc_iomd_timer_event(0); break;
     case ARC_RPC_EVENT_TIMER1: arc_rpc_iomd_timer_event(1); break;
-    case ARC_RPC_EVENT_KEYBOARD: kcallback = 0; keyboard_callback_rpcemu(); break;
-    case ARC_RPC_EVENT_MOUSE: mcallback = 0; mouse_ps2_callback(); break;
-    case ARC_RPC_EVENT_FDC: fdccallback = 0; fdc_callback(); break;
+    case ARC_RPC_EVENT_KEYBOARD: ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard)); kcallback = 0; keyboard_callback_rpcemu(); break;
+    case ARC_RPC_EVENT_MOUSE: ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard)); mcallback = 0; mouse_ps2_callback(); break;
+    case ARC_RPC_EVENT_FDC: ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdccallback = 0; fdc_callback(); break;
     case ARC_RPC_EVENT_IDE: callbackide(); break;
     case ARC_RPC_EVENT_VIDEO: arc_rpc_video_event(); break;
     case ARC_RPC_EVENT_SOUND: arc_rpc_sound_event(); break;
@@ -412,6 +441,7 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
         uint64_t now = arc_rpc_scheduler.now_ns;
         ArcRpcEvent event;
         bool completed = false;
+        ARC_RPC_LOCKSTEP(driver(limit,event_work,video_start.pixels,video_start.fields,completed,stop_at_field));
         /* Deliver all tied devices before completion/release, arbitration or
          * new issue, including deadlines created by a handler at this instant. */
         while (arc_rpc_take_event(&arc_rpc_scheduler, now, &event)) {
@@ -427,7 +457,12 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
         arc_rpc_mem_idle(arc_rpc_cpu_idle);
         arc_rpc_mem_run(now);
         if (arc_rpc_mem_ready(arc_rpc_cpu_idle)) {
-            if (instruction_work == 1666667u) fatal("RPC instruction budget exceeded");
+            ARC_RPC_LOCKSTEP(driver(limit,event_work,video_start.pixels,video_start.fields,completed,stop_at_field));
+            if (instruction_work == 1666667u
+#if defined(ARCDROID_RPC_LOCKSTEP)
+                || arc_rpc_lockstep_inject(3)
+#endif
+            ) fatal("RPC instruction budget exceeded");
             unsigned quota = 1666667u - instruction_work;
             if (quota > 200u) quota = 200u;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -435,6 +470,7 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 #endif
             if (completed) quota = 1u;
             ArcRpcCpuBatch batch = { &arc_rpc_scheduler, &arc_rpc_bus_until, limit };
+            ARC_RPC_LOCKSTEP(batch(arc_rpc_executed,instruction_work,false));
             unsigned executed = (unsigned)arc_rpc_arm_exec_batch(quota, &batch);
             instruction_work += executed; arc_rpc_executed += executed;
             /* Yield even when service is empty: MMIO may have armed a device
@@ -459,7 +495,14 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
             if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
             arc_rpc_mem_idle(arc_rpc_cpu_idle);
             if (arc_rpc_mem_ready(arc_rpc_cpu_idle)) {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+                ++instruction_work;
+                ARC_RPC_LOCKSTEP(driver(limit,event_work,video_start.pixels,video_start.fields,completed,stop_at_field));
+                arc_rpc_lockstep_batch(arc_rpc_executed,instruction_work,true);
+                arc_rpc_executed += (unsigned)arc_rpc_arm_exec_batch(1,NULL);
+#else
                 ++instruction_work; arc_rpc_executed += (unsigned)arc_rpc_arm_exec_batch(1, NULL);
+#endif
             }
         }
     }
@@ -481,6 +524,7 @@ static bool arc_rpc_advance(uint64_t ns,bool field)
     if(ns>16666667u || arc_rpc_scheduler.now_ns>UINT64_MAX-ns)return false;
     uint64_t end=arc_rpc_scheduler.now_ns+ns;
     ArcRpcVideoStatus before,after;arc_rpc_video_status(&before);
+    ARC_RPC_LOCKSTEP(service(end,field,before.fields));
     do {
         if(!arc_rpc_observers_boundary())return false;
         if(!arc_rpc_advance_internal(end-arc_rpc_scheduler.now_ns,field))return false;
@@ -534,6 +578,7 @@ static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
     }
     arc_rpc_observers_frame(arc_rpc_scheduler.now_ns/1000u);
     arc_rpc_observer_drain();
+    ARC_RPC_LOCKSTEP(frame());
     /* Logs/callbacks occur only after leaving the protected guest stack. */
     if (arc_rpc_logger && arc_rpc_video_take_clip())
         arc_rpc_logger(arc_rpc_logger_opaque, "RPC video clipped to 2048x2048; guest scanout unchanged.\n");
@@ -649,11 +694,13 @@ void arc_rpc_session_test_input_ready(void) { arc_rpc_input_retire=false; }
 void arc_rpc_session_test_rate(unsigned rate)
 {
     if (rate && rate <= 100 && arc_rpc_live && !arc_rpc_scheduler.now_ns) {
+        ARC_RPC_LOCKSTEP(epoch_begin());
         arc_rpc_rate = rate; arc_rpc_scheduler_rate(&arc_rpc_scheduler, rate);
         unsigned model = machine.cpu_model == CPUModel_ARM610 ? 0 :
             machine.cpu_model == CPUModel_ARM710 ? 1 : machine.cpu_model == CPUModel_SA110 ? 2 : 3;
         arc_rpc_mem_bind(&arc_rpc_scheduler, model, rate);
         arc_rpc_mem_control(cp15_read(0xee110f10));
+        ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_generation,true));
     }
 }
 RETRO_API void arc_rpc_test_cmos_snapshot(uint8_t *out) { if(out)arc_rpc_cmos_snapshot(out); }
@@ -694,4 +741,8 @@ RETRO_API bool arc_rpc_test_read_ram(unsigned offset,uint32_t *out)
     if(!arc_rpc_live||arc_rpc_fault||!out||offset>=32u*1024u*1024u||(offset&3))return false;
     *out=ram00[offset/4];return true;
 }
+#endif
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_session
 #endif

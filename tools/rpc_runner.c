@@ -10,6 +10,7 @@
 #include "rpc_session.h"
 #include "arc_test_plan.h"
 #include "rpc_observer.h"
+#include "rpc_lockstep.h"
 #if defined(ARCDROID_RPC_PROFILE)
 #include "rpc_profile_json.h"
 #endif
@@ -97,6 +98,30 @@ static uint64_t runner_frame;
 #define PAD_EVENT_LIMIT 1024u
 static struct { uint64_t frame, mask; } pad_events[PAD_EVENT_LIMIT];
 static unsigned pad_event_count, pad_next;
+static FILE *lockstep_file;
+static uint64_t lockstep_stop=UINT64_MAX;
+static uint64_t lockstep_stop_generation,lockstep_stop_epoch;
+static bool lockstep_reached;
+static uint64_t lockstep_bytes,lockstep_max_bytes=UINT64_MAX;
+static uint64_t lockstep_word(const uint8_t *p)
+{ uint64_t n=0;for(unsigned i=0;i<8;++i)n|=(uint64_t)p[i]<<(8*i);return n; }
+static bool lockstep_sink(void *opaque,const void *data,size_t size)
+{
+    FILE *file=opaque;const uint8_t *p=data;
+    if(size>lockstep_max_bytes-lockstep_bytes)return false;lockstep_bytes+=size;
+    if(size>=53 && (p[0]==1 || p[0]==2) && lockstep_word(p+21)>=lockstep_stop &&
+        (!lockstep_stop_generation || lockstep_word(p+5)==lockstep_stop_generation) &&
+        (!lockstep_stop_epoch || lockstep_word(p+13)==lockstep_stop_epoch))lockstep_reached=true;
+    return fwrite(data,1,size,file)==size;
+}
+static bool lockstep_hash(const char *s,uint8_t out[32])
+{
+    if(strlen(s)!=64)return false;
+    for(unsigned i=0;i<32;++i){unsigned n=0;for(unsigned j=0;j<2;++j){
+        unsigned c=(unsigned char)s[i*2+j];unsigned v=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:16;
+        if(v==16)return false;n=n*16+v;}out[i]=(uint8_t)n;}
+    return true;
+}
 static uint16_t pad_mask;
 static uint32_t *dump_pixels;
 static bool dump_failed,runner_preparing;
@@ -237,6 +262,10 @@ int main(int argc, char **argv)
 #endif
     bool reject = false, print_cmos = false, print_exercise=false, print_ranking=false, endpoint_request=false;
     uint64_t prefix_last=0;bool prefix_single=false;
+    const char *lockstep_path=NULL;
+    ArcRpcLockstepConfig lockstep={.version=1,.size=sizeof(ArcRpcLockstepConfig),.seed=1,
+        .detail_last=UINT64_MAX,.stop_after=UINT64_MAX};
+    const char *(*lockstep_status)(void)=NULL;bool (*lockstep_end)(void)=NULL;
     uint64_t measure_first=0,measure_last=0;unsigned measure_drained=0;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
     uint64_t preparation_reset_at=UINT64_MAX, reset_stage_frame=2600;
@@ -274,6 +303,58 @@ int main(int argc, char **argv)
         if (i+1 == argc) goto usage;
         const char *v = argv[++i];
         if (!strcmp(key,"--core")) core = v;
+        else if (!strcmp(key,"--lockstep-stream")) lockstep_path=v;
+        else if (!strcmp(key,"--lockstep-density")) {
+            lockstep.flags&=~(ARC_RPC_LOCKSTEP_EVERY|ARC_RPC_LOCKSTEP_AUDIT);
+            if(!strcmp(v,"baseline")){}
+            else if(!strcmp(v,"every-instruction"))lockstep.flags|=ARC_RPC_LOCKSTEP_EVERY;
+            else if(!strcmp(v,"full-audit"))lockstep.flags|=ARC_RPC_LOCKSTEP_AUDIT;
+            else goto usage;
+        }
+        else if (!strcmp(key,"--lockstep-role")) {
+            if(!strcmp(v,"baseline"))lockstep.flags|=ARC_RPC_LOCKSTEP_BASELINE;
+            else if(!strcmp(v,"candidate"))lockstep.flags&=~ARC_RPC_LOCKSTEP_BASELINE;
+            else goto usage;
+        }
+        else if (!strcmp(key,"--lockstep-mode")) {
+            static const char *const modes[]={"strict","cross-quota","guest-output","trace-toggle"};
+            unsigned m;for(m=0;m<4 && strcmp(v,modes[m]);++m){}
+            if(m==4)goto usage;lockstep.flags=(lockstep.flags&255u)|(m<<8);
+        }
+        else if (!strcmp(key,"--lockstep-p1")) {
+            if(!strcmp(v,"off"))lockstep.flags|=ARC_RPC_LOCKSTEP_P1_OFF;
+            else if(!strcmp(v,"on"))lockstep.flags&=~ARC_RPC_LOCKSTEP_P1_OFF;else goto usage;
+        }
+        else if (!strcmp(key,"--lockstep-cache")) {
+            if(!strcmp(v,"off"))lockstep.flags|=ARC_RPC_LOCKSTEP_NO_CACHE;
+            else if(!strcmp(v,"on"))lockstep.flags&=~ARC_RPC_LOCKSTEP_NO_CACHE;else goto usage;
+        }
+        else if (!strcmp(key,"--lockstep-detail")) {
+            char range[64];if(strlen(v)>=sizeof(range))goto usage;strcpy(range,v);char *last=strchr(range,':');
+            if(!last)goto usage;*last++=0;
+            if(!unsigned_number(range,UINT64_MAX,&lockstep.detail_first) || !unsigned_number(last,UINT64_MAX,&lockstep.detail_last) || lockstep.detail_first>lockstep.detail_last)goto usage;
+            lockstep.flags|=ARC_RPC_LOCKSTEP_DETAIL;
+        }
+        else if (!strcmp(key,"--lockstep-stop-after")) {if(!unsigned_number(v,UINT64_MAX,&lockstep_stop))goto usage;}
+        else if (!strcmp(key,"--lockstep-key-context")) {
+            char context[64];if(strlen(v)>=sizeof(context))goto usage;strcpy(context,v);char *epoch=strchr(context,':');
+            if(!epoch)goto usage;*epoch++=0;
+            if(!unsigned_number(context,UINT64_MAX,&lockstep.detail_generation) || !unsigned_number(epoch,UINT64_MAX,&lockstep.detail_epoch))goto usage;
+            lockstep_stop_generation=lockstep.detail_generation;lockstep_stop_epoch=lockstep.detail_epoch;
+        }
+        else if (!strcmp(key,"--lockstep-seed")) {if(!unsigned_number(v,UINT64_MAX,&lockstep.seed))goto usage;}
+        else if (!strcmp(key,"--lockstep-max-bytes")) {if(!unsigned_number(v,UINT64_MAX,&lockstep_max_bytes))goto usage;}
+        else if (!strcmp(key,"--lockstep-allocation-shift")) {uint64_t n;if(!unsigned_number(v,1024,&n))goto usage;lockstep.allocation_shift=(uint32_t)n;}
+        else if (!strcmp(key,"--lockstep-model")) {uint64_t m;if(!unsigned_number(v,3,&m))goto usage;lockstep.model=(uint32_t)m;}
+        else if (!strcmp(key,"--lockstep-plan-hash")) {if(!lockstep_hash(v,lockstep.plan))goto usage;}
+        else if (!strcmp(key,"--lockstep-schedule-hash")) {if(!lockstep_hash(v,lockstep.schedule))goto usage;}
+        else if (!strcmp(key,"--lockstep-configuration-hash")) {if(!lockstep_hash(v,lockstep.configuration))goto usage;}
+        else if (!strcmp(key,"--lockstep-inject")) {
+            char range[64];if(strlen(v)>=sizeof(range))goto usage;strcpy(range,v);char *last=strchr(range,':');
+            if(!last)goto usage;*last++=0;uint64_t kind;
+            if(!unsigned_number(range,3,&kind) || !kind || !unsigned_number(last,UINT64_MAX,&lockstep.inject_k))goto usage;
+            lockstep.inject_kind=(uint32_t)kind;
+        }
         else if (!strcmp(key,"--plan")) plan = v;
         else if (!strcmp(key,"--save")) { if(!canonical(v,save_directory) || !(vfs_stat(save_directory,NULL)&RETRO_VFS_STAT_IS_DIRECTORY)){fprintf(stderr,"--save must name an existing directory\n");return 2;} }
         else if (!strcmp(key,"--system")) system_directory = v;
@@ -354,6 +435,18 @@ int main(int argc, char **argv)
     void *caps_symbol=symbol("arc_rpc_test_capabilities");if(caps_symbol){memcpy(&test_caps,&caps_symbol,sizeof(test_caps));core_test_caps=test_caps();}
     const char *(*refusal)(void)=NULL;
     void *refusal_symbol=symbol("arc_rpc_test_refusal");if(refusal_symbol)memcpy(&refusal,&refusal_symbol,sizeof(refusal));
+    if(lockstep_path){
+        bool (*attach)(ArcRpcLockstepSink,void *,const ArcRpcLockstepConfig *);
+        LOAD(attach,"arc_rpc_test_lockstep_sink");LOAD(lockstep_status,"arc_rpc_test_lockstep_status");LOAD(lockstep_end,"arc_rpc_test_lockstep_end");
+        if(!(core_test_caps&ARC_RPC_TEST_LOCKSTEP)){
+            (void)attach(NULL,NULL,&lockstep);fprintf(stderr,"Core refuses %s\n",refusal&&refusal()?refusal():"lockstep stream");
+            deinit();vfs_assert_no_open_handles();return 2;
+        }
+        lockstep_file=fopen(lockstep_path,"wb");
+        if(!lockstep_file || !attach(lockstep_sink,lockstep_file,&lockstep)){
+            fprintf(stderr,"Lockstep stream could not be attached\n");if(lockstep_file)fclose(lockstep_file);deinit();return 2;
+        }
+    }
     if (fail_alloc) {
         void (*inject)(unsigned); LOAD(inject,"arc_rpc_test_fail_alloc"); inject((unsigned)fail_alloc);
     }
@@ -478,6 +571,7 @@ int main(int argc, char **argv)
         if (pad_next < pad_event_count && pad_events[pad_next].frame == f)
             pad_mask=(uint16_t)pad_events[pad_next++].mask;
         run();
+        if(lockstep_status && lockstep_status()){fprintf(stderr,"RPC lockstep: %s\n",lockstep_status());result=1;break;}
         if(crosscheck){uint64_t calls,failed;const char *field=crosscheck(&calls,&failed);
             if(field){fprintf(stderr,"RPC cross-check mismatch: %s (%" PRIu64 "/%" PRIu64 ")\n",field,failed,calls);result=1;break;}}
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
@@ -556,6 +650,7 @@ int main(int argc, char **argv)
         }
         benchmark_elapsed=arc_test_clock_ns()-benchmark_start;
         if (s.faulted) { result=1; break; }
+        if(lockstep_reached)break;
         if (capture_path && c.state==ARC_RPC_CAPTURE_DONE) {
             FILE *file=fopen(capture_path,"wb");
             if(!file) result=2;
@@ -633,6 +728,10 @@ int main(int argc, char **argv)
 #undef PRINT_EXERCISE
         }
     }
+    if(lockstep_file){
+        if(!lockstep_end()){fprintf(stderr,"RPC lockstep: %s\n",lockstep_status()?lockstep_status():"end failed");result=1;}
+        if(fclose(lockstep_file))result=1;lockstep_file=NULL;
+    }
     unload();
     bool complete=true;
     bool (*observation_complete)(void)=NULL;void *observation_final=symbol("arc_test_plan_observation_complete");
@@ -651,6 +750,7 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
+    fputs("Lockstep test core: --lockstep-stream FILE --lockstep-role baseline|candidate --lockstep-density baseline|every-instruction|full-audit --lockstep-mode strict|cross-quota|guest-output|trace-toggle [--lockstep-p1 on|off] [--lockstep-cache on|off] [--lockstep-detail FIRST:LAST] [--lockstep-stop-after K] [--lockstep-key-context GENERATION:EPOCH] [--lockstep-model 0..3] [--lockstep-seed N] [--lockstep-plan-hash SHA256] [--lockstep-schedule-hash SHA256] [--lockstep-configuration-hash SHA256] [--lockstep-max-bytes N]\n",stderr);
 #if defined(ARCDROID_RPC_PROFILE)
     fputs("Profile build: --profile FILE [--profile-interval FRAMES] [--profile-sample-stride 0..1048576]\n",stderr);
 #endif

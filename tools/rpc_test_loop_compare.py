@@ -70,7 +70,7 @@ def source_check(base, candidate):
 
 
 def preprocess(build):
-    commands = json.loads((build / 'compile_commands.json').read_text())
+    commands = json.loads((build / 'compile_commands.json').read_text(encoding='utf-8'))
     entry = next(c for c in commands if 'arcdroid_libretro_test_rpc.dir/' in c['command']
                  and c['file'].endswith('/arm.c'))
     argv = split_command(entry['command'], os.name == 'nt')
@@ -79,12 +79,12 @@ def preprocess(build):
     obj = Path(entry['directory']) / argv[argv.index('-o')+1]
     index = argv.index('-o'); del argv[index:index+2]
     argv.remove('-c'); argv += ['-E', '-P']
-    source = subprocess.check_output(argv, cwd=entry['directory'], text=True)
+    source = subprocess.check_output(argv, cwd=entry['directory'], text=True, encoding='utf-8')
     return source, obj
 
 
 def machine_loops(obj, objdump):
-    output = subprocess.check_output([objdump, '-dr', '--no-show-raw-insn', str(obj)], text=True)
+    output = subprocess.check_output([objdump, '-dr', '--no-show-raw-insn', str(obj)], text=True, encoding='utf-8')
     result = {}
     for match in re.finditer(r'^([0-9a-f]+) <_?(arc_rpc_arm_exec_(?:observed|cheap|unobserved))>:\n(.*?)(?=^[0-9a-f]+ <|\Z)', output, re.M | re.S):
         _, name, text = match.groups()

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rpc_lockstep_test_sink.h"
 #ifdef _WIN32
 #include <windows.h>
 static HMODULE library;
@@ -321,6 +322,7 @@ int main(int argc,char **argv)
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
     assert(library);
+    rpc_golden_begin(symbol,model);
     LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(factory_rpc,"arc_rpc_test_factory_start");LOAD(advance_rpc,"arc_rpc_test_advance");
     LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_rpc,"arc_rpc_test_read_ram");LOAD(counts_rpc,"arc_rpc_test_audio_counts");
     LOAD(peek_rpc,"arc_rpc_test_audio_peek");LOAD(commit_rpc,"arc_rpc_test_audio_commit");LOAD(capture_rpc,"arc_rpc_test_capture_status");
@@ -331,6 +333,7 @@ int main(int argc,char **argv)
     if(!strcmp(argv[2],"--factory")) { assert(model>=2);factory(model); }
     else { assert(!strcmp(argv[2],"--guest"));check_pcm(model,false);check_pcm(model,true);dma_state(model);pressure(model);keyboard(model,false);keyboard(model,true);pad_mouse(model); }
     api->stop();
+    rpc_golden_finish();
 #ifdef _WIN32
     FreeLibrary(library);
 #else

@@ -1,7 +1,10 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /* ArcDroid modification (2026-10-08): replace the incomplete empty-drive
  * controller with the D-139 FDC37C665GT command/FIFO/virtual-time model over
  * an instance-owned, generation-checked ArcDroid drive service.
  * GPL-2.0-only additions; RPCEmu notice preserved below. */
+
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -22,6 +25,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "rpc_lockstep.h"
 #include "rpcemu.h"
 #include "fdc.h"
 #include "rpc_timing.h"
@@ -64,6 +68,7 @@ static struct {
 int fdccallback,motoron;
 static void mux(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint64_t next=UINT64_MAX;bool found=false;
     for(unsigned i=0;i<EVENTS;++i)if(fdc.armed[i]&&(!found||fdc.deadline[i]<next)){next=fdc.deadline[i];found=true;}
     arc_rpc_event_cancel(ARC_RPC_EVENT_FDC);
@@ -74,6 +79,7 @@ static void mux(void)
 }
 static void arm_event(unsigned event,uint64_t delay)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     fdc.armed[event]=true;fdc.deadline[event]=arc_rpc_time_ns()+delay;
     unsigned d=(event>=SEEK0&&event<=SEEK3)?fdc.seek_drive[event-SEEK0]:(event==INDEX0||event==UNLOAD0)?0:(event==INDEX1||event==UNLOAD1)?1:fdc.physical_drive;
     fdc.token[event]=(ArcRpcFloppyGeneration){media.session_generation,
@@ -82,15 +88,21 @@ static void arm_event(unsigned event,uint64_t delay)
 }
 static void irq_publish(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     bool value=(fdc.dor&8) && (fdc.interrupt||fdc.fifo_irq);
     if(value)iomd.irqb.status|=IOMD_IRQB_FLOPPY;else iomd.irqb.status&=~IOMD_IRQB_FLOPPY;
     updateirqs();
 }
-static void irq(bool value) { fdc.interrupt=value;irq_publish(); }
+static void irq(bool value) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdc.interrupt=value;irq_publish(); }
 static void dma(bool value)
-{ if(value)iomd.fiq.status|=IOMD_FIQ_FLOPPY_DMA_REQUEST;else iomd.fiq.status&=~IOMD_FIQ_FLOPPY_DMA_REQUEST;updateirqs(); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); if(value)iomd.fiq.status|=IOMD_FIQ_FLOPPY_DMA_REQUEST;else iomd.fiq.status&=~IOMD_FIQ_FLOPPY_DMA_REQUEST;updateirqs(); }
 static unsigned byte_ns(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     static const unsigned rates[]={500,300,250,1000};
     /* 8 data bits MFM; FM occupies twice the channel time. 300 kbit/s
      * uses a carried sector position, not per-byte rounding. */
@@ -98,30 +110,36 @@ static unsigned byte_ns(void)
 }
 static uint64_t byte_deadline(unsigned position)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     static const unsigned rates[]={500,300,250,1000};
     return ((uint64_t)position*8000000u*(fdc.command&0x40?1u:2u)+rates[fdc.rate]-1)/rates[fdc.rate];
 }
 static uint64_t step_time(unsigned steps)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     static const unsigned rates[]={500,300,250,1000};
     return ((uint64_t)steps*(16-(fdc.specify[0]>>4))*UINT64_C(500000000)+rates[fdc.rate]-1)/rates[fdc.rate];
 }
 static uint64_t head_load(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     static const unsigned rates[]={500,300,250,1000};
     unsigned value=fdc.specify[1]>>1;if(!value)value=128;
     return ((uint64_t)value*UINT64_C(1000000000)+rates[fdc.rate]-1)/rates[fdc.rate];
 }
 static void empty_command(void)
-{ fdc.phase=IDLE;fdc.param_count=fdc.param_at=0;fdc.service=false;fdc.fifo_irq=false;irq_publish();dma(false); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdc.phase=IDLE;fdc.param_count=fdc.param_at=0;fdc.service=false;fdc.fifo_irq=false;irq_publish();dma(false); }
 static void results(const uint8_t *bytes,unsigned count,bool interrupt)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     memcpy(fdc.result,bytes,count);fdc.result_at=0;fdc.result_count=(uint8_t)count;
     fdc.phase=RESULT;fdc.param_count=fdc.param_at=0;fdc.service=false;fdc.fifo_irq=false;irq_publish();dma(false);
     if(interrupt)irq(true);
 }
 static void cancel_transfer(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     arc_rpc_floppy_cancel(&media);fdc.armed[TRANSFER]=false;
     /* Mechanics outlive a data command. Retag their command epoch without
      * moving deadlines; mount/session retirement still cancels them. */
@@ -131,6 +149,7 @@ static void cancel_transfer(void)
 }
 static void finish(uint8_t st1,uint8_t st2,bool abnormal)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint8_t result[]={ (uint8_t)((abnormal?0x40:0)|(fdc.head?4:0)|fdc.unit),st1,st2,fdc.c,fdc.h,fdc.r,fdc.n };
     cancel_transfer();results(result,7,true);
     if(fdc.physical_drive<2){
@@ -141,6 +160,7 @@ static void finish(uint8_t st1,uint8_t st2,bool abnormal)
 }
 static void terminal(ArcRpcFloppyResult result)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     switch(result){
     case ARC_RPC_FLOPPY_OK:finish(fdc.st1,fdc.st2,fdc.st1!=0);break;
     case ARC_RPC_FLOPPY_NO_MEDIA:fdc.c=fdc.h=fdc.r=fdc.n=0;finish(5,0,true);break;
@@ -152,9 +172,11 @@ static void terminal(ArcRpcFloppyResult result)
     case ARC_RPC_FLOPPY_CANCELLED:finish(0x10,0,true);break;
     }
 }
-static unsigned fifo_capacity(void) { return fdc.config&0x20?1:16; }
+static unsigned fifo_capacity(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); return fdc.config&0x20?1:16; }
 static void service(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     bool desired=false;
     if(fdc.phase==EXECUTE && !fdc.verify){
         unsigned threshold=(fdc.config&15)+1,capacity=fifo_capacity();
@@ -172,13 +194,16 @@ static void service(void)
 }
 static bool push(uint8_t byte)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.fifo_count==fifo_capacity())return false;
     unsigned at=(fdc.fifo_at+fdc.fifo_count)%16;fdc.fifo[at]=byte;fdc.fifo_tc[at]=0;++fdc.fifo_count;return true;
 }
 static uint8_t pop(void)
-{ uint8_t value=fdc.fifo[fdc.fifo_at];if(fdc.fifo_tc[fdc.fifo_at])fdc.tc=true;fdc.fifo_at=(fdc.fifo_at+1)%16;--fdc.fifo_count;return value; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); uint8_t value=fdc.fifo[fdc.fifo_at];if(fdc.fifo_tc[fdc.fifo_at])fdc.tc=true;fdc.fifo_at=(fdc.fifo_at+1)%16;--fdc.fifo_count;return value; }
 static ArcRpcFloppyRequest request(ArcRpcFloppyOperation operation)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     static const unsigned rates[]={500,300,250,1000};
     ArcRpcFloppyRequest r={0};r.operation=operation;r.drive=fdc.physical_drive;
     r.cylinder=r.drive<2?media.drives[r.drive].cylinder:0;r.head=fdc.head;
@@ -190,6 +215,7 @@ static ArcRpcFloppyRequest request(ArcRpcFloppyOperation operation)
 }
 static void select_sector(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     ArcRpcFloppyOperation op=fdc.base==10?ARC_RPC_FLOPPY_READ_ID:fdc.base==13?ARC_RPC_FLOPPY_FORMAT:
         fdc.verify?ARC_RPC_FLOPPY_VERIFY:fdc.read_track?ARC_RPC_FLOPPY_READ_TRACK:
         fdc.write?ARC_RPC_FLOPPY_WRITE:ARC_RPC_FLOPPY_READ;
@@ -216,6 +242,7 @@ static void select_sector(void)
 }
 static void begin_media_operation(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.read_track && fdc.physical_drive<2 && media.drives[fdc.physical_drive].present){
         /* READ TRACK always starts at index, including after an implied seek.
          * Load first so head settling does not skip the first rotational ID. */
@@ -229,6 +256,7 @@ static void begin_media_operation(void)
  * CHRN from the original parameters. TC does not suppress this result update. */
 static bool advance_chrn(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.r!=fdc.p[5]){++fdc.r;return false;}
     fdc.r=1;
     if(fdc.command&0x80){
@@ -240,6 +268,7 @@ static bool advance_chrn(void)
 }
 static void sector_complete(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.write){
         unsigned consumed=fdc.position;
         ArcRpcFloppyResult result=arc_rpc_floppy_commit(&media,&fdc.sector,fdc.write_buffer,consumed,fdc.tc);
@@ -266,6 +295,7 @@ static void sector_complete(void)
 }
 static void transfer_event(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.phase!=EXECUTE || fdc.token[TRANSFER].session!=media.session_generation ||
        fdc.token[TRANSFER].command!=media.command_generation ||
        (fdc.physical_drive<2 && fdc.token[TRANSFER].mount!=media.drives[fdc.physical_drive].mount_generation))return;
@@ -351,6 +381,7 @@ static void transfer_event(void)
 }
 static bool valid_opcode(uint8_t op,uint8_t *base,unsigned *parameters)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     unsigned b=op&31;*base=(uint8_t)b;
     switch(b){
     case 2:if(op&0xa0)return false;*parameters=8;return true;
@@ -368,6 +399,7 @@ static bool valid_opcode(uint8_t op,uint8_t *base,unsigned *parameters)
 }
 static void execute(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint8_t result[10];
     switch(fdc.base){
     case 3:fdc.specify[0]=fdc.p[0];fdc.specify[1]=fdc.p[1];empty_command();return;
@@ -422,6 +454,7 @@ static void execute(void)
 }
 void fdc_reset(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(!media_initialized){arc_rpc_floppy_init(&media,++media_session_generation);media_initialized=true;}
     else media.session_generation=++media_session_generation;
     cancel_transfer();memset(&fdc,0,sizeof(fdc));fdc.config=0x20;fdc.rate=2;
@@ -429,9 +462,11 @@ void fdc_reset(void)
     for(unsigned i=0;i<2;++i){arc_rpc_floppy_motor(&media,i,false,arc_rpc_time_ns());media.drives[i].loaded=false;}
     motoron=0;fdccallback=0;arc_rpc_event_cancel(ARC_RPC_EVENT_FDC);irq(false);dma(false);
 }
-void fdc_init(void) { fdc_reset(); }
+void fdc_init(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdc_reset(); }
 static void software_reset(bool held)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint8_t dor=fdc.dor,rate=fdc.rate,lock=fdc.lock,config=fdc.config,pretrk=fdc.pretrk,perp=fdc.perp;
     cancel_transfer();memset(fdc.armed,0,sizeof(fdc.armed));fdc_reset();fdc.dor=dor;fdc.rate=rate;fdc.lock=lock;
     fdc.perp=perp&0x3c;fdc.config=lock?(config&0x2f):0x20;fdc.pretrk=lock?pretrk:0;
@@ -440,6 +475,7 @@ static void software_reset(bool held)
 }
 static void motor_events(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     for(unsigned i=0;i<2;++i){
         bool on=(fdc.dor&(0x10u<<i))!=0;arc_rpc_floppy_motor(&media,i,on,arc_rpc_time_ns());
         fdc.armed[INDEX0+i]=false;
@@ -448,6 +484,7 @@ static void motor_events(void)
 }
 void fdc_write(uint32_t addr,uint32_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint8_t val=(uint8_t)value;
     switch(addr){
     case 0x3f2:{uint8_t old=fdc.dor;fdc.dor=val;
@@ -471,6 +508,7 @@ void fdc_write(uint32_t addr,uint32_t value)
 }
 uint8_t fdc_read(uint32_t addr)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     switch(addr){
     case 0x3f2:return fdc.dor;
     case 0x3f4:{
@@ -495,6 +533,8 @@ uint8_t fdc_read(uint32_t addr)
 }
 void fdc_callback(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint64_t now=arc_rpc_time_ns();
     for(unsigned i=0;i<EVENTS;++i){
         if(!fdc.armed[i]||fdc.deadline[i]>now)continue;
@@ -524,35 +564,41 @@ void fdc_callback(void)
 }
 uint8_t fdc_dma_read(uint32_t addr)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.phase!=EXECUTE || !(fdc.dor&8) || fdc.write || fdc.verify || (fdc.specify[1]&1) || !fdc.fifo_count)return 0;
     uint8_t val=pop();if(addr==0x302a000){fdc.tc=true;fdc.fifo_count=0;}
     service();if(fdc.stage==CRC&&!fdc.fifo_count&&!fdc.armed[TRANSFER])arm_event(TRANSFER,0);return val;
 }
 void fdc_dma_write(uint32_t addr,uint8_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.phase!=EXECUTE || !(fdc.dor&8) || (!fdc.write&&fdc.base!=13) || (fdc.specify[1]&1) || fdc.tc || !fdc.service)return;
     if(!push(val)){finish(0x10,0,true);return;}
     if(addr==0x302a000){fdc.tc_queued=true;fdc.fifo_tc[(fdc.fifo_at+fdc.fifo_count-1)%16]=1;}service();
 }
 static void cancel_drive(unsigned drive)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(fdc.phase==EXECUTE && fdc.physical_drive==drive){cancel_transfer();empty_command();irq(fdc.pending!=0);}
     if(drive<2){fdc.armed[INDEX0+drive]=false;fdc.armed[UNLOAD0+drive]=false;}
     mux();
 }
 bool arc_rpc_fdc_mount(unsigned drive,const ArcEngineMedia *m,char *error,size_t size)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(!media_initialized){arc_rpc_floppy_init(&media,++media_session_generation);media_initialized=true;}
     cancel_drive(drive);
     bool ok=arc_rpc_floppy_mount(&media,drive,m,error,size);motor_events();return ok;
 }
 void arc_rpc_fdc_eject(unsigned drive)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     cancel_drive(drive);
     arc_rpc_floppy_eject(&media,drive);motor_events();
 }
 void arc_rpc_fdc_close(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(!media_initialized)return;
     cancel_transfer();arc_rpc_floppy_close(&media);memset(&fdc,0,sizeof(fdc));
     motoron=fdccallback=0;arc_rpc_event_cancel(ARC_RPC_EVENT_FDC);dma(false);irq(false);
@@ -560,6 +606,7 @@ void arc_rpc_fdc_close(void)
 }
 void arc_rpc_fdc_rebase(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(!media_initialized)return;
     /* fdc_reset freezes rotation using the old virtual time. Retain physical
      * head position and mounts, then invalidate callbacks from that session. */
@@ -567,20 +614,31 @@ void arc_rpc_fdc_rebase(void)
 }
 /* Legacy RPCEmu entry points remain private; no untyped media callback uses
  * them. All production drive traffic goes through the typed sector/event API. */
-void fdc_data(uint8_t dat) { if(fdc.phase==EXECUTE&&!fdc.write){if(!push(dat))finish(0x10,0,true);else service();} }
-void fdc_finishread(void) { if(fdc.phase==EXECUTE){fdc.stage=CRC;arm_event(TRANSFER,byte_deadline(2));} }
-void fdc_notfound(void) { terminal(ARC_RPC_FLOPPY_NOT_FOUND); }
-void fdc_datacrcerror(void) { terminal(ARC_RPC_FLOPPY_DATA_CRC); }
-void fdc_headercrcerror(void) { terminal(ARC_RPC_FLOPPY_ID_CRC); }
-void fdc_writeprotect(void) { terminal(ARC_RPC_FLOPPY_WRITE_PROTECT); }
-int fdc_getdata(int last) { (void)last;return fdc.fifo_count?pop():-1; }
-void fdc_sectorid(uint8_t c,uint8_t h,uint8_t r,uint8_t n) { fdc.c=c;fdc.h=h;fdc.r=r;fdc.n=n;finish(0,0,false); }
-void fdc_indexpulse(void) { if(arc_rpc_floppy_signals(&media,fdc.dor&3,arc_rpc_time_ns()).index){iomd.irqa.status|=IOMD_IRQA_FLOPPY_INDEX;updateirqs();} }
+void fdc_data(uint8_t dat) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); if(fdc.phase==EXECUTE&&!fdc.write){if(!push(dat))finish(0x10,0,true);else service();} }
+void fdc_finishread(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); if(fdc.phase==EXECUTE){fdc.stage=CRC;arm_event(TRANSFER,byte_deadline(2));} }
+void fdc_notfound(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); terminal(ARC_RPC_FLOPPY_NOT_FOUND); }
+void fdc_datacrcerror(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); terminal(ARC_RPC_FLOPPY_DATA_CRC); }
+void fdc_headercrcerror(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); terminal(ARC_RPC_FLOPPY_ID_CRC); }
+void fdc_writeprotect(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); terminal(ARC_RPC_FLOPPY_WRITE_PROTECT); }
+int fdc_getdata(int last) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); (void)last;return fdc.fifo_count?pop():-1; }
+void fdc_sectorid(uint8_t c,uint8_t h,uint8_t r,uint8_t n) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdc.c=c;fdc.h=h;fdc.r=r;fdc.n=n;finish(0,0,false); }
+void fdc_indexpulse(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); if(arc_rpc_floppy_signals(&media,fdc.dor&3,arc_rpc_time_ns()).index){iomd.irqa.status|=IOMD_IRQA_FLOPPY_INDEX;updateirqs();} }
 
 /* ArcDroid modification (2026-10-13, observation-r3c1): controller state
  * admission service, independent of IRQ masking/acknowledgement. */
 bool arc_rpc_fdc_idle(unsigned drive)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     if(drive>=2 || !media_initialized || !(fdc.dor&4) || fdc.held || fdc.resetting)return false;
     /* The shared command/FIFO/result engine is busy for both drives. A
      * background seek is drive-specific only after that engine returns IDLE. */
@@ -594,4 +652,9 @@ bool arc_rpc_fdc_idle(unsigned drive)
     return true;
 }
 uint64_t arc_rpc_fdc_media_generation(unsigned drive)
-{ return media_initialized && drive<2?media.drives[drive].mount_generation:0; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); return media_initialized && drive<2?media.drives[drive].mount_generation:0; }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_fdc
+#endif

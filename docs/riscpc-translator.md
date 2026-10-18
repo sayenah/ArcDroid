@@ -403,6 +403,12 @@ The macro split retains `ARCDROID_TEST_FAULTS` as the hot-hook part and adds
 | Plan | yes / yes | yes | optional profile option | optional | yes / yes |
 | Profile/cross-check | yes / target dependent | yes | profile only | cross-check option only | yes / yes |
 | Measurement (non-installed) | yes / yes | no | no | no | yes / yes |
+| Lockstep (non-installed, non-Android) | yes / yes | yes | no | no | yes / yes |
+
+Lockstep alone reports capability bit 32 and accepts the stream sink. Other
+test cores export explicit refusing stubs. The measurement identity exception
+is limited to those stubs in `rpc_session.o` (M2b R-M2b-S1); shipping exports
+and hot objects remain unchanged.
 
 Measurement has shipping optimisation, visibility and shared hot layouts.
 The four named CPU/timing/translation objects match shipping. The exceptions

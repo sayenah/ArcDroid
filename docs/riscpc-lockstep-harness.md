@@ -1,6 +1,248 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
 
-# RiscPC lockstep contract v0
+# RiscPC lockstep contract v1
+
+## M2b format and projection (D-200, S67)
+
+This section supersedes the v0 description retained below as M2a history.
+Run E grounding is the merged main `c873423` after R3c-3b; no emitter is backported to the
+performance anchor. R-M2b-S1 permits only enumerated refusing APIs in the
+measurement session object. R-M2b-S2 permits lockstep-only injections into the
+existing request, packet and instruction-budget failure paths. These are
+**injected** evidence; bad mode remains guest-reachable. Time overflow remains
+an unexercised long-runtime limit.
+
+### Boundaries and identities
+
+The six-u64 key remains `(generation, epoch, k, phase, site, sequence)`.
+Generation zero is valid before the first successful start. `k` starts at zero
+and counts attempts in an emitter-owned counter, independently of timing or
+emitted records. P1 sequence is globally ordered within k and is maintained
+with P1 emission disabled. P1 records additionally carry an edge: 0 single,
+1 entry, 2 exit. Entry, helper events and exit at the same key are ordered in
+that order. Site order is subordinate to sequence order.
+The reader retains one open data-access identity. It rejects an unmatched or
+wrong-key exit, nested entry, data-site single-edge checkpoint, events outside
+their entry/exit pair (unless P1 is disabled), or End before the pair closes.
+A fatal may terminate the pair: its preceding fatal pages and record retain
+the open identity with phase 5. This validation uses bounded reader state.
+
+| Point | Exact hook and projection |
+|---|---|
+| P0 | Loop top, before observer begin, diagnostics and instruction begin, after batch begin. It opens k. |
+| P1 fetch, site 1 | Reserve sequence before `getpccache`; walk events carry it. Emit after opcode capture and `arc_rpc_mem_opcode`, before fetched observation. A prefetch abort consumes the reserved sequence without a fetch checkpoint. |
+| P1 read/write, sites 2/3 | Allocate identity and emit entry before translation in each of the four accessors. Emit exit after physical access or at the abort early return. Entry attributes are the previously retained `arc_rpc_attributes`; exit attributes are exactly those left by this translation. LDRT/STRT expose raw `memmode=0` while in the accessor, before their caller restores it. No extra LDM/STM/SWP or memory-timing hook. |
+| P1 SWI, site 4 | Condition-passed loop case, before either observer path or `opSWI`, including an observer-completed SWI. |
+| P1 CP15, sites 5/6 | Read/write entry only while an attempt is open; outside calls increment only a diagnostic. |
+| P1 exception, site 7 | `exception` entry before branch timing. |
+| P1 mode, site 8 | Both post-body and `instruction_done` sites in every loop copy, before observer mode delivery. Emit only on a change since P0 or the previous mode checkpoint. |
+| P2 | Immediately after instruction end, before profile end and continuation. Count k completed, then close the attempt. |
+| P3 | Common wrapper after endpoint return and prefix capture. Key carries the last completed k. Zero admission emits neither P0 nor P3. |
+| Driver, phase 4 | Outside-attempt events, next attempt ordinal, site=sequence=0. |
+| Fatal, phase 5 | Open k, or next ordinal outside an attempt; latest allocated site/sequence, regardless of P1 emission. Full fatal pages precede fatal, then exactly one End. No post-retirement digest. |
+
+Immutable inputs/tables have epoch identities. Pointers use allocation/offset
+or typed indices, never addresses. Unknown pointers set emitter status and
+cannot silently acquire an identity. Null is `(0,0)`. Aliases share allocation
+identity. Signed scalars widen modulo 2^64, doubles use binary64 bits, and no
+padding or raw pointer-bearing structure is hashed.
+Plain C `char` buffers and character members encode unsigned octets widened to
+u64; their wire values do not inherit the compiler's plain-char signedness.
+Explicitly signed scalar types and PCM samples retain modulo-2^64 widening.
+This encoding rule participates in the compatibility hash. A real owning-TU
+build with the opposite char setting must preserve high-byte launch text and
+JFD metadata; neither operation changes guest state.
+
+### Pure time and driver projections
+
+All projection arithmetic operates on copies with checked, non-faulting u64
+addition/multiplication. It never calls flush, next_base, translation, an
+observer, a scheduler mutator or fatal. Overflow is an emitter status error.
+A self-check hashes the entire raw serialized state and compares dirty sets
+before/after projection, including scheduler, devices, observers and CPU.
+
+Let d be denominator and q the retained issue fraction. In integer mode the
+current issue floor is `clock.now_ns - (q != 0)`, and issue ticks are
+`floor*d+q`. At P0/P1 both issue and cpu_due are this issue, with their floor,
+fraction and visible ceiling. At P2 issue still names k; with no requests,
+cpu_due is issue+base, with quotient/remainder by d and ceiling. With pending
+requests the cpu_due fields remain conditionally excluded. At P3 retain the
+raw service state. CPU event timestamps use the same pure issue projection.
+Physical dispatch addresses use the bus helper's 29-bit physical mask, including
+word and byte MMIO aliases; discarded caller address bits are not bus addresses.
+
+At batch entry retain B=executed and W=instruction_work, plus the NULL-path
+booking bit. C counts attempts that reached P2. P0/P1/fatal executed=B+C;
+P2 includes k in C. At wrapper P3 executed=B+returned linecyc, although the
+driver has not yet booked it. Ordinary instruction_work projects W+C (W plus
+linecyc at P3); NULL work projects W-1 before completion and W after it. No
+completion is fabricated for a fatal or refused admission. Live mirrors also
+cover limit, video_start, event_work, completed and stop_at_field. Remaining
+event/instruction/scanout budgets are retained, never blanket-excluded.
+
+Fable's R-M2b-O1/O2/O3 (S67, PR #504) apply only in mode (b),
+`cross-quota`; strict mode retains each raw field. The requested
+`rpc_session.arc_rpc_test_quota` is the independent test configuration and is
+excluded in mode (b). `memory.active_kind` is compared there only while
+`memory.active_valid` is true; validity itself is always compared.
+
+In mode (b), `arm.inscount` projects to `(raw_inscount + C) mod 2^32` at
+P0/P1/P2, where C is the current batch's P2 completions (preceding attempts at
+P0/P1, including the current attempt at P2). At P3 the batch return has already
+booked that credit, so retain the raw value. A fatal does not complete its open
+attempt. The raw RPC counter is reset at CPU start/reset and incremented only
+at batch return, with no runtime reader. Epoch changes that do not reset the
+CPU retain its count. Only unbooked batch credit is representation: any raw
+counter delta remains visible in the projected value. This projection changes
+only the serialized copy, preserving the counter's uint32 wrap semantics.
+The reviewed policy pins these three reasons and the executable condition
+and projection; they participate in the wire/projection compatibility hash.
+Sensitivity checks retain strict raw comparisons, active-kind/validity
+divergences, and genuine divergences in the projected completion count.
+
+### Observer projection and equality configurations
+
+Strict compares all included observer state. Guest-output excludes only its
+reviewed subscription/owner state and treats P3 records/pages as optional.
+Equality owners never complete a SWI; completion has a separate expected
+divergence item. Cross-quota and trace-toggle also make P3 optional because
+the cheap copy can truncate after a SWI.
+
+| Observer category | Cross-quota | Trace-toggle |
+|---|---|---|
+| Diagnostic admission (`active`, `context`, trace enables/counters) | Exclude named admission representation | Exclude named trace-driven admission representation |
+| Batch live/start/accounted | Exclude named batch representation | Exclude named copy-dependent batch representation |
+| Semantic instruction identity | Project lazy batch credit to the current semantic instruction | Same projection in cheap and observed copies |
+| Origin PC/backing/time/mode | Compare only when the semantic origin is live; preserve its values | Same live-origin rule |
+| Owners, live watches, generations, answers, host work | Compare semantic identity, deadlines and order after lazy credit projection | Retain all semantic owner/watch state; remove diagnostic trace event numbering only |
+
+Concrete schema vectors precede table generation: cheap versus observed at
+the same SWI, quota 1 versus 200 with lazy credit, and identical subscriptions
+with trace enabled/disabled. Every named exclusion remains inert in strict.
+The independent reviewed-policy file pins each rule; generation never approves
+an exclusion or replaces policy review.
+
+### Pages, epochs and termination
+
+Page records carry a boundary kind and a per-kind occurrence ordinal unrelated
+to k. Kinds are P3=0, frame-end=1, epoch-retirement=2, post-transition=3,
+fatal=4. Occurrences increase separately per kind, so optional P3s never shift
+frame-end identity. Allocation/page pairs are ordered within an occurrence.
+P3 occurs before frame-end; retirement occurs before transition; post-transition
+occurs after the complete lifecycle flow, before its next ordinary emission;
+fatal pages occur before fatal/End. Empty boundaries still have a marker.
+Separate P3 and frame dirty sets prevent quota-dependent frame page sets.
+P3 markers carry SHA-256 of the empty byte sequence in their output-digest
+slot. Video and PCM are scanned only at frame end, retirement, post-transition
+and fatal boundaries; a P3 never scans them. The reader enforces this constant.
+The latch encloses the dispatcher start as well as the RPC session start:
+the dispatcher's failure stop remains nested. An asynchronous begin holds the
+outer flow until step completion; explicit stop closes an abandoned begin.
+Directed/full-audit P3s hash all pages. Epoch/fatal/terminal checkpoints are full.
+End retires the current epoch; it adds no instruction attempt.
+
+Lifecycle entry sets an idempotent pending latch and retires prepared old memory
+before clearing/freeing it. Nested stop/start/failure landings coalesce into one
+flow. Consume the latch once after successful start/reset/rate/stop or the final
+failed-start landing, before another emission. Termination without another P0
+consumes it too. Allocation/preparation failures mark memory absent; missing or
+partly initialized allocations are never read. Stream epoch, k and event
+sequence reset together; memory binds themselves never bump the epoch.
+
+Full audit maintains a separately allocated shadow, applies the logged writes
+to it and compares every prepared RAM/VRAM byte at P3. It reports unlogged
+differences by page. It cannot detect write-and-restore between boundaries.
+The fixed model is 64 MiB RAM plus at most 2 MiB VRAM (`rpc_session.c:238`,
+`mem.c:156-164`), so the comparison bound is 66 MiB per P3, not a smaller
+selectable configuration. Emitter allocations bypass the counted allocator;
+allocation-shift padding changes neither allocation count nor fail-alloc stages.
+
+### Wire encoding, spans and compatibility
+
+Magic is `ARCLKv1\0`; all numbers are little endian. Frame envelope stays
+`u8 kind,u32 length,payload`, bounded by 16 MiB, assembled fully before the sink
+callback. The engine performs no stdio. Sink/reentrancy errors set status and
+never call fatal. After End the sink is closed; teardown cannot emit a second End.
+
+Header includes version, wire/projection compatibility SHA-256, model, plan,
+seed, schedule, semantic configuration and flags; separate schema inventory and
+provenance hashes are review evidence, not cross-revision wire compatibility.
+The compatibility digest covers ordered compared layout, conditions, phase and
+mode rules, projections, normalized identities and v1 wire semantics; it excludes
+source line citations, inventory, provenance and host-only diagnostics.
+Mode, baseline/candidate role and all three identity hashes are runner inputs.
+Counts and compiled-fetch omissions move to End; v0 is refused.
+
+Detail/compact kinds 1/2 include key and edge. Per-field hashes cover the
+included element indices plus their fixed-width values, in order; a group hash
+covers the ordered field hashes in that group. This lets unchanged fields reuse
+their digest without suppressing a changed condition/validity bit. A raw-value
+change or condition/phase/mode change invalidates the affected cache entry.
+Large output buffers are covered at frame/epoch boundaries; live input/media
+buffers remain included with cached content hashes. Detail reruns carry the
+same projected leaves and recompute the original compact group hashes before
+reporting the earliest differing leaf. A changed mismatch or earlier unequal
+prefix is non-deterministic, never accepted as successful reproduction.
+
+Media contents hashes traverse JFD scalars, descriptors, decoded bytes and
+overlay storage field by field. Raw memory media is hashed by contents. File
+handles and backend contexts have typed owner identities; a class-only neutral
+VFS snapshot reads memory-backed state without seeking, reading or invoking a
+VFS callback. External file bytes are immutable input identities in the supplied
+configuration hash. Paths and native handles never enter canonical values.
+
+Event kind 3 retains the common epoch sequence and semantic instruction/helper
+identity and time. MMIO wraps each physical I/O call once, including absent and
+unmapped ranges; reads are logged after returning. Walk agent is 1, CPU 0;
+device/DMA writes are structural zeros at this head because their DMA only reads.
+Page kind 4 includes boundary kind/occurrence, allocation/page and SHA-256.
+Fatal kind 5 includes the key, SHA-256/64 of format literal and formatted text
+(16 bytes after key). Identical literals intentionally share a reason identity.
+End kind 6 contains checkpoint/event/page totals, P0/P2 instances, fetch
+omissions and span accounting. Span-open/close kinds 7/8 declare sparse and
+compiled coverage online with at most one active span of each kind. Closed
+spans cannot overlap or regress. There is no 256-span header cap. Baselines
+are dense, every-instruction forbids sparse spans and full-audit forbids fetch
+omissions. Helper entry/exit density is mandatory even in sparse spans.
+
+Two explicit runner/core pairs run in separate processes. POSIX transport uses
+FIFOs; Windows uses bounded temporary files. On early comparison return the
+driver closes readers and terminates only its own recorded child PIDs, then
+joins them. Streams from private titles remain private scratch and are deleted;
+no such stream may become an artifact. Stop-after ends after the frame containing
+the key. H-2 vector consumption is deferred to B-0; no block exits exist yet.
+Detail and stop ranges may be qualified by `(generation,epoch)` with
+`--lockstep-key-context`; zero components mean unqualified. The differential
+driver carries the original key's context into its rerun, so an earlier epoch
+with the same k cannot terminate reproduction prematurely. Prefix records stay
+compact; only the target attempt in the target epoch becomes detail.
+
+Cost accounting is per serialized word and active element, not just field count:
+the merged v1 layout has 1029 fields and 197367 internal u64 words (1578936 bytes).
+Detail carries 1442896 bytes plus its 56-byte key/edge header; permanently
+excluded and output-boundary fields have no detail or group-hash slot. Dense
+compact operation caches unchanged array digests, hashes changed included leaves
+and at most one u64 per schema field per group. A data-transfer instruction may
+visit 16 accesses, each with entry and exit, giving at most 38 instruction
+checkpoints including fetch, exception and mode points. P3 audit adds at most 66 MiB of
+memory comparison plus page SHA-256. Directed cases separately bound their
+attempt counts, densities and audit P3s; CTest limits follow completed host and
+Windows timings with at least 40% headroom. Mutant tests run serially.
+CI full audit selects directed items only. The local-full evidence also runs
+all fuzz seeds with `rpc_lockstep_consistency_test.py --only fuzz --audit-fuzz`,
+so every corpus item has a guest-equivalence check in every density (critic M1).
+
+Dirty counters invalidate each owning-TU device chunk. Membership signatures
+depend on the schema condition's referenced values, rather than scanning every
+dead packet lane at every checkpoint. Pure projection compares the complete
+serialized state against an independent collection that bypasses owner reuse,
+rechecking all words and both independent RAM dirty sets. Output-boundary marker
+hashes include the published video rectangle and live queued PCM only; never
+uninitialized presentation capacity or stale audio slots. The fatal guard checks
+that End was emitted before fault publication and observer retirement: Q-9's
+fatal payload deliberately contains no post-fatal state digest.
+
+## M2a history (v0; superseded where it conflicts above)
 
 Grounding: `bb5008fb58bc60bcd2d46bc65c98e67ea2f96956`, D-198 and
 `riscpc-6b-m2a.md`, including A-1 through A-34. Emulator sources are unchanged
@@ -396,3 +638,34 @@ event limits and pixel/field budgets. M2b must provide the actual input values
 and serialise the projections. M2a does not claim to observe driver locals.
 The ELF parser also passed a locally cross-compiled Clang ELF probe; Linux GCC
 plan-core inventory and runtime evidence remain CI's decision.
+
+
+## Run E: merged launch observers and owner-cache fidelity
+
+R3c-3b's launch binding, attempt/controller payload, retirement obligation and
+outer advance service locals are part of the emitted state. Bindings use
+owner-relative tokens and guarded member reads; callbacks are identified by
+their API slot. The preparation-owned retirement bit is read through a pure,
+lockstep-only bridge, never by invoking a retirement callback. Both retirement
+yields and lockstep points retain their existing order.
+
+Every mutating entry invalidates each cached owner it writes, including writes
+from another translation unit. A lockstep-only cache-off configuration bypasses
+owner reuse and field/group reuse; it is an observation control and is omitted
+from wire flags, so cached and uncached streams must be byte-identical. The
+projection purity check re-collects all owners independently of dirty bits.
+Representative input, video, sound, floppy, IDE and SuperIO runs compare both
+paths, with a removed cross-unit invalidation as a sensitivity witness.
+
+The runner's baseline density selects the normal checkpoint schedule; the
+baseline/candidate role independently determines the cross-quota P3 policy.
+Neither argument overwrites the other. New v1 malformed-stream witnesses cover
+access pairing, event context, page markers, fatal width/text, span accounting
+and density, reproduction prefixes and mode exclusions in compact recurrence.
+
+The preparation-owned retirement bit is a reviewed serializer bridge rather
+than a member of the observer TU's private struct. Its source and pure read
+expression are pinned in both schema and reviewed policy. Only that bridge may
+omit an owning-TU offsetof row; unreviewed omissions or replacement expressions
+are rejected before table generation. This preserves complete-member checking
+for ordinary serialized C storage.

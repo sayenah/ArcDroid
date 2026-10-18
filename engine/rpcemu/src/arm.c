@@ -19,6 +19,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): bounded instruction entry, complete
  * CPU reset and permission-checked in-object fetch on every instruction. */
 /* ArcDroid modification (2026-10-10, D-157): signed 32x32 product,
@@ -33,6 +35,7 @@
 #include "rpc_observer.h"
 /* ArcDroid modification (2026-10-14, profiling-6b-p0i): test-only hooks. */
 #include "rpc_profile.h"
+#include "rpc_lockstep.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -504,6 +507,9 @@ shift4(uint32_t opcode)
 void
 exception(uint32_t mmode, uint32_t address, uint32_t diff)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(7,0));
+#endif
     ARC_RPC_PROFILE(exception(address));
     arc_rpc_mem_branch();
 	uint32_t link;
@@ -587,6 +593,9 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(p0(arm.mode));
+#endif
 #if ARC_RPC_ARM_OBSERVING == 1
         bool observing=arc_rpc_observer_active;
         if(observing)arc_rpc_observe_begin(PC);
@@ -600,6 +609,9 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
         arc_rpc_mem_instruction_begin();
         /* Fetch checks permission at every instruction, including a cached
          * translation hit and a 1 KiB boundary within the same 4 KiB page. */
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(p1(1,3));
+#endif
         pccache2 = getpccache(PC);
         if (!pccache2) {
             pccache = 0xffffffff;
@@ -609,6 +621,9 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
         arc_rpc_mem_opcode(opcode);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(p1(1,4));
+#endif
         ARC_RPC_PROFILE(stage(ARC_RPC_COST_PROFILE));
         ARC_RPC_PROFILE(fetched(pccache2,opcode,flaglookup[opcode >> 28][(*pcpsr) >> 28]!=0));
         ARC_RPC_PROFILE(stage(ARC_RPC_COST_DISPATCH));
@@ -1906,6 +1921,9 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 			case 0xf4: case 0xf5: case 0xf6: case 0xf7:
 			case 0xf8: case 0xf9: case 0xfa: case 0xfb:
 			case 0xfc: case 0xfd: case 0xfe: case 0xff:
+#if defined(ARCDROID_RPC_LOCKSTEP)
+                ARC_RPC_LOCKSTEP(p1(4,0));
+#endif
 #if ARC_RPC_ARM_OBSERVING == 2
                 arc_rpc_observe_advance((unsigned)linecyc+1-accounted);accounted=(unsigned)linecyc+1;
                 if(!arc_rpc_observe_swi_at(opcode,PC,pccache2))opSWI(opcode);
@@ -1932,6 +1950,9 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 
 	// This label is used to skip the switch above
 skip:
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(p1(8,0));
+#endif
 #if ARC_RPC_ARM_OBSERVING == 1
         if(observing)arc_rpc_observe_mode();
 #elif ARC_RPC_ARM_OBSERVING == 2
@@ -1959,6 +1980,9 @@ skip:
 
 		arm.reg[15] += 4;
 instruction_done:
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(p1(8,0));
+#endif
 #if ARC_RPC_ARM_OBSERVING == 1
         if(observing)arc_rpc_observe_mode();
 #elif ARC_RPC_ARM_OBSERVING == 2
@@ -1966,6 +1990,9 @@ instruction_done:
 #endif
         ARC_RPC_PROFILE(stage(ARC_RPC_COST_TIMING));
         arc_rpc_mem_instruction_end(PC);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(p2());
+#endif
         ARC_RPC_PROFILE(stage(ARC_RPC_COST_PROFILE));
         ARC_RPC_PROFILE(end(PC,arm.mode,ARM_MODE_32(arm.mode)?arm.reg[16]&0xc0u:(arm.reg[15]>>20)&0xc0u,arc_rpc_cpu_idle));
         if (batch && (linecyc + 1 == (int)count ||
@@ -1973,6 +2000,9 @@ instruction_done:
             ++linecyc;
             break;
         }
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(continuation(batch != NULL));
+#endif
 	}
 #if ARC_RPC_ARM_OBSERVING == 2
     arc_rpc_observe_advance((unsigned)linecyc-accounted);
@@ -2080,6 +2110,9 @@ int arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
     arc_rpc_mem_endpoint_return();
     arc_rpc_prefix_capture();
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p3((unsigned)executed));
+#endif
     return executed;
 }
 
@@ -2088,3 +2121,7 @@ int arc_rpc_arm_exec_count(unsigned count) { return arc_rpc_arm_exec_batch(count
 int arm_exec(void) { return arc_rpc_arm_exec_count(200); }
 
 #endif /* ARC_RPC_ARM_LOOP */
+
+#if defined(ARCDROID_RPC_LOCKSTEP) && !defined(ARC_RPC_ARM_LOOP)
+ARC_RPC_LS_SERIALIZE_arm
+#endif
