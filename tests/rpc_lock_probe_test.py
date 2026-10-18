@@ -3,11 +3,13 @@
 """Drive real libretro entry points; independent executable proves exclusion."""
 from pathlib import Path
 import os
+import re
+import time
 import subprocess
 import sys
 import tempfile
 
-loader, core, process, mutant = sys.argv[1:]
+loader, core, process, *mutants = sys.argv[1:]
 KEY = '0123456789abcdef0123456789abcdef01234567'
 
 
@@ -47,11 +49,51 @@ def plan_file(base, name, root, legs):
     return plan, output
 
 
+def process_attempt(root):
+    return subprocess.run([process, 'try', str(root)], capture_output=True, text=True, timeout=5)
+
+
 def attempt(root, expected):
-    reply = subprocess.run([process, 'try', str(root)], capture_output=True, text=True, timeout=5)
+    reply = process_attempt(root)
     require(reply.returncode == (10 if expected == 'contended' else 0) and
             reply.stdout.strip() == expected,
             'independent try expected ' + expected + ': ' + reply.stdout + reply.stderr)
+
+
+def post_death(root, windows=(os.name == 'nt'), try_once=process_attempt,
+               monotonic=time.monotonic_ns, pause=time.sleep, label='native'):
+    start = monotonic()
+    attempts = 0
+    while True:
+        reply = try_once(root)
+        attempts += 1
+        elapsed = monotonic() - start
+        require(not windows or elapsed < 10_000_000_000,
+                f'post-death acquisition deadline attempts={attempts} elapsed-ns={elapsed}')
+        if reply.returncode == 0 and reply.stdout.strip() == 'held' and not reply.stderr:
+            break
+        require(windows and reply.returncode == 10 and reply.stdout.strip() == 'contended'
+                and not reply.stderr and elapsed < 10_000_000_000,
+                f'post-death acquisition failed attempts={attempts} elapsed-ns={elapsed}: ' + reply.stdout + reply.stderr)
+        pause(0.001)
+    require(windows or attempts == 1, 'POSIX first-attempt requirement')
+    print(f'post-death source={label} policy={"Windows" if windows else "POSIX"} attempts={attempts} elapsed-ns={elapsed}', flush=True)
+    return attempts, elapsed
+
+
+def child_outcome(text, role):
+    # Match the child's own line; a later contended result cannot rescue it.
+    pattern = r'result leg=fork-contend role=' + re.escape(role) + r' pid=([0-9]+) outcome=contended attempts=1'
+    matches = [re.fullmatch(pattern, line) for line in text.splitlines()]
+    return [int(match[1]) for match in matches if match]
+
+
+def check_fork(text):
+    first, proof = child_outcome(text, 'child'), child_outcome(text, 'retained-proof')
+    require(len(first) == 1, 'fork child own-line outcome')
+    require(len(proof) == 1 and first[0] != proof[0], 'fork retained-proof outcome')
+    for role in ('child', 'retained-proof'):
+        require('pipe leg=fork-contend role=' + role + ' cloexec=1' in text, 'pipe close-on-exec')
 
 
 def two_process(base, binary, name):
@@ -63,13 +105,42 @@ def two_process(base, binary, name):
         session.command('f')
         require('result leg=hold outcome=held attempts=1\n' in output.read_text(), 'hold outcome')
         attempt(root, 'contended')
-        # No graceful cleanup. Kill and reap, then exactly one fresh attempt.
+        # No graceful cleanup. Reap, then first POSIX attempt / bounded Windows retry.
         session.child.kill()
         session.child.wait(timeout=5)
-        attempt(root, 'held')
+        post_death(root)
         require('done leg=hold' not in output.read_text(), 'death unexpectedly ran cleanup')
     finally:
         session.close()
+
+
+# Exercise the Windows delay/deadline policy on every host; these are authored
+# subprocess outcomes, separate from the real OS release test below.
+def synthetic_release(outcomes, ticks, windows):
+    replies = iter(outcomes)
+    clock = iter(ticks)
+    calls = []
+
+    def try_once(root):
+        calls.append(root)
+        result = next(replies)
+        return subprocess.CompletedProcess([], 0 if result == 'held' else 10, result + '\n', '')
+
+    result = post_death('synthetic-release', windows, try_once, lambda: next(clock), lambda _: None, 'synthetic')
+    return result, len(calls)
+
+
+require(synthetic_release(['contended', 'held'], [0, 100, 200], True) == ((2, 200), 2), 'Windows delayed release')
+for outcomes, ticks, windows, reason in (
+    (['contended'], [0, 10_000_000_001], True, 'post-death acquisition deadline'),
+    (['contended'], [0, 100], False, 'post-death acquisition failed'),
+):
+    try:
+        synthetic_release(outcomes, ticks, windows)
+    except RuntimeError as error:
+        require(reason in str(error), 'wrong release-policy failure')
+    else:
+        raise RuntimeError('release-policy refusal missing')
 
 
 with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
@@ -102,10 +173,9 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
         require('result leg=try outcome=held attempts=1\n' in text, 'try')
         require('result leg=same-process role=second outcome=contended attempts=1\n' in text, 'same-process')
         for leg in ('same-process', 'fork-contend'):
-            require('verify leg=' + leg + ' role=parent outcome=held\n' in text, 'parent survives ' + leg)
+            require('verify leg=' + leg + ' role=parent outcome=held\n' in text, 'parent identity ' + leg)
         if os.name != 'nt':
-            require('result leg=fork-contend role=child pid=' in text and
-                    'outcome=contended attempts=1\n' in text.split('role=child pid=')[1], 'fork child')
+            check_fork(text)
             require('diagnostic-flock result=0 errno=0' in text, 'diagnostic flock')
             require('uid=' in text and 'kernel=' in text, 'identity info')
         else:
@@ -170,6 +240,50 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
             attempt(root, 'contended')
             session.command('q', 'quit')
             require(session.child.wait(timeout=5) == 0, 'alias quit')
+        finally:
+            session.close()
+
+    # In-app mutation partners share the app UID/mount view; no shell access is
+    # needed. The parent verifies on the following two frames without reacquire.
+    for operation in ('replace', 'delete'):
+        mutation_root = base / ('in-app-' + operation)
+        mutation_root.mkdir()
+        plan, output = plan_file(base, 'in-app-' + operation, mutation_root, [operation])
+        session = Session(core, plan)
+        try:
+            session.command('f')
+            text = output.read_text()
+            require('result leg=' + operation + ' role=parent outcome=held attempts=1' in text, 'mutation holder')
+            operation_lines = [line for line in text.splitlines() if line.startswith('operation leg=' + operation + ' ')]
+            require(len(operation_lines) == 1, 'mutation operation result')
+            if os.name == 'nt':
+                match = re.fullmatch(r'operation leg=' + operation + r' role=in-process result=-1 error=([1-9][0-9]*)', operation_lines[0])
+                require(match is not None, 'Windows mutation must record actual refusal')
+                expected, held = 'held', 1
+            else:
+                require(re.fullmatch(r'operation leg=' + operation + r' role=child pid=[0-9]+ result=0 errno=0', operation_lines[0]), 'fork mutation success')
+                require('pipe leg=' + operation + ' role=child cloexec=1' in text, 'mutation pipe close-on-exec')
+                expected, held = 'identity-lost', 0
+            require('done leg=' + operation not in text, 'mutation must wait for next verify frame')
+            session.command('f')
+            require('verify leg=' + operation + ' phase=next frame=2 outcome=' + expected + ' held=' + str(held) + '\n' in output.read_text(), 'next mutation verify')
+            named = mutation_root / 'arcdroid' / 'locks-riscpc' / ('c-' + KEY + '.lock')
+            if os.name != 'nt' and operation == 'delete':
+                require(not named.exists(), 'delete silently reacquired')
+            else:
+                require(named.stat().st_size == 0, 'replacement must be empty')
+            attempt(mutation_root, 'contended' if os.name == 'nt' else 'held')
+            session.command('f')
+            text = output.read_text()
+            require('verify leg=' + operation + ' phase=sticky frame=3 outcome=' + expected + ' held=' + str(held) + '\n' in text, 'sticky mutation verify')
+            if os.name == 'nt':
+                require('result leg=' + operation + ' role=retained-proof outcome=contended attempts=1\n' in text, 'Windows mutation retained lock')
+            require(text.endswith('done leg=' + operation + '\n'), 'mutation done')
+            session.command('f')
+            require(output.read_text() == text, 'mutation ran again after completion')
+            attempt(mutation_root, 'held')
+            session.command('q', 'quit')
+            require(session.child.wait(timeout=5) == 0, 'mutation quit')
         finally:
             session.close()
 
@@ -249,6 +363,48 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
         os.link(protected, output)
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
         require(reply.returncode == 3 and protected.read_text() == 'preserve', 'output hard link clobbered')
+    # QA F-3 reproductions: resolve both existing files and not-yet-created
+    # output parents. Reservation must survive case and directory aliases.
+    def refuse_output(candidate):
+        plan = base / 'reserved.arcprobe'
+        plan.write_text('arc-lock-probe-v1\nroot=' + str(root) + '\noutput=' + str(candidate) + '\nleg=try\n')
+        existed = candidate.exists()
+        before = candidate.read_bytes() if existed and candidate.is_file() else None
+        reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
+        require(reply.returncode == 3 and not reply.stderr, 'reserved output accepted: ' + str(candidate))
+        if before is not None:
+            require(candidate.read_bytes() == before, 'reserved file clobbered')
+        elif not existed:
+            require(not candidate.exists(), 'reserved output created')
+
+    locks = root / 'arcdroid' / 'locks-riscpc'
+    refuse_output(locks)
+    case_locks = root / 'ARCDROID' / 'locks-riscpc'
+    if case_locks.exists() and case_locks.samefile(locks):
+        refuse_output(case_locks / ('c-' + KEY + '.lock'))
+        refuse_output(case_locks / 'new-output.log')
+        refuse_output(root / 'P10B-FLOCK.PROBE')
+        print('case-variant output refusal: passed')
+    else:
+        print('case-variant output refusal: unqualified on case-sensitive host')
+    if os.name != 'nt':
+        alias = base / 'lock-directory-alias'
+        alias.symlink_to(locks, target_is_directory=True)
+        refuse_output(alias / ('c-' + KEY + '.lock'))
+        refuse_output(alias / 'new-output.log')
+        root_alias = base / 'root-output-alias'
+        root_alias.symlink_to(root, target_is_directory=True)
+        refuse_output(root_alias / 'p10b-flock.probe')
+        # Missing diagnostic: resolve its parent and reserve its future leaf.
+        empty = base / 'future-diagnostic'
+        empty.mkdir()
+        empty_alias = base / 'future-diagnostic-alias'
+        empty_alias.symlink_to(empty, target_is_directory=True)
+        plan = base / 'future-diagnostic.arcprobe'
+        candidate = empty_alias / 'P10B-FLOCK.PROBE'
+        plan.write_text('arc-lock-probe-v1\nroot=' + str(empty) + '\noutput=' + str(candidate) + '\nleg=try\n')
+        reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
+        require(reply.returncode == 3 and not candidate.exists(), 'future diagnostic alias accepted')
     sentinel = root / 'arcdroid' / 'locks-riscpc' / ('c-' + KEY + '.lock')
     require(sentinel.stat().st_size == 0, 'sentinel carried data')
     require({p.relative_to(root).as_posix() for p in root.rglob('*')} == {
@@ -256,9 +412,29 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
         *({'p10b-flock.probe'} if os.name != 'nt' else set())}, 'unexpected root writes')
     two_process(base, core, 'death')
     try:
-        two_process(base, mutant, 'mutant')
+        two_process(base, mutants[0], 'mutant')
     except RuntimeError as error:
         require('independent try expected contended' in str(error), 'mutant failed for unrelated reason: ' + str(error))
     else:
         raise RuntimeError('skip-native-lock mutant survived independent process test')
-print('P10b core: all legs, lifecycle, identity loss, confinement, process death/first attempt; skip-lock mutant killed')
+    if os.name != 'nt':
+        plan, output = plan_file(base, 'child-unlock', root, ['fork-contend'])
+        session = Session(mutants[1], plan)
+        try:
+            session.command('f')
+            text = output.read_text()
+            require(len(child_outcome(text, 'child')) == 1, 'mutant must first contend normally')
+            try:
+                check_fork(text)
+            except RuntimeError as error:
+                require(str(error) == 'fork retained-proof outcome', 'unrelated child-unlock failure')
+            else:
+                raise RuntimeError('QA inherited-unlock mutant survived')
+            session.command('q', 'quit')
+            require(session.child.wait(timeout=5) == 0, 'child-unlock quit')
+        finally:
+            session.close()
+        require(not child_outcome('result leg=fork-contend role=child pid=1 outcome=held attempts=1\n'
+                                  'later outcome=contended attempts=1\n', 'child'), 'unanchored child parser')
+print('P10b core: all legs, lifecycle, identity, confinement, process death; skip-lock mutant killed; ' +
+      ('inherited-unlock mutant killed' if os.name != 'nt' else 'inherited-unlock mutant unavailable on Windows'))

@@ -391,7 +391,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32 OR ANDROID))
   # W9: independent libretro tooling, outside every shipping source inventory.
   # No install/package rule and no test/fault definitions on production modules.
   function(arcdroid_lock_probe target lock_source)
-    add_library(${target} SHARED tests/rpc_lock_probe_core.c ${lock_source} libretro/arc_io.c)
+    set(probe_source tests/rpc_lock_probe_core.c)
+    if(ARGC GREATER 2)
+      set(probe_source "${ARGV2}")
+    endif()
+    add_library(${target} SHARED ${probe_source} ${lock_source} libretro/arc_io.c)
     target_include_directories(${target} PRIVATE libretro libretro/include)
     target_compile_options(${target} PRIVATE -Wall -Wextra -Werror=implicit-function-declaration -fvisibility=hidden)
     set_target_properties(${target} PROPERTIES PREFIX "")
@@ -436,10 +440,25 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32 OR ANDROID))
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS libretro/arc_lock.c)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_mutant.c" "${lock_probe_mutant}")
     arcdroid_lock_probe(arcdroid_lockprobe_mutant "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_mutant.c")
+    set(lock_probe_mutants $<TARGET_FILE:arcdroid_lockprobe_mutant>)
+    if(NOT WIN32)
+      # QA F-2: the child drops the inherited lock after its own contended try.
+      file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_probe_core.c" probe_original)
+      string(REPLACE "/* W9: never unlock the inherited parent description. */"
+        "arc_lock_release(parent); /* QA F-2 inherited-unlock mutant */" probe_mutant "${probe_original}")
+      if(probe_mutant STREQUAL probe_original)
+        message(FATAL_ERROR "W9 inherited-unlock mutant anchor missing")
+      endif()
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tests/rpc_lock_probe_core.c)
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_child_unlock.c" "${probe_mutant}")
+      arcdroid_lock_probe(arcdroid_lockprobe_child_unlock libretro/arc_lock.c
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_child_unlock.c")
+      list(APPEND lock_probe_mutants $<TARGET_FILE:arcdroid_lockprobe_child_unlock>)
+    endif()
     add_test(NAME rpc-lock-probe-core COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_probe_test.py"
       $<TARGET_FILE:rpc_lock_probe_loader> $<TARGET_FILE:arcdroid_lockprobe_libretro>
-      $<TARGET_FILE:rpc_lock_process> $<TARGET_FILE:arcdroid_lockprobe_mutant>)
+      $<TARGET_FILE:rpc_lock_process> ${lock_probe_mutants})
     set_tests_properties(rpc-lock-probe-core PROPERTIES TIMEOUT 30)
   endif()
   if(NOT CMAKE_CROSSCOMPILING OR WIN32)

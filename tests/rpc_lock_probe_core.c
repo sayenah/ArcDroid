@@ -27,8 +27,8 @@
 #define CAP 4096
 #define MAX_LEGS 16
 static const char key[] = "0123456789abcdef0123456789abcdef01234567";
-typedef enum { INFO, TRY, SAME, FORK, HOLD } Leg;
-static const char *const leg_names[] = {"info", "try", "same-process", "fork-contend", "hold"};
+typedef enum { INFO, TRY, SAME, FORK, REPLACE_LEG, DELETE_LEG, HOLD } Leg;
+static const char *const leg_names[] = {"info", "try", "same-process", "fork-contend", "replace", "delete", "hold"};
 static const char *const outcomes[] = {"held", "contended", "transient", "unsupported",
     "root-refused", "create-error", "lock-error", "identity-lost"};
 static struct {
@@ -39,6 +39,9 @@ static struct {
     FILE *log;
     ArcLock holder;
     bool holding, failed;
+    unsigned mutation_frame;
+    Leg mutation_leg;
+    bool mutation_succeeded;
     ArcLockResult last;
 } probe;
 static retro_video_refresh_t video;
@@ -224,6 +227,72 @@ static ArcLockResult acquire(ArcLock *lock, unsigned *attempts)
     *attempts = 1;
     return arc_lock_acquire(lock);
 }
+/* stat / file-ID queries follow aliases, including parent-directory aliases.
+ * Missing protected files are normal before the first leg; other uncertainty
+ * refuses the plan. No namespace is created during these admission queries. */
+typedef struct { uint64_t device, inode; } FileId;
+static int resolved_id(const char *path, FileId *id)
+{
+#if defined(_WIN32)
+    WCHAR wide[CAP];
+    if (!wide_path(path, wide)) return -1;
+    HANDLE h = CreateFileW(wide, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? 0 : -1;
+    }
+    BY_HANDLE_FILE_INFORMATION s;
+    bool ok = GetFileInformationByHandle(h, &s);
+    CloseHandle(h);
+    if (!ok) return -1;
+    *id = (FileId){s.dwVolumeSerialNumber, ((uint64_t)s.nFileIndexHigh << 32) | s.nFileIndexLow};
+#else
+    struct stat s;
+    if (stat(path, &s)) return errno == ENOENT ? 0 : -1;
+    *id = (FileId){(uint64_t)s.st_dev, (uint64_t)s.st_ino};
+#endif
+    return 1;
+}
+static bool same_id(FileId a, FileId b)
+{ return a.device == b.device && a.inode == b.inode; }
+static bool output_safe(const char *plan)
+{
+    char parent[CAP], protected[CAP];
+    strcpy(parent, probe.output);
+    char *leaf = strrchr(parent, '/');
+    if (!leaf || !leaf[1]) return false;
+    const char *output_leaf = probe.output + (leaf - parent) + 1;
+    /* Keep native filesystem roots intact. */
+    if (leaf == parent || (leaf == parent + 2 && parent[1] == ':')) leaf[1] = 0;
+    else *leaf = 0;
+    FileId output_id, parent_id, id;
+    int output_exists = resolved_id(probe.output, &output_id);
+    if (output_exists < 0 || resolved_id(parent, &parent_id) != 1) return false;
+    const char *const names[] = {"arcdroid/locks-riscpc",
+        "arcdroid/locks-riscpc/c-0123456789abcdef0123456789abcdef01234567.lock",
+        "p10b-flock.probe", "p10b-replace.probe"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        root_path(protected, names[i]);
+        int exists = resolved_id(protected, &id);
+        if (exists < 0 || (exists && (same_id(id, parent_id) ||
+            (output_exists && same_id(id, output_id))))) return false;
+    }
+    /* Before diagnostic/fixture creation there is no inode to compare. Resolve
+     * its parent and reserve the ASCII leaf, including a case variant. */
+    if (resolved_id(probe.root, &id) != 1) return false;
+    if (same_id(id, parent_id)) {
+        char lower[CAP]; size_t i;
+        for (i = 0; output_leaf[i]; ++i) {
+            char c = output_leaf[i]; lower[i] = c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+        }
+        lower[i] = 0;
+        if (!strcmp(lower, "p10b-flock.probe") || !strcmp(lower, "p10b-replace.probe")) return false;
+    }
+    int exists = resolved_id(plan, &id);
+    return exists == 1 && !(output_exists && same_id(id, output_id));
+}
 static void identity_info(const char *name, const char *path)
 {
 #if defined(_WIN32)
@@ -302,6 +371,91 @@ static void info(void)
     arc_lock_release(&named);
     line("done leg=info");
 }
+typedef struct { int result; unsigned error; } ChildResult;
+static ChildResult mutate(Leg leg, const char *sentinel, const char *replacement)
+{
+#if defined(_WIN32)
+    WCHAR target[CAP], source[CAP];
+    if (!wide_path(sentinel, target) || (leg == REPLACE_LEG && !wide_path(replacement, source)))
+        return (ChildResult){-1, ERROR_NO_UNICODE_TRANSLATION};
+    BOOL ok = leg == REPLACE_LEG ? MoveFileExW(source, target, MOVEFILE_REPLACE_EXISTING) : DeleteFileW(target);
+    return (ChildResult){ok ? 0 : -1, ok ? 0 : GetLastError()};
+#else
+    int result = leg == REPLACE_LEG ? rename(replacement, sentinel) : unlink(sentinel);
+    return (ChildResult){result, result ? (unsigned)errno : 0};
+#endif
+}
+#if !defined(_WIN32)
+static bool result_pipe(int channel[2])
+{
+#if defined(__linux__)
+    return pipe2(channel, O_CLOEXEC) == 0;
+#else
+    /* macOS has no pipe2. Set both flags before our fork. */
+    if (pipe(channel)) return false;
+    if (fcntl(channel[0], F_SETFD, FD_CLOEXEC) == 0 &&
+        fcntl(channel[1], F_SETFD, FD_CLOEXEC) == 0) return true;
+    int error = errno; close(channel[0]); close(channel[1]); errno = error;
+    return false;
+#endif
+}
+static bool fork_result(Leg leg, ArcLock *parent, ArcLock *second,
+                        const char *replacement, const char *role, ChildResult *report)
+{
+    int channel[2];
+    if (!result_pipe(channel)) { line("result leg=%s pipe-errno=%d", leg_names[leg], errno); return false; }
+    int read_flags = fcntl(channel[0], F_GETFD), write_flags = fcntl(channel[1], F_GETFD);
+    if (read_flags < 0 || write_flags < 0 || !(read_flags & FD_CLOEXEC) || !(write_flags & FD_CLOEXEC)) {
+        close(channel[0]); close(channel[1]);
+        line("result leg=%s error=pipe-cloexec", leg_names[leg]); return false;
+    }
+    if (!line("pipe leg=%s role=%s cloexec=1", leg_names[leg], role)) {
+        close(channel[0]); close(channel[1]); return false;
+    }
+    /* Namespace preparation and fixture creation are complete. The child uses
+     * only native operations / the stat-only bridge, no stdio or allocation. */
+    pid_t child = fork(); int fork_error = errno;
+    if (!child) {
+        close(channel[0]);
+        ChildResult reply;
+        if (leg == FORK) {
+            reply = (ChildResult){(int)arc_lock_acquire(second), 0};
+            arc_lock_release(second);
+            /* W9: never unlock the inherited parent description. */
+        } else reply = mutate(leg, parent->path, replacement);
+        ssize_t wrote;
+        do { wrote = write(channel[1], &reply, sizeof(reply)); } while (wrote < 0 && errno == EINTR);
+        _exit(wrote == sizeof(reply) ? 0 : 1);
+    }
+    close(channel[1]);
+    bool ok = false;
+    if (child < 0) line("result leg=%s fork-errno=%d", leg_names[leg], fork_error);
+    else {
+        int status = -1; ssize_t got;
+        do { got = read(channel[0], report, sizeof(*report)); } while (got < 0 && errno == EINTR);
+        pid_t reaped;
+        do { reaped = waitpid(child, &status, 0); } while (reaped < 0 && errno == EINTR);
+        ok = got == sizeof(*report) && reaped == child && WIFEXITED(status) && !WEXITSTATUS(status);
+        if (!ok) line("result leg=%s error=child status=%d", leg_names[leg], status);
+        else if (leg == FORK && report->result >= 0 && report->result <= ARC_LOCK_IDENTITY_LOST)
+            line("result leg=fork-contend role=%s pid=%ld outcome=%s attempts=1", role, (long)child, outcomes[report->result]);
+        else if (leg != FORK) line("operation leg=%s role=child pid=%ld result=%d errno=%u",
+            leg_names[leg], (long)child, report->result, report->error);
+        else ok = false;
+    }
+    close(channel[0]);
+    return ok;
+}
+static void fork_contender(ArcLock *parent, const char *role)
+{
+    ArcLock second = {0};
+    ArcLockResult ready = prepare(&second);
+    ChildResult report;
+    if (ready != ARC_LOCK_TRANSIENT) line("result leg=fork-contend role=%s prepare=%s", role, outcomes[ready]);
+    else (void)fork_result(FORK, parent, &second, NULL, role, &report);
+    arc_lock_release(&second);
+}
+#endif
 static void contention(Leg leg)
 {
     ArcLock first = {0}, second = {0};
@@ -317,38 +471,10 @@ static void contention(Leg leg)
 #if defined(_WIN32)
             line("result leg=fork-contend outcome=unavailable platform=Windows");
 #else
-            ArcLockResult ready = prepare(&second);
-            int channel[2];
-            if (ready != ARC_LOCK_TRANSIENT) line("result leg=fork-contend prepare=%s", outcomes[ready]);
-            else if (pipe(channel)) line("result leg=fork-contend pipe-errno=%d", errno);
-            else {
-                /* Child performs no stdio or allocator work in RetroArch's
-                 * multithreaded process. Initialize/namespace walking is above.
-                 * Never unlock the inherited parent description in the child. */
-                pid_t child = fork();
-                int fork_error = errno;
-                if (!child) {
-                    close(channel[0]);
-                    int result = (int)arc_lock_acquire(&second);
-                    arc_lock_release(&second);
-                    ssize_t wrote = write(channel[1], &result, sizeof(result));
-                    _exit(wrote == sizeof(result) ? 0 : 1);
-                }
-                close(channel[1]);
-                if (child < 0) line("result leg=fork-contend fork-errno=%d", fork_error);
-                else {
-                    int result = -1, status = -1;
-                    ssize_t got;
-                    do { got = read(channel[0], &result, sizeof(result)); } while (got < 0 && errno == EINTR);
-                    pid_t reaped;
-                    do { reaped = waitpid(child, &status, 0); } while (reaped < 0 && errno == EINTR);
-                    if (got == sizeof(result) && result >= 0 && result <= ARC_LOCK_IDENTITY_LOST &&
-                        reaped == child && WIFEXITED(status) && !WEXITSTATUS(status))
-                        line("result leg=fork-contend role=child pid=%ld outcome=%s attempts=1", (long)child, outcomes[result]);
-                    else line("result leg=fork-contend error=child status=%d", status);
-                }
-                close(channel[0]);
-            }
+            fork_contender(&first, "child");
+            /* Identity alone cannot detect an inherited-description unlock.
+             * A new process/description proves native exclusion after reap. */
+            fork_contender(&first, "retained-proof");
 #endif
         }
         line("verify leg=%s role=parent outcome=%s", leg_names[leg], outcomes[arc_lock_verify(&first)]);
@@ -356,11 +482,78 @@ static void contention(Leg leg)
     arc_lock_release(&first);
     line("done leg=%s", leg_names[leg]);
 }
+static void mutation_begin(Leg leg)
+{
+    unsigned attempts;
+    ArcLockResult result = acquire(&probe.holder, &attempts);
+    if (!line("result leg=%s role=parent outcome=%s attempts=%u", leg_names[leg], outcomes[result], attempts)) {
+        arc_lock_release(&probe.holder); return;
+    }
+    if (result != ARC_LOCK_HELD) { arc_lock_release(&probe.holder); line("done leg=%s", leg_names[leg]); return; }
+    char replacement[CAP]; root_path(replacement, "p10b-replace.probe");
+    if (leg == REPLACE_LEG) {
+#if defined(_WIN32)
+        WCHAR wide[CAP];
+        HANDLE file = wide_path(replacement, wide) ? CreateFileW(wide, GENERIC_WRITE, 0,
+            NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL) : INVALID_HANDLE_VALUE;
+        unsigned error = file == INVALID_HANDLE_VALUE ? GetLastError() : 0;
+        bool created = file != INVALID_HANDLE_VALUE;
+        if (created) CloseHandle(file);
+#else
+        int fd = open(replacement, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW, 0600);
+        unsigned error = fd < 0 ? (unsigned)errno : 0;
+        bool created = fd >= 0;
+        if (created) close(fd);
+#endif
+        if (!created) {
+            line("fixture leg=replace error=%u", error);
+            arc_lock_release(&probe.holder); line("done leg=replace"); return;
+        }
+    }
+    ChildResult operation = {-1, 0};
+#if defined(_WIN32)
+    operation = mutate(leg, probe.holder.path, replacement);
+    line("operation leg=%s role=in-process result=%d error=%u", leg_names[leg], operation.result, operation.error);
+    bool completed = true;
+#else
+    bool completed = fork_result(leg, &probe.holder, NULL, replacement, "child", &operation);
+#endif
+    if (leg == REPLACE_LEG && (!completed || operation.result)) {
+#if defined(_WIN32)
+        WCHAR wide[CAP]; bool ok = wide_path(replacement, wide) && DeleteFileW(wide);
+        unsigned error = ok ? 0 : GetLastError();
+#else
+        bool ok = unlink(replacement) == 0;
+        unsigned error = ok ? 0 : (unsigned)errno;
+#endif
+        line("cleanup leg=replace result=%d error=%u", ok ? 0 : -1, error);
+    }
+    probe.mutation_leg = leg; probe.mutation_frame = 1;
+    probe.mutation_succeeded = completed && operation.result == 0;
+}
+static void mutation_verify(void)
+{
+    Leg leg = probe.mutation_leg;
+    ArcLockResult result = arc_lock_verify(&probe.holder);
+    line("verify leg=%s phase=%s frame=%llu outcome=%s held=%d", leg_names[leg],
+        probe.mutation_frame == 1 ? "next" : "sticky", (unsigned long long)probe.frame,
+        outcomes[result], (int)arc_lock_held(&probe.holder));
+    if (++probe.mutation_frame == 3) {
+        if (!probe.mutation_succeeded) {
+            ArcLock contender = {0}; unsigned attempts;
+            ArcLockResult exclusion = acquire(&contender, &attempts);
+            line("result leg=%s role=retained-proof outcome=%s attempts=%u", leg_names[leg], outcomes[exclusion], attempts);
+            arc_lock_release(&contender);
+        }
+        arc_lock_release(&probe.holder); probe.mutation_frame = 0;
+        line("done leg=%s", leg_names[leg]);
+    }
+}
 static void finish(const char *reason)
 {
-    if (probe.holding) {
+    if (probe.holding || probe.mutation_frame) {
         arc_lock_release(&probe.holder);
-        line("done leg=hold reason=%s", reason);
+        line("done leg=%s reason=%s", probe.holding ? "hold" : leg_names[probe.mutation_leg], reason);
     }
     if (probe.log) fclose(probe.log);
     memset(&probe, 0, sizeof(probe));
@@ -400,7 +593,7 @@ static bool read_plan(const char *path)
         path_prefix(probe.root, probe.output, strlen(probe.output) + 1) ||
         path_prefix(probe.output, owned, strlen(owned)) || !plain_entry(probe.output)) return false;
     root_path(owned, "p10b-flock.probe");
-    return !path_prefix(owned, probe.output, strlen(probe.output) + 1);
+    return !path_prefix(owned, probe.output, strlen(probe.output) + 1) && output_safe(path);
 }
 
 RETRO_API void retro_set_environment(retro_environment_t cb) { environment = cb; }
@@ -436,7 +629,8 @@ RETRO_API void retro_run(void)
     static const int16_t silence[800 * 2] = {0};
     if (probe.log && !probe.failed) {
         ++probe.frame;
-        if (probe.holding) {
+        if (probe.mutation_frame) mutation_verify();
+        else if (probe.holding) {
             ArcLockResult result = arc_lock_verify(&probe.holder);
             if (result != probe.last) {
                 line("verify leg=hold frame=%llu outcome=%s", (unsigned long long)probe.frame, outcomes[result]);
@@ -446,6 +640,7 @@ RETRO_API void retro_run(void)
             Leg leg = probe.legs[probe.next++];
             if (leg == INFO) info();
             else if (leg == SAME || leg == FORK) contention(leg);
+            else if (leg == REPLACE_LEG || leg == DELETE_LEG) mutation_begin(leg);
             else {
                 unsigned attempts;
                 ArcLockResult result = acquire(&probe.holder, &attempts);
