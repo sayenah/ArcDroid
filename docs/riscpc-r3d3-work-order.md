@@ -66,6 +66,8 @@
 | Hold table | R-6 per-pair bounds. | 25 s for every unmeasured pair. |
 | §7 texts | N-13 to N-18, the redaction tokens, and the redacted form of every catalogue notice that carries a member name or path (R-5). | No default. They are required before `slice/r3d3-host` dispatch and not needed for `slice/r3d3-own`. |
 
+**P10b (S68, complete):** Mac (APFS), Windows (NTFS) and the Odin3 (shared, internal app-private and `Android/data` storage, from RetroArch's own process through the W9 probe core) PASS on exclusion, post-death reacquire and deletion detection; the same-UID shared-storage rename-over residual is recorded under R-10's accepted residuals (D-208). **`slice/r3d3-host` Run A dispatched (S68).**
+
 **Status (S68):** the §7 texts, redaction tokens, redacted and log forms are frozen in `docs/riscpc-ordinary-load-plan.md` §7a, which also records the P1 source-reading outcome and adopts the stated defaults for P1b, P3, P8 and the hold table. §7a rules that the staging `arc_log` lines reached from the host's media callbacks are redacted in RiscPC sessions (R-5's carve-out is the shared `arc_message` path only) and places AC-3's sentinels in a boot-archive member, a content ZIP member, the content leaf and the save path. P10b: Mac and Windows PASS (S68); Odin3 legs wait for W9 (`docs/handoff.md`).
 
 **What this work order reconciles.** It brings §6.3 of `docs/riscpc-ordinary-load-plan.md` into line with:
@@ -503,6 +505,7 @@ Automatic lease breaking is **withdrawn**. The owner record, nonce, renewal, fen
   - A holder blocked in a hung FUSE daemon (D-state), a Windows error-report dialog or a debugger keeps the lock until it exits. The contender gets N-14 within W.
   - Windows release latency after termination is OS-dependent; the bound is W.
   - Android 10 and earlier (sdcardfs) and kernels without OFD are covered by PRD Q3 (Next 2).
+  - **Same-UID rename-over on Android shared storage (P10b, S68, D-208).** On the Odin3's `/storage/emulated` FUSE view, a rename-over of the held sentinel performed by RetroArch's own app UID is neither detected nor excluded: the FUSE daemon answers `fstat` on the held descriptor by the current path, so descriptor and path identity agree on the new file, and a second process then acquires the replacement. A deletion is detected at the next frame; a rename-over by another UID (the shell) is detected at once; internal app-private and `Android/data` storage detect a same-UID rename-over at the next frame. No cooperating client renames sentinels and RetroArch does not operate on `locks-riscpc/`, so this is recorded, not designed against; the design note states it.
 
 ### R-11 Fault-path persistence (J15, Amendment 8; F4)
 
