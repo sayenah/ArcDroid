@@ -41,7 +41,8 @@
         "observation-r3c1",
         "profiling-6b-p0i",
         "measurement-6b-1a0",
-        "lockstep-6b-m2b"
+        "lockstep-6b-m2b",
+        "launch-retirement-d204"
       ]
     },
     {
@@ -532,6 +533,14 @@
         "src/ide.c"
       ],
       "reason": "D-200: compiled-out phase/helper/event hooks and per-TU schema serialization; no shipping change."
+    },
+    {
+      "id": "launch-retirement-d204",
+      "group": "host boundary",
+      "files": [
+        "src/arm.c"
+      ],
+      "reason": "D-204: yield the observing CPU after the consuming instruction; service preparation-owned retirement outside the SWI callback before another guest instruction."
     }
   ],
   "adapted_sources": [

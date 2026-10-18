@@ -29,7 +29,7 @@ if mode=='admission':
     original=(directory/'audio-0.arcplan').read_text()
     with tempfile.TemporaryDirectory(prefix='arc-plan-admission-') as temp:
         # All named files remain external; the core never writes capture state.
-        for bad in [original+'version=1\n',original+'unknown=1\n',original.replace('model=arm610','model=arm810'),
+        for bad in [original+'version=1\n',original+'unknown=1\n',original+'launch_action=boot\nlaunch_session=1\n',original.replace('model=arm610','model=arm810'),
                     original+'rate_mips=0\n',original+'rate_mips=101\n',original+'rate_mips=-1\n',
                     original.replace('rtc_epoch=0','rtc_epoch=13569465600'),
                     original.replace('firmware=audio-0.rom','firmware=../audio-0.rom'),

@@ -5,6 +5,7 @@
 #include "rpc_cmos_store.h"
 #include "rpc_hd_store.h"
 #include "rpc_preparation.h"
+#include "playlist.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
@@ -27,6 +28,7 @@ static bool media_start(char *error,size_t size)
 { return (!media_content[0]&&!media_helper[0]) || (media_callbacks.start && media_callbacks.start(media_content,media_helper,error,size)); }
 
 static ArcRpcPreparation *preparation;
+static unsigned launch_last_delivery=UINT_MAX,launch_last_outcome=UINT_MAX;
 static ArcRpcHdStore *hard_disc;
 static char hd_save[PATH_LIMIT],hd_content[41],hd_import[PATH_LIMIT],hd_system[PATH_LIMIT];
 static bool hd_populate;
@@ -134,6 +136,18 @@ static void preparation_log(void *opaque,const char *s)
 static void preparation_started(void *opaque,bool factory)
 { (void)opaque;if(!factory)arc_engine_test_plan_rate(pending_rate);else observation_start(); }
 static void preparation_diagnostics(void *opaque) { (void)opaque;observation_frame(); }
+static bool preparation_restage(void *opaque,char *error,size_t n)
+{
+    (void)opaque;if(!media_callbacks.restage_drive0 || !media_callbacks.restage_drive0(error,n))return false;
+    return arc_riscpc_preparation_helper_write_policy(preparation,media_callbacks.drive1_writable && media_callbacks.drive1_writable());
+}
+static bool preparation_reset_rebind(void *opaque,char *error,size_t n)
+{
+    (void)opaque;if(!arc_engine_reset(error,n))return false;
+    arc_engine_rpc_observers_bind(verified_catalogue);arc_test_plan_reset_input();return true;
+}
+static bool preparation_media_identity(void *opaque,uint8_t identity[32])
+{(void)opaque;return media_callbacks.media_identity && media_callbacks.media_identity(identity);}
 static void observer_start(void)
 {
     if(observers_off){
@@ -160,6 +174,13 @@ static void preparation_attached(void *opaque)
 }
 static void observer_status(void)
 {
+    if(preparation){ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(preparation,&a);
+        if(a.session && (launch_last_delivery!=a.delivery || launch_last_outcome!=a.outcome)){
+            if(plan_log){char line[160];snprintf(line,sizeof(line),"RPC attempt: delivery=%u outcome=%u start-returned=%u barrier=%u",
+                a.delivery,a.outcome,a.start_returned,a.resume_allowed);plan_log(line);}
+            launch_last_delivery=a.delivery;launch_last_outcome=a.outcome;
+        }
+    }
     if(!observer_cells && !observer_launch[0] && !observer_boot)return;
     ArcErrorBox box;ArcLaunchOutcome launch;arc_engine_error_snapshot(&box);arc_engine_launch_outcome_snapshot(&launch);
     unsigned status=(box.recognised_open?1u:0u)|(box.answer_available?2u:0u)|(box.modal_unknown?4u:0u)|
@@ -173,6 +194,10 @@ static bool preparation_attach(void *opaque,char *e,size_t n)
 {
     (void)opaque;
     bool ok=media_start(e,n);
+    if(ok && *media_helper){ArcEngineMedia view;
+        ok=media_callbacks.drive1_view && media_callbacks.drive1_view(&view) &&
+            arc_riscpc_preparation_helper_override(preparation,&view);
+    }
     hard_disc=arc_riscpc_preparation_disc(preparation);
     if(ok && hard_disc){ArcIdeBackend backend;arc_riscpc_hd_backend(hard_disc,&backend);
         hd_delegate=backend;backend.read=hd_read;backend.write=hd_write;
@@ -182,6 +207,10 @@ static bool preparation_attach(void *opaque,char *e,size_t n)
 }
 RETRO_API void arc_test_plan_preparation_stats(ArcRpcPreparationStats *s)
 { arc_riscpc_preparation_stats(preparation,s); }
+RETRO_API void arc_test_plan_launch_snapshot(ArcRpcLaunchAttempt *a)
+{arc_riscpc_preparation_attempt(preparation,a);}
+RETRO_API void arc_test_plan_preparation_restart(void)
+{arc_test_plan_reset();}
 RETRO_API unsigned arc_test_plan_cmos_phase(void)
 {
     if(!preparation)return 0;
@@ -291,6 +320,7 @@ void arc_test_plan_clear(void)
     verified_catalogue=0;gate_release_fail=false;
     observers_off=false;
     observer_cells=observer_poll_r1=observer_poll_r2=observer_forms=0;observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
+    launch_last_delivery=launch_last_outcome=UINT_MAX;
     observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
     observer_buttons_set=false;memset(observer_buttons,0,sizeof(observer_buttons));observer_launch[0]=0;
     observer_boot=observer_armed=false;observer_arm_frame=0;observer_last_status=UINT_MAX;
@@ -399,13 +429,56 @@ static bool disk_script_load(const char *path,const char *system)
         }line=end;
     }free(text);return valid;
 }
+/* Test-only request construction. Product requests are verified by preparation
+ * against the current writable HD before they can be issued or attached. */
+static bool launch_plan(const char *action,const char *target,const char *index,ArcRpcLaunchPlan *plan)
+{
+    void *raw=NULL;size_t size=0;ArcPlaylist playlist={0};
+    if(!arc_io_read_all_limit(media_content,&raw,&size,8388608,NULL))return false;
+#ifdef _WIN32
+    const bool windows=true;
+#else
+    const bool windows=false;
+#endif
+    bool set=arc_playlist_detect(media_content,raw,size),ok=true;
+    if(set)ok=arc_playlist_parse(media_content,raw,size,windows,&playlist,NULL,NULL,0);
+    else {playlist.count=1;snprintf(playlist.entries[0].path,sizeof(playlist.entries[0].path),"%s",media_content);}
+    free(raw);ArcSha256 hash;arc_sha256_init(&hash);
+    static const char domain[]="ArcDroid RPC ordered media 1";
+    arc_sha256_update(&hash,domain,sizeof(domain));ArcLaunchDiscovery discovery={0};
+    for(unsigned i=0;i<playlist.count && ok;++i){
+        raw=NULL;size=0;ArcMediaInfo info;ArcJfdImage jfd={0};
+        ok=arc_io_read_all_limit(playlist.entries[i].path,&raw,&size,8388608,NULL) &&
+            arc_media_inspect(playlist.entries[i].path,raw,size,&info,NULL,0);
+        if(ok){uint8_t length[8];for(unsigned k=0;k<8;++k)length[k]=(uint8_t)((uint64_t)size>>(8*k));
+            arc_sha256_update(&hash,length,8);arc_sha256_update(&hash,raw,size);
+            if(!i && strcmp(action,"product")){
+                if(info.kind==ARC_MEDIA_JFD)ok=arc_jfd_parse(raw,size,&jfd,NULL,0);
+                if(ok)ok=info.kind==ARC_MEDIA_JFD?
+                    arc_launch_discover(NULL,0,NULL,&jfd,&discovery):
+                    arc_launch_discover(raw,size,&info,NULL,&discovery);
+            }
+        }arc_jfd_free(&jfd);free(raw);
+    }
+    if(!ok)return false;uint8_t media[32];arc_sha256_final(&hash,media);
+    if(!strcmp(action,"product")){
+        if(!target || index || strlen(target)>ARC_RPC_PLAN_TARGET_MAX)return false;
+        memset(plan,0,sizeof(*plan));plan->action=ARC_RPC_PLAN_PRODUCT;memcpy(plan->media,media,32);strcpy(plan->target,target);
+        uint8_t digest[32];return arc_riscpc_plan_digest(plan,digest);
+    }
+    if(target)return false;uint64_t selected=0;
+    if(index && !number(index,ARC_LAUNCH_MAX_CANDIDATES-1,&selected))return false;
+    ArcRpcPlanAction kind=!strcmp(action,"boot")?ARC_RPC_PLAN_BOOT:!strcmp(action,"application")?ARC_RPC_PLAN_APPLICATION:0;
+    return kind && arc_riscpc_plan_build(&discovery,index?(int)selected:-1,kind,false,media,plan)==ARC_RPC_PLAN_OK;
+}
 bool arc_test_plan_load(const char *path, const char *system, const char *save, char *error, size_t error_size)
 {
     arc_test_plan_clear();observation_final_failure=false;
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "gate_release_fail", "observation_status", "observer_error_numbers"};
-    char *values[37] = {0}; bool valid = true;
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "gate_release_fail", "observation_status", "launch_action", "launch_session", "launch_target", "launch_index", "observer_error_numbers"};
+    enum {KEY_COUNT=sizeof(keys)/sizeof(keys[0])};
+    char *values[KEY_COUNT] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
         char *end = strchr(line, '\n'); if (end) *end++ = 0;
         char *s = trim(line);
@@ -413,8 +486,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             char *equal = strchr(s, '=');
             if (!equal) { valid = false; break; }
             *equal++ = 0; s = trim(s); equal = trim(equal);
-            unsigned k; for (k = 0; k < 37 && strcmp(keys[k], s); ++k) {}
-            if (k == 37 || values[k] || (!*equal && k!=11)) { valid = false; break; }
+            unsigned k; for (k = 0; k < KEY_COUNT && strcmp(keys[k], s); ++k) {}
+            if (k == KEY_COUNT || values[k] || (!*equal && k!=11)) { valid = false; break; }
             values[k] = equal;
         }
         line = end;
@@ -508,9 +581,10 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         valid=observation_enabled && !strcmp(values[35],"authored");
         observation_selection.authored_status=valid;
     }
-    if(valid && values[36]){
-        valid=!strcmp(values[36],"zero") || !strcmp(values[36],"ordinary");
-        if(valid)observer_error_numbers=!strcmp(values[36],"ordinary")?ARC_ERROR_NUMBER_ORDINARY:ARC_ERROR_NUMBER_ZERO;
+    if(!persist && (values[36] || values[37] || values[38] || values[39]))valid=false;
+    if(valid && values[40]){
+        valid=!strcmp(values[40],"zero") || !strcmp(values[40],"ordinary");
+        if(valid)observer_error_numbers=!strcmp(values[40],"ordinary")?ARC_ERROR_NUMBER_ORDINARY:ARC_ERROR_NUMBER_ZERO;
     }
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&
@@ -521,14 +595,23 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     else {
         if(valid){
             ArcRpcPreparationRequest request={0};request.firmware=rom;request.firmware_size=rom_size;
+            ArcRpcLaunchPlan launch;
+            if(values[36]){
+                valid=hd_populate && !values[11] && values[37] &&
+                    number(values[37],UINT64_MAX,&request.session_id) && request.session_id &&
+                    launch_plan(values[36],values[38],values[39],&launch);
+                if(valid)request.launch=&launch;
+            }else if(values[37] || values[38] || values[39])valid=false;
             request.key=key;request.save=save;request.system=system;request.epoch=epoch;
             request.seed_path=values[5]?seed_path:NULL;request.hard_disc=hd_enabled;request.populate=hd_populate;
             request.helper_override=values[11]!=NULL;
             request.import_path=hd_import[0]?hd_import:NULL;
             ArcRpcPreparationHost host={0};host.notice=preparation_notice;host.log=preparation_log;
             host.attach=preparation_attach;host.started=preparation_started;host.diagnostics=preparation_diagnostics;host.attached=preparation_attached;
+            host.restage_drive0=preparation_restage;host.reset_rebind=preparation_reset_rebind;
+            host.media_identity=preparation_media_identity;
             pending_rate=(unsigned)rate;
-            preparation=arc_riscpc_preparation_low_level(&request,&host,error,error_size);
+            preparation=valid?arc_riscpc_preparation_low_level(&request,&host,error,error_size):NULL;
             valid=preparation!=NULL;
         }
     }

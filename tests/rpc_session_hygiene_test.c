@@ -286,7 +286,15 @@ int main(int argc,char **argv)
             else if(scenario==7){for(unsigned i=0;i<4;++i)h_run();assert(h_state().retained&2u);}
 
             else if(scenario==2||scenario==3){for(unsigned i=0;i<8;++i)h_run();assert(phase()==1);}
-            else {settle(h_run);assert(phase()==0||phase()==2);h_run();if(scenario==4){h_fault();h_run();assert(h_state().fault);}}
+            else {settle(h_run);assert(phase()==0||phase()==2);h_run();if(scenario==4){
+                h_fault();h_run();s=h_state();
+                /* Part 2 contains a live fault by stopping preparation's engine
+                 * and retaining its terminal notice. Dispatcher identity is
+                 * neutral immediately, while the failed frontend session stays. */
+                assert(phase()==3 && terminal_active && (s.retained&32u));
+                assert(s.kind==ARC_SESSION_KIND_RISCPC && s.id==last_id);
+                assert(!s.engine_rpc && !s.fault && !s.fault_text);
+            }}
             if(scenario==0){uint64_t kept=h_state().id;h_reset();assert(h_state().id==kept);h_run();}
             if(scenario==0||scenario==7){
                 h_keyboard.callback(true,RETROK_a,0,0);h_pad=1;h_run();

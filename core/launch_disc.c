@@ -73,6 +73,36 @@ bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate)
           arc_leaf_representable(&candidate->name);
 }
 
+/* Shared literal admission for RPC plans. Does not build the legacy Desktop
+ * script or execute sibling boots. Discovery owns parent uniqueness proof. */
+bool arc_launch_candidate_path(const ArcLaunchCandidate *candidate,
+                               unsigned drive, char *out, size_t capacity)
+{
+   if (!out || (drive != 0u && drive != 4u) ||
+       !arc_launch_candidate_is_target(candidate) ||
+       !arc_leaf_representable(&candidate->name) ||
+       candidate->parent.length > ARC_GUEST_NAME_MAX) return false;
+   if (candidate->parent.length)
+   {
+      if (!candidate->addressable ||
+          candidate->parent_address.length != candidate->parent.length ||
+          memcmp(candidate->parent_address.bytes, candidate->parent.bytes,
+                 candidate->parent.length)) return false;
+      /* Apply the same literal rules to the parent without the bang rule. */
+      ArcGuestName probe = {{'!'}, 1u};
+      for (unsigned i = 0; i < candidate->parent.length; ++i)
+      {
+         probe.bytes[1] = candidate->parent.bytes[i]; probe.length = 2u;
+         if (!arc_leaf_representable(&probe)) return false;
+      }
+   }
+   int n = snprintf(out, capacity, "ADFS::%u.$.%.*s%s%.*s", drive,
+       (int)candidate->parent.length, (const char *)candidate->parent.bytes,
+       candidate->parent.length ? "." : "", (int)candidate->name.length,
+       (const char *)candidate->name.bytes);
+   return n > 0 && (size_t)n < capacity;
+}
+
 typedef struct {
    uint8_t *output;
    size_t capacity;

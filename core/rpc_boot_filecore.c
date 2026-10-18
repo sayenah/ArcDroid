@@ -46,6 +46,41 @@ static uint8_t zone_check(const uint8_t *p) {
   d += p[3] + (c >> 8);
   return (uint8_t)(a ^ b ^ c ^ d);
 }
+static unsigned read_bits(const uint8_t *p,unsigned at,unsigned n)
+{unsigned v=0;for(unsigned i=0;i<n;++i)v|=((p[(at+i)/8]>>((at+i)%8))&1u)<<i;return v;}
+bool arc_boot_layout_accept(ArcBootLayout *l,const uint8_t boot[512],const uint8_t maps[5120])
+{
+  const uint8_t *r=boot+448;unsigned sum=0;
+  for(unsigned i=0;i<511;++i)sum+=boot[i];while(sum>255)sum=(sum&255)+(sum>>8);
+  const uint8_t geometry[]={9,63,16,0,15,13};
+  if(!l || get(boot)!=0x20000000 || boot[511]!=sum || memcmp(r,geometry,6) ||
+      r[6] || (r[7]!=0 && r[7]!=2) || r[8] || r[9]!=5 || r[10]!=32 || r[11] ||
+      get(r+12)!=0x20b || get(r+16)!=132120576 || memcmp(maps,maps+2560,2560) ||
+      memcmp(maps+4,r,20) || memcmp(maps+26,r+22,38))return false;
+  for(unsigned i=40;i<60;++i)if(r[i])return false;
+  memset(l,0,sizeof(*l));memcpy(l->map,maps,2560);uint8_t cross=0;
+  for(unsigned zone=0;zone<5;++zone){const uint8_t *p=maps+zone*512;
+    if(p[0]!=zone_check(p) || !read_bits(p,23,1))return false;cross^=p[3];
+    unsigned link=read_bits(p,8,15),free_at=link?8+link:0;
+    for(unsigned at=zone?32:512;at<4096;){unsigned first=at,id=read_bits(p,at,15);at+=15;
+      while(at<4096 && !read_bits(p,at,1))++at;if(at==4096)return false;++at;
+      if(at>limit(zone) && !(zone==4 && first==384 && id==1 && at==4096))return false;
+      if(first==free_at){
+        if(first>=limit(zone))return false;free_at=id?first+id:0;
+        if(free_at && (free_at<at || free_at>=limit(zone)))return false;
+      }else{
+        if(!id || (first<limit(zone) && id==1))return false;
+        if(id==2 && !((zone==0 && first==512 && at==528) || (zone==2 && first==32 && at==48)))return false;
+        if(first<limit(zone)){
+          if(l->count==ARC_BOOT_EXTENTS)return false;
+          int64_t physical=((int64_t)zone*4064-480+first-32)*8192;
+          if(physical<0 || physical+(int64_t)(at-first)*8192>132120576)return false;
+          l->extents[l->count++]=(ArcBootExtent){zone,first,at-first,id,(uint32_t)physical};
+        }
+      }
+    }if(free_at)return false;
+  }return cross==255;
+}
 void arc_boot_layout_init(ArcBootLayout *l) {
   memset(l, 0, sizeof(*l));
   (void)arc_hd_format_range(256, 13, ARC_BOOT_MAP_AT, l->map, 2560);

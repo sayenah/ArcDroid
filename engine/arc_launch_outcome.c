@@ -48,6 +48,13 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
    if (now_us - outcome->start_us >= (outcome->profile ? outcome->profile->horizon_us : ARC_OUTCOME_HORIZON_US))
    { arc_outcome_cancel(outcome, "timeout"); return; }
    swi = (swi & 0x00ffffffu) & ~0x00020000u;
+   if(outcome->profile && outcome->profile->contextual)
+   {
+      if(outcome->state==ARC_OUTCOME_WAIT && swi==0x400deu && start_command &&
+          !strcmp(start_command,outcome->command))
+      {outcome->matched=true;outcome->state=ARC_OUTCOME_EXIT;}
+      return; /* Other tasks' exits/CloseDown/Poll never establish this command. */
+   }
    if (swi == 0x11u && r1 == UINT32_C(0x58454241) && r2 != 0u)
    {
       if (outcome->failed_exits < UINT32_MAX) ++outcome->failed_exits;

@@ -714,6 +714,11 @@
     "__ubsan_handle_type_mismatch_v1"
   ],
   "rpc_services": [
+    "arc_riscpc_attempt_consume",
+    "arc_riscpc_attempt_event",
+    "arc_riscpc_attempt_established",
+    "arc_riscpc_attempt_interrupt",
+    "arc_riscpc_attempt_matches",
     "__imp__setjmp",
     "__imp_calloc",
     "__imp_free",

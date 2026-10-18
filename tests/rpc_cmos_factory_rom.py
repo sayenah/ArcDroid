@@ -76,6 +76,11 @@ def generate(directory):
     for kind in ['full','ro350','empty','scatter','incomplete','late','writer','delayed','badchecksum']:
         words=factory(kind).words
         (directory/f'{kind}.rom').write_bytes(struct.pack('<%dI'%len(words),*words)+struct.pack('<I',0xeafffffe)*(524288-len(words)))
+    # Distinct authored later-family fixtures: full write masks, with an
+    # inert final data word distinguishing firmware persistence keys.
+    for family in (360,370,371):
+        data=bytearray((directory/'full.rom').read_bytes());struct.pack_into('<I',data,len(data)-4,family)
+        (directory/f'ro{family}.rom').write_bytes(data)
     return directory
 if __name__=='__main__':
     import sys

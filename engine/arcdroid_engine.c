@@ -323,6 +323,14 @@ void arc_engine_rpc_observers_bind(unsigned catalogue)
     }
     arc_rpc_observers_bind(catalogue==actual?actual:0,arc_rpc_session_cpu());
 }
+bool arc_engine_rpc_launch_bind(const ArcRpcLaunchBinding *binding)
+{return arc_engine_is_rpc() && arc_rpc_observers_attempt(binding);}
+void arc_engine_rpc_launch_input(void)
+{if(arc_engine_is_rpc())arc_rpc_observers_attempt_input();}
+void arc_engine_rpc_launch_interrupt(ArcRpcAttemptInterrupt reason)
+{if(arc_engine_is_rpc())arc_rpc_observers_attempt_interrupt(reason);}
+void arc_engine_rpc_launch_media_changed(void)
+{if(arc_engine_is_rpc())arc_rpc_observers_attempt_media();}
 void arc_engine_rpc_disc_status(ArcRpcDiscStatus *out)
 { if(out){memset(out,0,sizeof(*out));if(arc_engine_is_rpc())arc_rpc_observers_disc_status(out);} }
 bool arc_engine_rpc_observers_replace(ArcDiscSignal signal)

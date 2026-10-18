@@ -23164,6 +23164,1339 @@
       "source": "engine/rpcemu/src/fdc.c",
       "mode_exclusions": {},
       "c_contents": "selected view contents"
+    },
+    {
+      "name": "rpc_observers.state.launch_started",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "c_expression": "state.launch_started"
+    },
+    {
+      "name": "rpc_observers.state.prompt_watch",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "c_expression": "state.prompt_watch"
+    },
+    {
+      "name": "rpc_observers.state.prompt_started",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "c_expression": "state.prompt_started"
+    },
+    {
+      "name": "rpc_observers.state.host_ordinal",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "c_expression": "state.host_ordinal"
+    },
+    {
+      "name": "rpc_observers.state.controller_base",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "c_expression": "state.controller_base"
+    },
+    {
+      "name": "rpc_observers.state.sequence",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "c_expression": "state.sequence"
+    },
+    {
+      "name": "rpc_observers.state.event",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "c_expression": "state.event"
+    },
+    {
+      "name": "rpc_observers.state.detail",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "c_expression": "state.detail"
+    },
+    {
+      "name": "rpc_observers.state.task",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "c_expression": "state.task"
+    },
+    {
+      "name": "rpc_observers.state.bound_base",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.bound_base"
+    },
+    {
+      "name": "rpc_observers.state.registered",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.registered"
+    },
+    {
+      "name": "rpc_observers.state.dispatched",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.dispatched"
+    },
+    {
+      "name": "rpc_observers.state.start_seen",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.start_seen"
+    },
+    {
+      "name": "rpc_observers.state.closed",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.closed"
+    },
+    {
+      "name": "rpc_observers.state.prompt_phase",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.prompt_phase"
+    },
+    {
+      "name": "rpc_observers.state.observation_finished",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "c_expression": "state.observation_finished"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "ArcRpcLaunchAttempt *",
+      "meaning": "Preparation-owned attempt; null or observer-owned allocation identity; compare the attempt contents below.",
+      "allowed_allocations": [
+        0,
+        6
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.attempt"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "const ArcRpcLaunchController *",
+      "meaning": "Preparation-owned controller; null or observer-owned allocation identity; compare authored bytes and layout below.",
+      "allowed_allocations": [
+        0,
+        6
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.controller"
+    },
+    {
+      "name": "rpc_observers.state.binding.opaque",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "void *",
+      "meaning": "Preparation context; compare revalidation/media/abort context contents through the owning preparation serializer, including its captured identities and lifecycle state.",
+      "allowed_allocations": [
+        0,
+        6
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.opaque"
+    },
+    {
+      "name": "rpc_observers.state.binding.revalidate",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "void (*)(void *)",
+      "meaning": "Null or owner-relative launch_revalidate callback identity, not executable address.",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.revalidate"
+    },
+    {
+      "name": "rpc_observers.state.binding.media_changed",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "void (*)(void *)",
+      "meaning": "Null or owner-relative launch_media_changed callback identity, not executable address.",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.media_changed"
+    },
+    {
+      "name": "rpc_observers.state.binding.aborted",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "void (*)(void *,ArcRpcAttemptInterrupt)",
+      "meaning": "Null or owner-relative launch_aborted callback identity, not executable address.",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.aborted"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.session",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->session"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.epoch",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->epoch"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.last_serial",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->last_serial"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.token.session",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->token.session"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.token.epoch",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->token.epoch"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.token.serial",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->token.serial"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.last_event_serial",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint64_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->last_event_serial"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.token.plan",
+      "group": "session",
+      "type": "u64",
+      "count": 32,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint8_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_dimensions": [
+        32
+      ],
+      "c_expression": "state.binding.attempt->token.plan[j0]"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.media",
+      "group": "session",
+      "type": "u64",
+      "count": 32,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint8_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_dimensions": [
+        32
+      ],
+      "c_expression": "state.binding.attempt->media[j0]"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.delivery",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "ArcRpcDelivery",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->delivery"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.outcome",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "ArcRpcAttemptOutcome",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->outcome"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.capabilities",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "unsigned",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->capabilities"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.action",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->action"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.last_event",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "ArcRpcAttemptEvent",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->last_event"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.live",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->live"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.resume_allowed",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->resume_allowed"
+    },
+    {
+      "name": "rpc_observers.state.binding.attempt.start_returned",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.attempt",
+      "c_expression": "state.binding.attempt->start_returned"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.image",
+      "group": "session",
+      "type": "u64",
+      "count": 8192,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint8_t",
+      "meaning": "All authored controller bytes; preserve exact guest code, token, plan and status layout, never a host-pointer hash.",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_dimensions": [
+        8192
+      ],
+      "c_expression": "state.binding.controller->image[j0]"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.size",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "size_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->size"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.query",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->query"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.status",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->status"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.command",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->command"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.plan",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->plan"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.latch",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->latch"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.start",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "uint32_t",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_expression": "state.binding.controller->start"
+    },
+    {
+      "name": "rpc_observers.state.binding.controller.text",
+      "group": "session",
+      "type": "u64",
+      "count": 80,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "char",
+      "normalization": "Zero when the owning binding pointer is null; otherwise encode named pointee members, without padding.",
+      "c_guard": "state.binding.controller",
+      "c_dimensions": [
+        80
+      ],
+      "c_expression": "state.binding.controller->text[j0]"
+    },
+    {
+      "name": "rpc_observers.arc_rpc_observers_test_horizon.shortened.contextual",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {
+        "guest-output": "A-25(c): semantic subscription/owner configurations legitimately differ"
+      },
+      "c_type": "bool",
+      "meaning": "R3c-3b contextual profile flag; mutable test profile is included even when not selected.",
+      "c_expression": "arc_rpc_observers_test_horizon.shortened.contextual"
+    },
+    {
+      "name": "rpc_observer.arc_rpc_observer_boundary_pending",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observer.c",
+      "mode_exclusions": {},
+      "c_type": "bool",
+      "meaning": "Applied-consume service yield survives filter removal; cleared only by service or session retirement.",
+      "c_expression": "arc_rpc_observer_boundary_pending"
+    },
+    {
+      "name": "rpc_observers.state.binding.consumed",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {},
+      "c_type": "void (*)(void *)",
+      "meaning": "launch_consumed: synchronously records the preparation obligation",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.consumed"
+    },
+    {
+      "name": "rpc_observers.state.binding.boundary",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {},
+      "c_type": "bool (*)(void *)",
+      "meaning": "launch_boundary: builds and mounts no-op before CPU resume",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail",
+      "c_expression": "state.binding.boundary"
+    },
+    {
+      "name": "rpc_observers.state.binding.opaque.retirement_pending",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {},
+      "c_type": "bool",
+      "meaning": "Preparation-owned persistent obligation. APPLIED consume sets; successful mount/reset satisfies; fault/unload discards. Must be traversed through binding.opaque.",
+      "c_expression": "arc_rpc_lockstep_retirement_pending(state.binding.opaque,state.binding.boundary)",
+      "c_layout": false
+    },
+    {
+      "name": "driver.service.end",
+      "group": "driver",
+      "type": "u64",
+      "count": 1,
+      "class": "batch-local",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance",
+      "source": "",
+      "mode_exclusions": {},
+      "meaning": "Absolute requested advance deadline retained across a retirement service yield; compare as driver.limit is compared."
+    },
+    {
+      "name": "driver.service.field",
+      "group": "driver",
+      "type": "u64",
+      "count": 1,
+      "class": "batch-local",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance",
+      "source": "",
+      "mode_exclusions": {},
+      "meaning": "Whether a completed video field ends this advance.",
+      "c_type": "bool"
+    },
+    {
+      "name": "driver.service.before.fields",
+      "group": "driver",
+      "type": "u64",
+      "count": 1,
+      "class": "batch-local",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance",
+      "source": "",
+      "mode_exclusions": {},
+      "meaning": "Outer advance field baseline retained across retirement, not the restarted inner chunk baseline."
     }
   ],
   "inventory": [
@@ -23743,8 +25076,8 @@
       "symbol": "state",
       "root": "rpc_observers.state",
       "classification": "contents-compared",
-      "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_observers.c:31"
+      "ruling": "A-3/A-29: includes R3c-3b binding, launch delivery and prompt state plus preparation-owned attempt/controller/context contents",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
     },
     {
       "category": "reachable-storage",
@@ -25762,51 +27095,6 @@
       "category": "static-root",
       "source": "engine/rpcemu/src/fdc.c",
       "symbol": "rates",
-      "root": "fdc.byte_ns.rates",
-      "classification": "immutable-input identity",
-      "ruling": "§2.2 included state",
-      "citation": "engine/rpcemu/src/fdc.c:94"
-    },
-    {
-      "category": "static-root",
-      "source": "engine/rpcemu/src/fdc.c",
-      "symbol": "rates",
-      "root": "fdc.byte_deadline.rates",
-      "classification": "immutable-input identity",
-      "ruling": "§2.2 included state",
-      "citation": "engine/rpcemu/src/fdc.c:101"
-    },
-    {
-      "category": "static-root",
-      "source": "engine/rpcemu/src/fdc.c",
-      "symbol": "rates",
-      "root": "fdc.step_time.rates",
-      "classification": "immutable-input identity",
-      "ruling": "§2.2 included state",
-      "citation": "engine/rpcemu/src/fdc.c:106"
-    },
-    {
-      "category": "static-root",
-      "source": "engine/rpcemu/src/fdc.c",
-      "symbol": "rates",
-      "root": "fdc.head_load.rates",
-      "classification": "immutable-input identity",
-      "ruling": "§2.2 included state",
-      "citation": "engine/rpcemu/src/fdc.c:111"
-    },
-    {
-      "category": "static-root",
-      "source": "engine/rpcemu/src/fdc.c",
-      "symbol": "rates",
-      "root": "fdc.finish.rates",
-      "classification": "immutable-input identity",
-      "ruling": "§2.2 included state",
-      "citation": "engine/rpcemu/src/fdc.c:137"
-    },
-    {
-      "category": "static-root",
-      "source": "engine/rpcemu/src/fdc.c",
-      "symbol": "rates",
       "root": "fdc.request.rates",
       "classification": "immutable-input identity",
       "ruling": "§2.2 included state",
@@ -26156,6 +27444,120 @@
       "root": "ls_schema_hash",
       "citation": "docs/riscpc-6b-m2b.md:Architectural constraints",
       "ruling": "Generated immutable emitter policy/transport table; no guest state; schema and compatibility hashes cover its reviewed source."
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.attempt",
+      "classification": "contents-compared",
+      "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.controller",
+      "classification": "contents-compared",
+      "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.opaque",
+      "classification": "contents-compared",
+      "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.revalidate",
+      "classification": "contents-compared",
+      "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.media_changed",
+      "classification": "contents-compared",
+      "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.aborted",
+      "classification": "contents-compared",
+      "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
+      "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_observer.c",
+      "symbol": "arc_rpc_observer_boundary_pending",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "root": "rpc_observer.arc_rpc_observer_boundary_pending"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.consumed",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.boundary",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "libretro/rpc_preparation.c",
+      "symbol": "rpc_observers.state.binding.opaque.retirement_pending",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement"
+    },
+    {
+      "category": "live-control-local",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_advance::end",
+      "classification": "contents-compared",
+      "ruling": "D-204: retained caller deadline/field controls remain live across the service yield; compare contents without exclusion",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance"
+    },
+    {
+      "category": "live-control-local",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_advance::field",
+      "classification": "contents-compared",
+      "ruling": "D-204: retained caller deadline/field controls remain live across the service yield; compare contents without exclusion",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance"
+    },
+    {
+      "category": "live-control-local",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_advance::before.fields",
+      "classification": "contents-compared",
+      "ruling": "D-204: retained caller deadline/field controls remain live across the service yield; compare contents without exclusion",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance"
+    },
+    {
+      "category": "static-root",
+      "source": "libretro/rpc_preparation.c",
+      "symbol": "arc_rpc_lockstep_preparation_generation",
+      "root": "lockstep.preparation_generation",
+      "classification": "excluded with ruling",
+      "ruling": "R-M2b-Q1: lockstep-only owner-cache invalidation generation, no guest meaning",
+      "citation": "docs/riscpc-lockstep-harness.md:Run E"
     }
   ],
   "object_symbols": {
@@ -26173,7 +27575,8 @@
           "rpc_observer.event_captures",
           "rpc_observer.number_checks",
           "rpc_observer.swi_interest",
-          "rpc_observer.qualifications"
+          "rpc_observer.qualifications",
+          "rpc_observer.arc_rpc_observer_boundary_pending"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -26241,6 +27644,14 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
+      },
+      "arc_rpc_observer_boundary_pending": {
+        "classification": "contents-compared",
+        "roots": [
+          "rpc_observer.arc_rpc_observer_boundary_pending"
+        ],
+        "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+        "meaning": "D-204 service request"
       }
     },
     "engine/rpc/rpc_inspector.c": {},
@@ -26383,6 +27794,14 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
+      },
+      "l___const.arc_rpc_observers_frame.late": {
+        "classification": "contents-compared",
+        "roots": [
+          "observer"
+        ],
+        "citation": "engine/rpc/rpc_observers.c:598-601; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "Compiler initializer template for the automatic late filter: swi, swi_mask, modes, kinds, registers and callback are compared through observer.owners.filter (callback by semantic owner). No C static is added and no mutable or guest-affecting state is excluded."
       }
     },
     "engine/rpc/rpc_mem_timing.c": {
@@ -26967,6 +28386,54 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
+      },
+      "i8042.0": {
+        "classification": "contents-compared",
+        "roots": [
+          "i8042.i8042"
+        ],
+        "citation": "engine/rpcemu/src/i8042.c:87-94; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "AppleClang 21 -O2 scalar replacement of the inventoried file-scope i8042 aggregate; exact emitted symbol, not suffix stripping. Source members remain compared. Member: command."
+      },
+      "i8042.1": {
+        "classification": "contents-compared",
+        "roots": [
+          "i8042.i8042"
+        ],
+        "citation": "engine/rpcemu/src/i8042.c:87-94; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "AppleClang 21 -O2 scalar replacement of the inventoried file-scope i8042 aggregate; exact emitted symbol, not suffix stripping. Source members remain compared. Member: status."
+      },
+      "i8042.2": {
+        "classification": "contents-compared",
+        "roots": [
+          "i8042.i8042"
+        ],
+        "citation": "engine/rpcemu/src/i8042.c:87-94; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "AppleClang 21 -O2 scalar replacement of the inventoried file-scope i8042 aggregate; exact emitted symbol, not suffix stripping. Source members remain compared. Member: out."
+      },
+      "i8042.3": {
+        "classification": "contents-compared",
+        "roots": [
+          "i8042.i8042"
+        ],
+        "citation": "engine/rpcemu/src/i8042.c:87-94; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "AppleClang 21 -O2 scalar replacement of the inventoried file-scope i8042 aggregate; exact emitted symbol, not suffix stripping. Source members remain compared. Member: mode."
+      },
+      "i8042.4": {
+        "classification": "contents-compared",
+        "roots": [
+          "i8042.i8042"
+        ],
+        "citation": "engine/rpcemu/src/i8042.c:87-94; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "AppleClang 21 -O2 scalar replacement of the inventoried file-scope i8042 aggregate; exact emitted symbol, not suffix stripping. Source members remain compared. Member: irq_kbd."
+      },
+      "i8042.5": {
+        "classification": "contents-compared",
+        "roots": [
+          "i8042.i8042"
+        ],
+        "citation": "engine/rpcemu/src/i8042.c:87-94; docs/riscpc-6b-m2a.md:A-3/A-29",
+        "meaning": "AppleClang 21 -O2 scalar replacement of the inventoried file-scope i8042 aggregate; exact emitted symbol, not suffix stripping. Source members remain compared. Member: irq_mouse."
       }
     },
     "engine/rpcemu/src/vidc20.c": {
@@ -27984,7 +29451,56 @@
         "rpc_observers.arc_rpc_observers_test_horizon.shortened.horizon_us",
         "rpc_observers.arc_rpc_observers_test_horizon.shortened.exit_rom",
         "rpc_observers.arc_rpc_observers_test_horizon.shortened.close_rom",
-        "rpc_observers.arc_rpc_observers_test_horizon.shortened.poll_rom"
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.poll_rom",
+        "rpc_observers.state.launch_started",
+        "rpc_observers.state.prompt_watch",
+        "rpc_observers.state.prompt_started",
+        "rpc_observers.state.host_ordinal",
+        "rpc_observers.state.controller_base",
+        "rpc_observers.state.sequence",
+        "rpc_observers.state.event",
+        "rpc_observers.state.detail",
+        "rpc_observers.state.task",
+        "rpc_observers.state.bound_base",
+        "rpc_observers.state.registered",
+        "rpc_observers.state.dispatched",
+        "rpc_observers.state.start_seen",
+        "rpc_observers.state.closed",
+        "rpc_observers.state.prompt_phase",
+        "rpc_observers.state.observation_finished",
+        "rpc_observers.state.binding.attempt",
+        "rpc_observers.state.binding.controller",
+        "rpc_observers.state.binding.opaque",
+        "rpc_observers.state.binding.revalidate",
+        "rpc_observers.state.binding.media_changed",
+        "rpc_observers.state.binding.aborted",
+        "rpc_observers.state.binding.attempt.session",
+        "rpc_observers.state.binding.attempt.epoch",
+        "rpc_observers.state.binding.attempt.last_serial",
+        "rpc_observers.state.binding.attempt.token.session",
+        "rpc_observers.state.binding.attempt.token.epoch",
+        "rpc_observers.state.binding.attempt.token.serial",
+        "rpc_observers.state.binding.attempt.last_event_serial",
+        "rpc_observers.state.binding.attempt.token.plan",
+        "rpc_observers.state.binding.attempt.media",
+        "rpc_observers.state.binding.attempt.delivery",
+        "rpc_observers.state.binding.attempt.outcome",
+        "rpc_observers.state.binding.attempt.capabilities",
+        "rpc_observers.state.binding.attempt.action",
+        "rpc_observers.state.binding.attempt.last_event",
+        "rpc_observers.state.binding.attempt.live",
+        "rpc_observers.state.binding.attempt.resume_allowed",
+        "rpc_observers.state.binding.attempt.start_returned",
+        "rpc_observers.state.binding.controller.image",
+        "rpc_observers.state.binding.controller.size",
+        "rpc_observers.state.binding.controller.query",
+        "rpc_observers.state.binding.controller.status",
+        "rpc_observers.state.binding.controller.command",
+        "rpc_observers.state.binding.controller.plan",
+        "rpc_observers.state.binding.controller.latch",
+        "rpc_observers.state.binding.controller.start",
+        "rpc_observers.state.binding.controller.text",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.contextual"
       ],
       "reason": "A-25(c): semantic subscription/owner configurations legitimately differ",
       "citation": "docs/riscpc-6b-m2a.md:A-25"
@@ -29043,12 +30559,37 @@
       "state.launch.matched",
       "state.launch.command",
       "state.launch.cancel_reason",
+      "state.launch.command[j0]",
       "state.boot.profile",
       "state.boot.state",
       "state.boot.armed_us",
       "state.boot.read_us",
       "state.boot.last_event_us",
       "state.boot.pending",
+      "state.binding.attempt",
+      "state.binding.controller",
+      "state.binding.opaque",
+      "state.binding.revalidate",
+      "state.binding.media_changed",
+      "state.binding.aborted",
+      "state.binding.consumed",
+      "state.binding.boundary",
+      "state.launch_started",
+      "state.prompt_watch",
+      "state.prompt_started",
+      "state.host_ordinal",
+      "state.controller_base",
+      "state.sequence",
+      "state.event",
+      "state.detail",
+      "state.task",
+      "state.bound_base",
+      "state.registered",
+      "state.dispatched",
+      "state.start_seen",
+      "state.closed",
+      "state.prompt_phase",
+      "state.observation_finished",
       "state.disc.profile",
       "state.disc.armed",
       "state.disc.a_active",
@@ -29073,11 +30614,21 @@
       "state.disc.triggered_sp",
       "state.disc.next_order",
       "state.disc.triggered_us",
+      "state.disc.a_name[j0]",
+      "state.disc.object[j0]",
+      "state.disc.identities[j0].occupied",
+      "state.disc.identities[j0].object[j1]",
+      "state.disc.identities[j0].continuation",
+      "state.disc.identities[j0].sp",
+      "state.disc.identities[j0].observed_us",
+      "state.disc.identities[j0].order",
+      "state.disc.triggered_object[j0]",
       "state.disc_enabled",
       "state.disc_signal",
       "state.disc_reason",
       "state.overridden",
       "state.inserted",
+      "state.inserted[j0]",
       "state.resolve",
       "state.observe",
       "state.opaque",
@@ -29099,13 +30650,15 @@
       "state.retry_work.watch",
       "state.retry_work.size",
       "state.retry_work.bytes",
+      "state.retry_work.bytes[j0]",
       "state.retry_candidate",
       "disc_observation",
       "watch_budget",
       "arc_rpc_observers_test_horizon.shortened.horizon_us",
       "arc_rpc_observers_test_horizon.shortened.exit_rom",
       "arc_rpc_observers_test_horizon.shortened.close_rom",
-      "arc_rpc_observers_test_horizon.shortened.poll_rom"
+      "arc_rpc_observers_test_horizon.shortened.poll_rom",
+      "arc_rpc_observers_test_horizon.shortened.contextual"
     ],
     "engine/rpc/rpc_rtc.c": [],
     "engine/rpc/rpc_session.c": [
@@ -29652,8 +31205,8 @@
     "rule": "Only page-boundary markers compare output: initialized published video rectangle and live queued PCM, canonical u64 values, SHA-256. Never read uninitialized presentation rows."
   },
   "reviewed_inventory": {
-    "inventory": "2b161e783140f666597709b203008be50a08b1330a760c78bd3cad05ee2381e5",
-    "object_symbols": "483b8104e825b967011abaf3569d90b2d7dc4238c51388637c33079f94a7add2",
+    "inventory": "1352e93a2021f516bc028991725c60e84de7b3bec3f19872338398421c10d830",
+    "object_symbols": "fe2c624c2119c814c1739ce010ca6e4358e191e5833f082a82c7989e3bec9635",
     "local_static_symbols": "6b95f1103426754c8c41342d7b455977f1e126abee346c350a0f540f6b97514a"
   },
   "reachable_types": {
@@ -30160,5 +31713,14 @@
         "dimensions": []
       }
     ]
-  }
+  },
+  "reviewed_serializer_bridges": [
+    {
+      "field": "rpc_observers.state.binding.opaque.retirement_pending",
+      "source": "engine/rpc/rpc_observers.c",
+      "c_expression": "arc_rpc_lockstep_retirement_pending(state.binding.opaque,state.binding.boundary)",
+      "reason": "R-M2b-Q1: pure read of preparation-owned storage through its owning TU, not an observer-struct offsetof omission.",
+      "citation": "docs/riscpc-lockstep-harness.md:Run E"
+    }
+  ]
 }

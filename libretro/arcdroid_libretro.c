@@ -4938,7 +4938,12 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
    {
       arc_image_index = old_index;
       if (arc_engine_media_insert(&old_media, NULL, 0u)) arc_ejected = false;
-      else arc_ejected = true;
+      else { arc_ejected = true;
+         if ((arc_kind == ARC_SESSION_KIND_RISCPC)) {
+            arc_engine_rpc_launch_interrupt(ARC_RPC_INTERRUPT_SWAP_ROLLBACK);
+            arc_engine_stop();
+         }
+      }
       goto failed;
    }
    arc_ejected = false;
@@ -4948,8 +4953,9 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
    arc_disc_previous_index = old_index;
    arc_disc_swapped_us = arc_engine_disc_time_us();
    arc_disc_invalidate();
-   arc_engine_launch_outcome_cancel("media");
-   arc_engine_boot_watch_cancel();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
+   else arc_engine_launch_outcome_cancel("media");
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    arc_disc_setup();
    char notice[64];
    snprintf(notice, sizeof(notice), "Disc %u inserted", candidate + 1u);
@@ -5223,17 +5229,29 @@ static void arc_disc_boundary(void)
    arc_engine_disc_a_notified();
 }
 
+/* R3d owns production pending-session identity. The plan route can reject
+ * pending preparation here without changing Arculator's rejected-action policy. */
+static bool arc_disk_rpc_pending(void)
+{
+#ifdef ARCDROID_TEST_PLANS
+   if (arc_test_plan_pending()) return true;
+#endif
+   return false; /* Ordinary-route pending admission belongs to R3d-3. */
+}
 static bool arc_disk_set_eject(bool ejected)
 {
+   if (arc_disk_rpc_pending()) return false;
    arc_disc_owned = false;
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
    char error[512] = {0};
-   arc_engine_launch_outcome_cancel("media");
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
+   else arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
+
    if (ejected == arc_ejected) return true;
-   arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    if (ejected)
    {
       if (!arc_engine_media_eject()) return false;
@@ -5261,28 +5279,35 @@ static bool arc_disk_get_eject(void) { return arc_adffs_active ? false : arc_eje
 static unsigned arc_disk_get_index(void) { return arc_adffs_active ? 0u : arc_image_index; }
 static bool arc_disk_set_index(unsigned index)
 {
+   if (arc_disk_rpc_pending()) return false;
    arc_disc_owned = false;
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
-   arc_engine_launch_outcome_cancel("media");
-   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected) return false;
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
+   else arc_engine_launch_outcome_cancel("media");
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
+   if (!arc_ejected) return false;
+
    if (index < arc_media_count && !arc_media[index].populated) return false;
-   arc_engine_boot_watch_cancel();
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    arc_image_index = index < arc_media_count ? index : arc_media_count;
    return true;
 }
 static unsigned arc_disk_get_count(void) { return arc_adffs_active ? 1u : arc_media_count; }
 static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 {
+   if (arc_disk_rpc_pending()) return false;
    arc_disc_owned = false;
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
-   arc_engine_launch_outcome_cancel("media");
-   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected ||
-       index >= arc_media_count) return false;
-   arc_engine_boot_watch_cancel();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
+   else arc_engine_launch_outcome_cancel("media");
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
+   if (!arc_ejected || index >= arc_media_count) return false;
+
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    if (!info)
    {
       bool selected = arc_image_index == index;
@@ -5330,14 +5355,17 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 }
 static bool arc_disk_add(void)
 {
+   if (arc_disk_rpc_pending()) return false;
    arc_disc_owned = false;
    arc_disc_notice_read = arc_disc_notice_write = 0u;
    arc_engine_disc_clear();
    arc_disc_invalidate();
-   arc_engine_launch_outcome_cancel("media");
-   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active ||
-       arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
-   arc_engine_boot_watch_cancel();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_media_changed();
+   else arc_engine_launch_outcome_cancel("media");
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
+   if (arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
+
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC)) arc_engine_boot_watch_cancel();
    memset(&arc_media[arc_media_count++], 0, sizeof(arc_media[0]));
    return true;
 }
@@ -5363,8 +5391,9 @@ static bool arc_disk_get_label(unsigned index, char *label, size_t length)
 static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
                          uint16_t modifiers)
 {
-   arc_engine_launch_outcome_cancel("input");
-   if (down && arc_boot_attempt) arc_engine_boot_watch_cancel();
+   if ((arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_input();
+   else arc_engine_launch_outcome_cancel("input");
+   if ((arc_kind != ARC_SESSION_KIND_RISCPC) && down && arc_boot_attempt) arc_engine_boot_watch_cancel();
    (void)character;
    (void)modifiers;
    if (keycode < ARC_INPUT_KEY_COUNT) arc_keyboard_raw[keycode] = down;
@@ -6225,8 +6254,11 @@ static void arc_poll_inputs(void)
       { arc_boot_input = true; break; }
    if (arc_inputs.effective_buttons || arc_osk_toggle_level)
       arc_boot_input = true;
-   if (arc_boot_input && arc_boot_attempt) arc_engine_boot_watch_cancel();
-   if (arc_boot_input) arc_engine_launch_outcome_cancel("input");
+   if (arc_boot_input && (arc_kind == ARC_SESSION_KIND_RISCPC)) arc_engine_rpc_launch_input();
+   else if (arc_boot_input) {
+      if (arc_boot_attempt) arc_engine_boot_watch_cancel();
+      arc_engine_launch_outcome_cancel("input");
+   }
 }
 
 static void arc_integrate_stick(uint64_t elapsed_us)
@@ -7632,6 +7664,70 @@ static bool arc_rpc_plan_media(const char *content,const char *helper,char *erro
     arc_loaded=true;arc_session=ARC_SESSION_RUNNING;
     arc_io_set_write_observer(arc_disc_write_observer);return true;
 }
+static bool arc_rpc_plan_restage_drive0(char *error,size_t size)
+{
+    if(!arc_loaded)return true;
+    ArcCoreOptions updated;
+    if(!arc_read_options(&updated,error,size))return false;
+    /* Retire every borrowed presentation before rebuilding its policy view. */
+    arc_engine_rpc_eject(0);
+    bool was_ejected=arc_ejected;arc_ejected=true;
+    unsigned selected=arc_image_index;
+    arc_preparing_zero_tail=updated.short_tail_zero;
+    if(updated.disk_writes!=arc_plan.disk_writes){
+        if(arc_zip_active){if(!arc_reprepare_zip_media(updated.disk_writes,&selected,error,size))return false;}
+        else if(arc_folder_set_active){if(!arc_reprepare_folder_media(updated.disk_writes,&selected,error,size))return false;}
+        else for(unsigned i=0;i<arc_media_count;++i){
+            if(!arc_media[i].populated)continue;
+            ArcMediaEntry next;
+            if(!arc_prepare_source(arc_media[i].source,arc_media[i].label,updated.disk_writes,true,NULL,&next,error,size))return false;
+            arc_jfd_free(&arc_media[i].jfd);arc_media[i]=next;
+        }
+
+    }
+    for(unsigned i=0;i<arc_media_count;++i)if(arc_media[i].populated)arc_entry_tail_presentation(&arc_media[i],updated.short_tail_zero);
+    arc_core_options=updated;arc_plan.disk_writes=updated.disk_writes;arc_image_index=selected;
+    arc_jfd_tab_pending_notice_shown=false;
+    if(!was_ejected && selected<arc_media_count){
+        ArcMediaEntry *entry=&arc_media[selected];
+        if(!arc_refresh_jfd(entry,updated.disk_writes,updated.jfd_write_policy,error,size))return false;
+        arc_finish_jfd_preparation(entry,true,updated.jfd_write_policy);
+        ArcEngineMedia m=arc_engine_media(entry);
+        if(!arc_engine_media_insert(&m,error,size))return false;
+        arc_ejected=false;
+    }
+    return true;
+}
+static bool arc_rpc_plan_drive1_view(ArcEngineMedia *view)
+{
+    if(!view || !arc_rpc_helper_entry.populated)return false;
+    *view=arc_engine_media(&arc_rpc_helper_entry);return true;
+}
+static bool arc_rpc_plan_drive1_writable(void)
+{return arc_plan.disk_writes!=ARC_DISK_WRITES_OFF;}
+static bool arc_rpc_plan_media_identity(uint8_t out[32])
+{
+    /* Writable members have no maintained exact current-state fingerprint.
+     * Never replace it with a base digest or a mount counter. */
+    if(!out || !arc_loaded || arc_plan.disk_writes!=ARC_DISK_WRITES_OFF ||
+        !arc_media_count || arc_media_count>ARC_PLAYLIST_MAX_ENTRIES || arc_image_index>arc_media_count)return false;
+    ArcSha256 hash;arc_sha256_init(&hash);
+    static const char domain[]="ArcDroid RPC read-only media 1";
+    arc_sha256_update(&hash,domain,sizeof(domain));
+    const uint8_t policy[]={1,(uint8_t)arc_media_count,(uint8_t)arc_image_index,arc_ejected,
+        (uint8_t)arc_core_options.jfd_write_policy,arc_core_options.short_tail_zero,arc_core_options.jfd_omitted_strict};
+    arc_sha256_update(&hash,policy,sizeof(policy));
+    for(unsigned i=0;i<arc_media_count;++i){const ArcMediaEntry *entry=&arc_media[i];
+        if(!entry->populated)return false;
+        const ArcJfdOverlay *overlay=entry->jfd.overlay;
+        if(overlay && (overlay->visible || overlay->damaged || overlay->failed))return false;
+        uint8_t presentation[12]={(uint8_t)i,(uint8_t)entry->info.kind,(uint8_t)entry->info.geometry,entry->zero_tail_presentation};
+        for(unsigned k=0;k<8;++k)presentation[4+k]=(uint8_t)((uint64_t)entry->effective_extent>>(8*k));
+        arc_sha256_update(&hash,presentation,sizeof(presentation));
+        arc_sha256_update(&hash,entry->digest.sha1,40);
+    }
+    arc_sha256_final(&hash,out);return true;
+}
 static bool arc_rpc_plan_reset_media(char *error,size_t size)
 {
     if(!arc_loaded)return true;
@@ -7749,7 +7845,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 #endif
       arc_test_plan_set_notice(arc_plan_notice);
       arc_test_plan_set_log(arc_plan_log);
-      const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add};
+      const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add,
+         arc_rpc_plan_restage_drive0,arc_rpc_plan_drive1_view,arc_rpc_plan_drive1_writable,arc_rpc_plan_media_identity};
       arc_test_plan_set_media(&callbacks);
       if (!arc_test_plan_load(game->path, system, save, error, sizeof(error))) {
          arc_message(error, RETRO_LOG_ERROR); arc_release_session(); return false;

@@ -429,3 +429,5 @@ changes. The API-only measurement RPC objects compile without these hot hooks;
 shipping object code and the selected measurement hot objects are compared by
 `tools/rpc_measure_compare.py`. Profile output is schema 2. Original source
 hashes and GPL notices remain intact.
+
+- `launch-retirement-d204` (2026-10-17, `src/arm.c`): finish the consuming instruction and yield for host helper retirement before the next guest instruction; no SWI acknowledgement or in-observer media mutation.
