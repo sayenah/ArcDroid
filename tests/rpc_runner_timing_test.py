@@ -44,5 +44,5 @@ with tempfile.TemporaryDirectory(prefix='arc-runner-window-') as temp:
         print(f'runner: realtime pacing {measured} frames in {measure_seconds}s; '
               f'expected {expected:.2f} +/-10% (T_ns={period})')
         if sys.platform=='darwin':
-            print('runner: cadence bound is not enforced on macOS because of timer coalescing (R-W8-1)')
+            print('runner: cadence bound is not enforced on macOS because nanosleep oversleeps on development Macs (R-W8-1)')
 print('runner: wall-clock warm-up and measured window, CSV exclusion and percentile sample counts passed')
