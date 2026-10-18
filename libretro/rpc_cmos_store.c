@@ -23,6 +23,15 @@ static void digest_bytes(const char *s,uint8_t *p)
 { for(unsigned i=0;i<32;++i)p[i]=(uint8_t)(nibble(s[2*i])*16+nibble(s[2*i+1])); }
 bool arc_riscpc_cmos_checksum(const uint8_t p[240])
 { unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=p[i];return (uint8_t)sum==p[47]; }
+bool arc_riscpc_cmos_two_floppies(unsigned layout,uint8_t p[240])
+{
+    if(!p || layout<1 || layout>3 || !arc_riscpc_cmos_checksum(p))return false;
+    /* PRM CMOS allocation: logical 135 bits 0..2; PCF8583 raw 199.
+     * This runs only after isolated capture, never on per-content records. */
+    p[183]=(uint8_t)((p[183]&0xf8u)|2u);
+    unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=p[i];p[47]=(uint8_t)sum;
+    return true;
+}
 /* Physical address masks, deliberately data rather than firmware recognisers. */
 static const uint8_t required[3][32]={
  {0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,243,255,255,255,255,255,255,255},
@@ -61,6 +70,7 @@ static bool decode(ArcRpcCmosStore *s,const uint8_t *p,size_t size,ArcRpcCmosEvi
     if(size!=512 || memcmp(p,expected,24) || memcmp(p+32,expected+32,72) || !get(p+24,8) || get(p+508,4)!=arc_crc32(p,508))return false;
     memset(e,0,sizeof(*e));
     if(s->key.defaults){
+        if(s->key.procedure==4 && (p[104+183]&7u)!=2)return false;
         if(get(p+344,4)!=s->key.procedure || get(p+348,4)!=s->key.timing || get(p+356,4)!=1 ||
            get(p+368,8)!=0 || get(p+376,8)!=ARC_RPC_CMOS_DELETE_NS || get(p+384,8)!=ARC_RPC_CMOS_CAPTURE_NS || get(p+392,8)!=ARC_RPC_CMOS_STABILITY_NS)return false;
         static const unsigned rates[]={20,35,100,35};

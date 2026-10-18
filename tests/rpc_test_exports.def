@@ -28,3 +28,6 @@ EXPORTS
   arc_libretro_test_disc_name
   arc_libretro_test_journal_filter_cost
   arc_libretro_test_rpc_admit
+
+  ; Bind an authored host-owned attempt for the frontend frame-hook test.
+  arc_engine_rpc_launch_bind

@@ -190,6 +190,8 @@ typedef struct {
    unsigned application_count;
    unsigned unknown_count;
    bool root_boot;
+   unsigned root_boot_count; /* RPC explicit boot admission; legacy policy unchanged. */
+   bool root_boot_is_file;
    bool nested_scope;
    bool scan_incomplete;
    unsigned unreadable_parents;
@@ -291,6 +293,10 @@ bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size);
 bool arc_launch_discover(const uint8_t *data, size_t size,
                          const ArcMediaInfo *media, const ArcJfdImage *jfd,
                          ArcLaunchDiscovery *discovery);
+typedef bool (*ArcLaunchRangeRead)(void *,uint32_t offset,void *,size_t);
+/* Fixed RPC HD geometry; <= 4096 bounded range reads and <= 1 MiB total,
+ * sharing structural candidate/ambiguity/escaping policy with floppies. */
+bool arc_launch_discover_rpc(ArcLaunchRangeRead,void *,ArcLaunchDiscovery *);
 typedef enum {
    ARC_DISC_UNKNOWN, ARC_DISC_ABSENT, ARC_DISC_FILE, ARC_DISC_DIR
 } ArcDiscObject;
@@ -305,6 +311,8 @@ const char *arc_launch_reason_name(ArcLaunchReason reason);
 bool arc_launch_escape_name(const ArcGuestName *name, char *output,
                             size_t capacity);
 bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate);
+bool arc_launch_candidate_path(const ArcLaunchCandidate *, unsigned drive,
+                               char *, size_t);
 bool arc_launch_target_compose(const ArcLaunchCandidate *candidate,
                                char *output, size_t capacity,
                                uint8_t *output_length);

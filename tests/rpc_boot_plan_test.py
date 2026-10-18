@@ -12,7 +12,7 @@ import tempfile
 import zlib
 from rpc_boot_packages_test import inputs, require
 
-exe,core,runner,shipping,generator=sys.argv[1:]
+exe,core,runner,shipping,generator,fixtures=sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix='arcdroid-boot-plan-') as temp:
     root=Path(temp);system=inputs(root);save=root/'save';save.mkdir()
     header=root/'rom.h';before=sys.argv;sys.argv=[generator,str(header)]
@@ -24,7 +24,9 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-plan-') as temp:
     def seed(directory):
         base=directory/'arcdroid/cmos-riscpc';base.mkdir(parents=True,exist_ok=True)
         record=bytearray(512);record[:8]=b'ARCRPCM1';struct.pack_into('<IIIIQ',record,8,1,512,1,0x10003,1)
-        record[32:72]=content.encode();record[72:104]=digest;struct.pack_into('<I',record,508,zlib.crc32(record[:508]))
+        record[32:72]=content.encode();record[72:104]=digest
+        record[104+183]=2;record[104+47]=3  # Launch fixture configures the helper drive.
+        struct.pack_into('<I',record,508,zlib.crc32(record[:508]))
         (base/f'{content}-m1-{digest.hex()}.1').write_bytes(record)
     seed(save);plan=root/'test.arcplan'
     text=f'version=2\nmodel=arm610\nfirmware={firmware}\ncmos=persist\ncmos_layout=ro370\ncontent_id={content}\nrtc_epoch=946684800\nhd_populate=on\n'
@@ -34,6 +36,24 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-plan-') as temp:
         require(result.returncode==0,result.stdout+result.stderr)
     call();owned=save/'arcdroid/hd-riscpc'/content;manifest=next(owned.glob('manifest.?')).read_bytes()
     require(len(manifest)==24452 and manifest[24320:24328]==b'ARCRBOOT','ordinary plan did not populate with receipt')
+    # Exercise the plan parser, not just pure discovery: encoded JFD bytes
+    # must never take the raw-sector path ahead of their decoded view.
+    primary_save=save;save=root/'jfd-save';shutil.copytree(primary_save,save)
+    shutil.copyfile(Path(fixtures)/'launch-family/single-d-hugo-extended.jfd',system/'launch.jfd')
+    plan.write_text(text+'media=launch.jfd\nlaunch_action=application\nlaunch_session=1\n')
+    call('hd-reload')
+    reset_command=[runner,'--core',core,'--plan',str(plan),'--system',str(system),'--save',str(save),'--frames','1']
+    result=subprocess.run(reset_command+['--preparation-reset-stage','prepared','--reset-stage-frame','0'],capture_output=True,text=True,timeout=180)
+    require(result.returncode==0 and 'reset at stage=prepared delivery=1 outcome=0' in result.stderr and
+            'RPC attempt: delivery=5 outcome=8' in result.stderr,'runner did not reset the prepared attempt')
+    for invalid in (['--preparation-reset-stage','other'],
+                    ['--preparation-reset-stage','prepared','--preparation-reset-at','0'],
+                    ['--preparation-reset-stage','prepared','--reset-stage-frame','1']):
+        result=subprocess.run(reset_command+invalid,capture_output=True,text=True,timeout=180)
+        require(result.returncode==2,'invalid reset-stage command admitted')
+    plan.write_text(text+'media=launch.jfd\nlaunch_action=boot\nlaunch_session=2\n')
+    call('reject')  # No discovered root !Boot.
+    save=primary_save;plan.write_text(text)
     # Source packages may disappear after creation: the receipt is a no-op.
     shutil.rmtree(system/'arcdroid/riscpc/boot');call('hd-reload')
     result=subprocess.run([runner,'--core',shipping,'--plan',str(plan),'--save',str(save),'--reject'],capture_output=True,text=True,timeout=180)

@@ -786,6 +786,64 @@ With the gate closed, every text is byte-identical to the base.
 | N-12 | M1, launch not yet available (R3d-4; removed by R3d-5) | advisory | "Automatic launch is not available yet; the RiscPC desktop is ready for you." |
 | — | Stepped failure | B | The existing terminal texts, retained while frames present, cleared on close or switch. |
 
+### 7a. R3d-3 amendment: N-13 to N-18, redaction and log forms (frozen S68)
+
+Frozen by Fable (S68) before `slice/r3d3-host` dispatch, as `docs/riscpc-r3d3-work-order.md` requires (Next item 1, "Plan §7 amendment"; pre-dispatch table, "§7 texts"). Sources: a census of every notice and log line on the preparation path, a draft and three critics (privacy, rulings, player wording), and a primary-source reading of RetroArch 1.22.2 (private evidence `.work/s68/s7/`). It governs the plan-core host and the preparation module only; ordinary-route texts with the gate closed stay byte-identical (§7 heading), and Arculator sessions are unchanged (AC-13).
+
+**Wording rules for every new or rewritten text.** A fresh load is "close and reload this content" (Q10's ruling); "Restart" means RetroArch's Restart only. Player text says "RiscPC settings" for CMOS and "RiscPC hard disc" (no hyphen). New texts aim at 120 characters or fewer. No internal terms (VERIFY, namespace, lock file, media, prepared).
+
+**New texts.**
+
+| ID | When (ruling) | Class | Player text | Log |
+|---|---|---|---|---|
+| N-13 | At RECORD, a `.unsaved` CMOS marker from an earlier unload exists. No marker is written, so no N-13 follows, when the marker write itself fails or when the session's record was refused or corrupt (R-8). | advisory | "RiscPC settings from the last session could not be saved." | `N-13` |
+| N-14 | Content-lock contention outlasts W = 10 s (R-10). The text names RetroArch's restart because self-contention cannot be told apart from another process (R-10). | B terminal | "This RiscPC title is open in another RetroArch. Close it there or restart RetroArch, then close and reload this content." | `N-14` |
+| N-15 | Any lock failure (R-10 failure policy). | B terminal | "ArcDroid cannot lock RiscPC save files in this folder. Choose another save folder in RetroArch's directory settings." No path. | `N-15 lock-create` (mkdir failure, native open failure, transient beyond W), `N-15 lock-root` (root refused, post-acquire VFS stat not a zero-byte regular file), `N-15 lock-unsupported` (the table's unsupported column), `N-15 lock-error` (any other lock-call error, including OFD `EACCES`). A numeric errno may follow; never a path. |
+| N-16 | Defaults-lock contention outlasts W_d = 120 s (R-10). | B terminal | "Another copy of RetroArch is preparing RiscPC settings. Wait for it to finish, then close and reload this content." | `N-16` |
+| N-17 | The hard-disc store's close fails at reset or unload (scope 6, R-11). On unload it shows after the host's unload clear, as R-8 does. | advisory | "Recent RiscPC hard disc changes could not be saved." | `N-17 reset`, `N-17 unload` |
+| N-18 | The POSIX held-lock identity check fails (R-10), leading to R-11's lost-owner path. | B terminal | "Another app changed ArcDroid's RiscPC save files; this session stopped without saving. Close and reload this content." No path. | `N-18`; the lost-owner path's "could not be saved" is logged as `N-18 unsaved` |
+
+**N-18 is final.** R-11's drain outcome never replaces or extends N-18 (its text already states the outcome); R-5 exception 2 applies only to the fault terminal it completes.
+
+**Other notices R3d-3 emits (classes and log forms).** N-8 is an advisory in R3d-3 (scope 7), log `N-8`. N-11 is an advisory with `{option}` a fixed option label, log `N-11`. R-8's unload failure is a timed advisory shown after the host's unload clear and always logged, `unload-cmos`; a failed marker write logs `unload-marker` and no path. Part 2's "launch delivery unavailable" and D-190's one-drive notice keep their texts as advisories, `launch-unavailable`. Running hard-disc advisories log `hd-recovered`; the non-stopping CMOS refusal `cmos-refused`; a persist failure `cmos-persist`. R3d-1's LOW-4 notice keeps its R3d-1 form.
+
+**Log line format.** `<ID-or-token>[ <reason>]: <redacted text>`, one line per terminal, per advisory and per status transition (scope 8). Every class B terminal outside N-13 to N-18 logs as `N-B <family>`, where the family is one of: `begin`, `firmware`, `boot`, `boot-zip`, `boot-named`, `hd`, `cmos`, `seed`, `generate`, `engine`, `product`, `helper`, `launch`, `attach`, `restage`, `restage-stopped`, `reset`, `fault`, `observation`, `drain`, `rollback`, `retire`. Log-only lines use `boot-packages`, `hd-diagnostic`, `status` and `summary`. The host chooses the family from its own state and callback results, never from the text (scope 7). The design note maps every source text to its ID or family (scope 8's oracle); QA checks the mapping is complete. The raw terminal echo (`libretro/arcdroid_libretro.c:7795` on `main` `ea78bf5`) is replaced by this form.
+
+**Redaction tokens.** A token replaces the private string where the text is produced or in the host callback, so that the private string never reaches the module's error buffer, a notice or a log line.
+
+| Token | Replaces |
+|---|---|
+| `a file in the boot archives` | A boot-archive member name, or a RISC OS path derived from one |
+| `the selected disc` | A content ZIP member, disc image name or JFD title |
+| `another disc` | A second member or sibling named in the same text |
+| `the selected content` | The content file or archive leaf |
+| `the content folder` | A frontend VFS directory |
+| `the save folder` | Any save-directory, store or lock path (reserved; no text formats one today) |
+
+`<system>` is shown literally and never expanded (N-1, N-5, N-6 and the boot family need no other redaction).
+
+**Redacted forms.**
+- **Boot family** (`boot`, `boot-zip`, `boot-named`): "RiscPC boot files in <system>/arcdroid/riscpc/boot/ cannot be used ({reason}). Replace them with unmodified copies." `{reason}` is today's reason. Member names and member-derived paths in it become `a file in the boot archives`; ArcDroid-authored constant names (the required-member list and authored asset paths in `libretro/rpc_boot.c`) are kept, because they tell the player what is missing.
+- **Media callbacks** (`attach`, `restage`, `restage-stopped`, the last being R-7's new stopped re-staging). The host stages into its own buffer and copies into the module's error buffer only (a) a text on the frozen allow-list or (b) the redacted form; it writes an empty string on success, on every exit path. The module clears its error buffer before the reset sequence, so no stale text becomes a cause.
+  - **Allow-list:** only texts that are compile-time string literals with no conversion specifier. The design note lists each with its source line, and a test asserts that each listed string occurs in the source as such a literal. The zip-index reason pass-through and "playlist line %u: %s" are never on it. Allow-listed restage causes are shown without a trailing full stop; "Staged JFD digest mismatch." is shown as "The JFD disc changed on storage".
+  - **Otherwise,** attach: "The discs in this content could not be loaded. Check that the file is complete and a supported type."; restage and restage-stopped cause: "The disc could not be reloaded" (the module's existing "; session stopped; latest CMOS snapshot saved | could not be saved" suffix is unchanged here; its wording is carried to R3d-4).
+- **Engine, reset, fault and observation causes** are constant or numeric today and pass unchanged; any later text that formats a name uses the tokens.
+
+**Staging log lines in RiscPC sessions (ruling).** The shared staging producers log content leaf, member, JFD title and folder names with `arc_log` (not `arc_message`), and the plan host reaches them through its attach, restage and restage-stopped callbacks. R-5's carve-out is the shared `arc_message` path only, so these lines are in R3d-3's scope: while the session kind is RiscPC, each such line uses the redaction tokens; in Arculator sessions they are byte-identical (AC-13). AC-3's sentinels are therefore placed in a boot-archive member name, a content ZIP member name, the content leaf and the save path.
+
+**Channels.** Every host and module notice, including begin and load failures and running advisories, goes through the catalogue host path (OSD-only extended message, redacted fallback, ID log line), never through `arc_message`. One text per ID is used on both message paths (see P1 below).
+
+**Carried to R3d-4 (the shared `arc_message` path and ordinary-route lines, recorded so none is lost).** Disk-control replace and add errors in RiscPC sessions (`arcdroid_libretro.c:5340`, `:5349`, which can carry names); the plan route's `retro_reset` errors (`:7906`, `:7910`; R3d-4 routes `retro_reset` through the preparation reset, D-204); media summaries through `arc_message` (`:1836-1841`, `:1975-1995`); guest disc names logged at INFO in RiscPC sessions (`:5150-5152`, `:5226-5228`); the module's "latest CMOS snapshot" suffix wording; the length of N-1. Each is rewritten as a whole sentence there, not by token substitution alone.
+
+**Test-only exception.** The Windows crash locator (`tests/rpc_crash_locator.c`), armed only in plan builds, logs a module path on a crash; it stays test-only (scope 6) and is outside AC-3.
+
+**P1 outcome (source reading of RetroArch 1.22.2, commit `69a4f0e`; not yet observed on a device).**
+- (c) `SET_MESSAGE_EXT` with `RETRO_MESSAGE_TARGET_OSD` is not written to RetroArch's log; legacy `SET_MESSAGE` always is. Ruling: the redacted form is still used on both paths (one text per ID; other frontends may log differently). AC-3's RetroArch legs confirm it.
+- (b) Several extended messages can be visible together, depending on type and on whether widgets are enabled, which a core cannot detect. Ruling: R-5's single-slot rule stays on both paths.
+- (a) In 1.22.2 a STATUS message replaces the current one whatever its priority (the stored priority is never updated); newer RetroArch compares priorities. Ruling: clears stay at priority 3, and precedence (terminal > advisory > progress) is enforced by the host's own state, never by RetroArch priority.
+
+**Other pre-dispatch items: defaults adopted (S68).** P1b: release and return false with the reason ID logged, no fallback session. P3: the source reading stands. P8: S-4 stepped with N = 60 frames, and the two frozen synchronous publications are error-path exceptions counted in the summary line. Hold table: 25 s for every pair until measured (a later measurement may only lower an entry).
+
 ---
 
 ## 8. Open questions for Astra

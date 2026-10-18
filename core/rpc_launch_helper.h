@@ -9,4 +9,6 @@
 /* Descriptor validation is independent of the helper's versioned plan. */
 bool arc_riscpc_helper_descriptor(const uint8_t *, size_t, uint32_t *entry);
 bool arc_riscpc_helper_build(uint8_t *, size_t);
+/* Replace only the helper file and carrier allocation; gate ABI is unchanged. */
+bool arc_riscpc_helper_carrier(uint8_t *, size_t, const uint8_t *, size_t);
 #endif

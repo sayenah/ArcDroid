@@ -552,3 +552,23 @@ poison and lifecycle seeding retain their intentional test writes. A white-box
 unit-only store observer makes an unconditional-store mutant observable without
 adding core state, counters or ABI. Gates, counters, mirror and fallback semantics
 are unchanged; SA-110 remains linear pending Fable's repeated selection.
+
+## SA-110 selection run 2 (Fable, S68)
+
+**Selection run 2** (Odin3, run B's variant measurement cores, the same procedure, workloads, windows and D-201 bands; 72 runs, all rc 0; started 23:23 on 2026-10-17 after a device restart restored normal speed). p50 change of the candidate against linear, per order:
+
+| Workload | Hint only | Hint plus mirror | Band₅₀ / band₉₅ |
+|---|---|---|---|
+| 031 (deciding) | −13.50 % / −12.99 % (p95 −13.17 % / −12.78 %) | −13.05 % / −13.02 % (p95 −13.22 % / −12.72 %) | 0.80 % / 0.62 % |
+| warm (guard) | +5.75 % / +6.02 % (p95 +5.58 % / +6.00 %) | o1 invalid (see below) / +4.81 % (p95 +3.29 %) | 0.50 % / 0.50 % |
+| ldm-stm8 (guard) | +7.99 % / +7.36 % (p95 +8.13 % / +6.32 %) | +8.73 % / +7.51 % (p95 +9.14 % / +7.70 %) | 0.50 % / 0.50 % |
+
+**Device state.** The 031 legs and the hint-only warm legs ran at normal speed. From 03:39 (warm, hint plus mirror, order 1, run 4) the Odin3 slowed down again, as it did on the S67 evening: warm frame cost rose from about 40 ms to about 79 ms and ldm-stm8 from about 177 ms (run 1) to about 270 ms. The hint-plus-mirror warm order 1 straddles the change (two A runs slow, one flagged by the clock-step rule), so it is invalid. The later legs are internally paired (A and B alternate in the same state) but were taken on a slowed device.
+
+**Outcome by the frozen rule: SA-110 stays linear.** Hint only fails on legs taken at normal speed (warm +5.75 % / +6.02 %, far beyond the 0.5 % band). Hint plus mirror fails its guards in every valid order (warm order 2, ldm-stm8 both orders), consistent with its normal-speed result in run 1 (+3.3 % to +4.6 %). Removing the divisions (run B) did not reduce the way-0 regression, so the cost is the hint path itself on way-0 hits, not the arithmetic. The selection rule is not revisited after measurement. With SA-110 linear, 031 runs the unchanged lookup, so L1 could not show the 031 gain that rule 4's confirmation requires, and the drop rule (D-195(6): a no-gain slice is not merged on benefit grounds) would apply to the whole slice.
+
+**Run C (Fable's ruling, S68).** The cost sits on way-0 hits, which dominate the guards (every warm and ldm-stm8 lookup hits way 0) and are rare on 031 (97 % of 031's hits lie beyond way 0, AC-10). The SA-110 candidate set is therefore amended before any further measurement, with the rule, workloads, bands and procedure unchanged:
+- **way0-hint:** the gated lookup compares way 0's tag first, exactly as the linear path does; only on a way-0 miss does it consult the validated hint, then the linear remainder (ways 1 onward). First-match semantics are unchanged because way 0 is the first way.
+- **way0-mirror:** the same with the mirror for the remainder.
+- Hint-only and hint-plus-mirror stay on record as measured; they are not re-run.
+Sol builds both variants as selectable SA-110 gate configurations in the variant measurement cores (the same mechanism as run A's variants), with the same exactness tests, reference cross-check, mutants (including one that skips the way-0 check and one that consults the hint before way 0) and identity checks; ARM610, ARM710 and ARM7500 gates unchanged. Fable then runs **selection run 3** (way0-hint and way0-mirror against linear, the same three workloads, on a device verified at normal speed before the run and re-checked after it). If neither qualifies, SA-110 stays linear and L1 is not merged on benefit grounds; S1 is then re-planned onto `main`.

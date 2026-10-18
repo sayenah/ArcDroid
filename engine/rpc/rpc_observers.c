@@ -2,6 +2,7 @@
 #include "rpc_observers.h"
 #include "rpc_floppy.h"
 #include "rpc_timing.h"
+#include "rpc_memory.h"
 #include <limits.h>
 #include <string.h>
 
@@ -14,6 +15,10 @@ static struct {
     ArcErrorBox error;
     ArcLaunchOutcome launch;
     ArcBootWatch boot;
+    ArcRpcLaunchBinding binding;
+    uint64_t launch_started,prompt_watch,prompt_started,host_ordinal;
+    uint32_t controller_base,sequence,event,detail,task;
+    bool bound_base,registered,dispatched,start_seen,closed,prompt_phase,observation_finished;
     ArcDiscRequest disc;
     bool disc_enabled;
     const char *disc_signal, *disc_reason;
@@ -38,8 +43,9 @@ static const ArcErrorProfile default_error_profile={.contextual=true,.poll_r1=0,
     .poll_modes=(1u<<3)|(1u<<19),.answer_forms=(1u<<3)|(1u<<14),
     .ok_forms=1u<<3,.cancel_forms=(1u<<3)|(1u<<14),.default_cancel_forms=1u<<14,
     .numbers=ARC_ERROR_NUMBER_ORDINARY};
-static const ArcOutcomeProfile launch_profile={600000000u,true,true,true};
-static const ArcBootProfile boot_profile={40000000u,2000000u,0x8000u,true,true};
+static const ArcOutcomeProfile launch_profile={120000000u,false,false,false,true};
+static const ArcBootProfile boot_profile={120000000u,250000u,0,true,false,true};
+static void filters(void);
 static const unsigned bits[4]={ARC_RPC_CELL_BOOT,ARC_RPC_CELL_LAUNCH,ARC_RPC_CELL_ERROR,ARC_RPC_CELL_DISC_A|ARC_RPC_CELL_DISC_B};
 static bool user(uint32_t mode) { return mode==0u || mode==16u; }
 bool arc_rpc_observers_capability(unsigned bit)
@@ -47,6 +53,8 @@ bool arc_rpc_observers_capability(unsigned bit)
 static uint64_t now(void) { return arc_rpc_time_ns()/1000u; }
 void arc_rpc_observers_retire(void)
 {
+    if(state.binding.attempt && state.binding.attempt->delivery!=ARC_RPC_DELIVERY_INTERRUPTED)
+        arc_riscpc_attempt_interrupt(state.binding.attempt,ARC_RPC_INTERRUPT_FAULT);
     memset(&state,0,sizeof(state));
     disc_observation=NULL;
     state.error.modal_unknown=true;
@@ -115,20 +123,136 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
             arc_rpc_observer_generation(ARC_RPC_OBS_ERROR),6,results,0))error_loss();
     }
 }
+static void attempt_event(ArcRpcAttemptEvent event)
+{
+    ArcRpcLaunchAttempt *a=state.binding.attempt;
+    if(a && state.host_ordinal<UINT64_MAX)
+        (void)arc_riscpc_attempt_event(a,&a->token,++state.host_ordinal,event);
+}
+static void prompt_end(void)
+{
+    state.boot.pending=false;
+    if(state.boot.state==ARC_BOOT_WATCH_ARMED || state.boot.state==ARC_BOOT_WATCH_PROMPT)
+        state.boot.state=ARC_BOOT_WATCH_CANCELLED;
+    if(state.binding.attempt && state.binding.attempt->outcome==ARC_RPC_OUTCOME_WAITING)
+        attempt_event(ARC_RPC_EVENT_WAIT_UNOBSERVED);
+}
+static bool ram(uint32_t at,size_t n,bool privileged)
+{
+    if(n==0 || n>UINT32_MAX-at)return false;
+    for(size_t i=0;;i=i+4<n?i+4:n-1){uint32_t pa=0;
+        if(!arc_rpc_inspect_translate(at+(uint32_t)i,privileged,&pa))return false;
+        /* Inspector byte access additionally refuses unsupported backing. */
+        ArcRpcBacking backing=arc_rpc_observer_backing(arc_rpc_phys_page(pa));
+        if(backing.kind!=ARC_RPC_BACKING_RAM0 && backing.kind!=ARC_RPC_BACKING_RAM1 && backing.kind!=ARC_RPC_BACKING_VRAM)return false;
+        if(i==n-1)break;
+    }return true;
+}
+static bool authored(const ArcRpcObservation *e,uint32_t words[16])
+{
+    const ArcRpcLaunchController *c=state.binding.controller;
+    if(!c || e->kind!=ARC_RPC_OBS_SWI || !user(e->mode) || (e->swi&~0x20000u)!=6 ||
+        e->registers[0] || e->registers[1]!=1 || e->registers[2] ||
+        e->registers[4]!=0x53435241u || e->registers[5]!=64 || e->registers[6]!=1 ||
+        e->pc<c->query)return false;
+    uint32_t base=e->pc-c->query,at=e->registers[3];
+    if((base&3) || base>UINT32_MAX-c->size || at!=base+c->status ||
+        (state.bound_base && base!=state.controller_base) || !ram(base,c->size,false))return false;
+    for(unsigned i=0;i<16;++i)if(!arc_rpc_inspect_word(at+4*i,false,&words[i]))return false;
+    ArcRpcLaunchAttempt *a=state.binding.attempt;
+    uint64_t token=words[4]|(uint64_t)words[5]<<32,epoch=words[6]|(uint64_t)words[7]<<32;
+    if(!a || !arc_riscpc_attempt_matches(a,&a->token) || a->token.serial-1>UINT64_MAX-a->token.epoch ||
+        token!=a->token.session || epoch!=a->token.epoch+a->token.serial-1 ||
+        words[0]!=0x53435241u || words[1]!=1 || words[2]!=64 || words[3]!=1 ||
+        words[8]<1 || words[8]>8 || !words[9] || words[11] || words[12] || words[13] || words[14] || words[15])return false;
+    /* Validate the authored image, not just a token-shaped block. Only the
+     * status event, sequence and detail may change. No ROM copying. */
+    for(size_t i=0;i<c->size;++i){uint8_t byte;
+        if((i>=c->status && i<c->status+64) || (words[8]==ARC_RPC_STATUS_REJECTED && i>=c->plan))continue;
+        if(!arc_rpc_inspect_byte(base+(uint32_t)i,false,&byte) || byte!=c->image[i])return false;
+    }
+    state.controller_base=base;state.bound_base=true;return true;
+}
+static void status_event(const ArcRpcObservation *e)
+{
+    uint32_t w[16];if(!authored(e,w))return;
+    if(w[9]<=state.sequence || w[9]!=state.sequence+1)return;
+    ArcRpcLaunchAttempt *a=state.binding.attempt;bool accepted=false;
+    switch(w[8]){
+    case ARC_RPC_STATUS_CONSUME:
+        if(state.sequence || w[10])break;
+        if(state.binding.revalidate)state.binding.revalidate(state.binding.opaque);
+        accepted=arc_riscpc_attempt_consume(a,&a->token)==ARC_RPC_TRANSITION_APPLIED;
+        if(accepted && state.binding.consumed){
+            state.binding.consumed(state.binding.opaque);
+            arc_rpc_observer_boundary_pending=true;
+        }
+        if(accepted && state.observation_finished){attempt_event(ARC_RPC_EVENT_EXPIRE);arc_rpc_observer_filter(ARC_RPC_OBS_LAUNCH,NULL);}
+        break;
+    case ARC_RPC_STATUS_REGISTERED:
+        if(a->delivery!=ARC_RPC_DELIVERY_CONSUMED || state.registered || !w[10])break;
+        state.task=w[10];state.registered=true;accepted=true;break;
+    case ARC_RPC_STATUS_DISPATCH:
+        if(!state.registered || state.dispatched || w[10])break;
+        attempt_event(ARC_RPC_EVENT_DISPATCH);state.dispatched=true;accepted=true;break;
+    case ARC_RPC_STATUS_START_RETURNED:
+        if(!state.dispatched || state.start_seen)break;
+        attempt_event(ARC_RPC_EVENT_START_RETURNED);state.start_seen=true;state.detail=w[10];state.prompt_phase=false;
+        arc_rpc_observer_cancel(ARC_RPC_OBS_BOOT);state.prompt_watch=0;prompt_end();accepted=true;break;
+    case ARC_RPC_STATUS_RETURNED:case ARC_RPC_STATUS_DESKTOP:
+        if(!state.start_seen || state.detail!=w[10] || ((w[8]==ARC_RPC_STATUS_RETURNED)!=(w[10]==0)))break;
+        attempt_event(w[8]==ARC_RPC_STATUS_RETURNED?ARC_RPC_EVENT_RETURNED:ARC_RPC_EVENT_DESKTOP);
+        accepted=true;break;
+    case ARC_RPC_STATUS_REJECTED:
+        if(state.dispatched){attempt_event(ARC_RPC_EVENT_EXPIRE);accepted=true;}
+        else {attempt_event(ARC_RPC_EVENT_REJECTED);accepted=true;}state.closed=!state.registered;break;
+    case ARC_RPC_STATUS_CLOSED:
+        if(!state.registered || state.closed || w[10] ||
+            (state.event!=ARC_RPC_STATUS_RETURNED && state.event!=ARC_RPC_STATUS_DESKTOP && state.event!=ARC_RPC_STATUS_REJECTED))break;
+        state.closed=true;accepted=true;break;
+    }
+    if(accepted){state.sequence=w[9];state.event=w[8];}
+}
 static void launch_event(void *opaque,const ArcRpcObservation *e)
 {
     (void)opaque;if(e->kind!=ARC_RPC_OBS_SWI || !user(e->mode))return;
-    char command[256];const char *start=NULL;
-    if((e->swi&~0x20000u)==0x400deu &&
-       arc_rpc_inspect_string(e->registers[0],false,command,sizeof(command)).status==ARC_RPC_INSPECT_OK)start=command;
-    arc_outcome_swi(&state.launch,e->swi,e->registers[0],e->registers[1],e->registers[2],
-        e->backing.kind==ARC_RPC_BACKING_ROM,start,e->ns/1000u);
+    if(state.binding.attempt){
+        if(state.observation_finished){status_event(e);return;}
+        status_event(e);
+        uint32_t swi=e->swi&~0x20000u;
+        if(swi==0x400deu){char command[ARC_RPC_PLAN_COMMAND_MAX];
+            bool exact=state.bound_base && state.dispatched && !state.start_seen &&
+                e->pc==state.controller_base+state.binding.controller->start &&
+                e->registers[0]==state.controller_base+state.binding.controller->command &&
+                arc_rpc_inspect_string(e->registers[0],false,command,sizeof(command)).status==ARC_RPC_INSPECT_OK &&
+                !strcmp(command,state.binding.controller->text);
+            if(exact){arc_outcome_swi(&state.launch,e->swi,0,0,0,false,command,e->ns/1000);state.prompt_phase=true;}
+            else {state.prompt_phase=false;arc_rpc_observer_cancel(ARC_RPC_OBS_BOOT);state.prompt_watch=0;prompt_end();}
+        }else if(swi==0x400c0u && state.dispatched){state.prompt_phase=false;arc_rpc_observer_cancel(ARC_RPC_OBS_BOOT);state.prompt_watch=0;prompt_end();}
+        return;
+    }
 }
 static void boot_event(void *opaque,const ArcRpcObservation *e)
 {
-    (void)opaque;if(e->kind!=ARC_RPC_OBS_SWI || !user(e->mode))return;
-    arc_boot_watch_observe(&state.boot,e->swi,e->registers[0],e->registers[1],e->registers[2],e->registers[3],
-        e->pc,e->mode,e->backing.kind==ARC_RPC_BACKING_ROM,e->ns/1000u);
+    if(state.binding.attempt){
+        (void)opaque;
+        if(e->kind==ARC_RPC_OBS_CONTINUATION || e->kind==ARC_RPC_OBS_WATCH_LOST){
+            if(e->watch==state.prompt_watch){state.prompt_watch=0;
+                if(e->kind==ARC_RPC_OBS_CONTINUATION && e->matched &&
+                    state.binding.attempt->outcome==ARC_RPC_OUTCOME_WAITING)attempt_event(ARC_RPC_EVENT_INPUT_RESUMED);
+                prompt_end();}
+            return;
+        }
+        if(e->kind!=ARC_RPC_OBS_SWI || !user(e->mode) || !state.prompt_phase || state.start_seen ||
+            (e->swi&~0x20000u)!=0xe || !arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))return;
+        if(state.prompt_watch){arc_rpc_observer_cancel(ARC_RPC_OBS_BOOT);state.prompt_watch=0;prompt_end();return;}
+        uint32_t r0=e->registers[0],r1=e->registers[1];
+        if((r0&0xc0000000u) || !r1 || r1>255 || e->registers[2]!=32 || e->registers[3]!=126 || !ram(r0,(size_t)r1+1,false))return;
+        state.prompt_watch=arc_rpc_observer_watch(ARC_RPC_OBS_BOOT,e->pc+4,e->mode,e->registers[13],64000000u);
+        if(!state.prompt_watch)return;
+        state.prompt_started=e->ns/1000;arc_boot_watch_arm_profile(&state.boot,state.prompt_started,&boot_profile);
+        arc_boot_watch_observe(&state.boot,e->swi,r0,r1,32,126,e->pc,e->mode,false,e->ns/1000);return;
+    }
 }
 /* Scalars sit beside the copied payload so the complete 256-byte inspector
  * string bound remains available to disc paths. */
@@ -356,11 +480,12 @@ static void filters(void)
     ArcRpcObserveCallback callbacks[]={boot_event,launch_event,error_event,disc_event};
     for(unsigned i=0;i<4;++i){
         ArcRpcObserveFilter filter={.modes=~0u,.kinds=ARC_RPC_OBS_SWI|ARC_RPC_OBS_CONTINUATION|ARC_RPC_OBS_WATCH_LOST,
-            .results=i==ARC_RPC_OBS_ERROR?6:0,.callback=callbacks[i],
+            .registers=i==ARC_RPC_OBS_LAUNCH?0x70:0,.results=i==ARC_RPC_OBS_ERROR?6:0,.callback=callbacks[i],
             .swis=i==ARC_RPC_OBS_ERROR?error_swis:i==ARC_RPC_OBS_DISC?disc_swis:NULL,
             .swi_count=i==ARC_RPC_OBS_ERROR?sizeof(error_swis)/sizeof(*error_swis):
                 i==ARC_RPC_OBS_DISC?sizeof(disc_swis)/sizeof(*disc_swis):0};
-        arc_rpc_observer_filter((ArcRpcObserver)i,(state.cells&bits[i])?&filter:NULL);
+        bool delivery=i==ARC_RPC_OBS_LAUNCH && state.binding.attempt && !state.observation_finished;
+        arc_rpc_observer_filter((ArcRpcObserver)i,(delivery || (state.cells&bits[i]))?&filter:NULL);
     }
     ArcRpcHostWorkHandler handler={work_valid,work_resolve,work_mutate,NULL};
     arc_rpc_observer_host_handler(ARC_RPC_OBS_DISC,&handler);
@@ -385,11 +510,15 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
     };
     for(unsigned i=0;i<sizeof(cells)/sizeof(cells[0]);++i){
         ArcRpcObserverQualification q=arc_rpc_observer_qualification(catalogue,cpu,cells[i].owner,cells[i].capability);
-        if(catalogue && q.profile==ARC_RPC_PROFILE_REVISION && q.enabled)state.cells|=cells[i].bit;
+        unsigned revision=cells[i].owner==ARC_RPC_OBS_BOOT || cells[i].owner==ARC_RPC_OBS_LAUNCH?
+            ARC_RPC_LAUNCH_PROFILE_REVISION:ARC_RPC_PROFILE_REVISION;
+        if(catalogue && q.profile==revision && q.enabled)state.cells|=cells[i].bit;
     }
     state.error.modal_unknown=!(state.cells&ARC_RPC_CELL_ERROR);filters();
 }
 #if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
+void arc_rpc_observers_test_status(const ArcRpcObservation *event)
+{ status_event(event); }
 void arc_rpc_observers_test_cells(unsigned cells)
 { state.cells&=cells;filters(); }
 void arc_rpc_observers_test_horizon(unsigned us)
@@ -458,7 +587,29 @@ void arc_rpc_observers_rebase(unsigned actual_cpu)
 void arc_rpc_observers_frame(uint64_t time)
 {
     if(state.epoch!=arc_rpc_observer_epoch())return;
+    if(state.binding.attempt){
+        if(state.observation_finished)goto disc_retry;
+        if(state.prompt_watch && time-state.prompt_started>=2000000){arc_rpc_observer_cancel(ARC_RPC_OBS_BOOT);state.prompt_watch=0;prompt_end();}
+        if(state.prompt_watch && arc_rpc_observer_watch_live(ARC_RPC_OBS_BOOT,state.prompt_watch)){
+            arc_boot_watch_frame(&state.boot,time);
+            if(state.boot.state==ARC_BOOT_WATCH_PROMPT)attempt_event(ARC_RPC_EVENT_WAITING);
+        }
+        if(state.closed || time-state.launch_started>=120000000){
+            if(!arc_riscpc_attempt_established(state.binding.attempt))
+                attempt_event(state.binding.attempt->delivery==ARC_RPC_DELIVERY_PREPARED?ARC_RPC_EVENT_UNOBSERVED:ARC_RPC_EVENT_EXPIRE);
+            state.prompt_phase=false;state.observation_finished=true;
+            /* A helper not yet entered can arrive after observation expiry.
+             * Its first query is still synchronously consumed before an
+             * effect. A narrow delivery filter needs no continuation/mode. */
+            ArcRpcObserveFilter late={.swi=6,.swi_mask=0xfdffff,.modes=(1u<<0)|(1u<<16),
+                .kinds=ARC_RPC_OBS_SWI,.registers=0x70,.callback=launch_event};
+            arc_rpc_observer_filter(ARC_RPC_OBS_LAUNCH,state.sequence?NULL:&late);
+            arc_rpc_observer_filter(ARC_RPC_OBS_BOOT,NULL);state.prompt_watch=0;prompt_end();
+        }goto disc_retry;
+    }
     arc_outcome_frame(&state.launch,time);arc_boot_watch_frame(&state.boot,time);
+disc_retry:
+    /* Disc retries belong to the session, including active/expired attempts. */
     if(state.retry_pending){
         ArcRpcHostWork work=state.retry_work;
         bool valid=work.generation==arc_rpc_observer_generation(ARC_RPC_OBS_DISC) && work_valid(NULL,&work) &&
@@ -476,6 +627,41 @@ void arc_rpc_observers_frame(uint64_t time)
         }
     }
 }
+bool arc_rpc_observers_boundary(void)
+{
+    if(!arc_rpc_observer_boundary_pending)return true;
+    arc_rpc_observer_boundary_pending=false;
+    return state.binding.boundary && state.binding.boundary(state.binding.opaque);
+}
+bool arc_rpc_observers_attempt(const ArcRpcLaunchBinding *binding)
+{
+    if(!binding || !binding->attempt || !binding->controller || !binding->revalidate ||
+        state.binding.attempt || binding->attempt->delivery!=ARC_RPC_DELIVERY_PREPARED ||
+        !arc_riscpc_attempt_matches(binding->attempt,&binding->attempt->token))return false;
+    state.binding=*binding;state.launch_started=now();state.host_ordinal=0;
+    state.sequence=state.event=state.detail=state.task=0;
+    state.bound_base=state.registered=state.dispatched=state.start_seen=state.closed=state.prompt_phase=state.observation_finished=false;
+    binding->attempt->capabilities=(arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH)?ARC_RPC_ATTEMPT_OUTCOME_CAP:0)|
+        (arc_rpc_observers_capability(ARC_RPC_CELL_BOOT)?ARC_RPC_ATTEMPT_PROMPT_CAP:0);
+    arc_outcome_arm_profile(&state.launch,binding->controller->text,now(),&launch_profile);
+    filters();return true;
+}
+void arc_rpc_observers_attempt_input(void)
+{
+    if(!state.binding.attempt)return;
+    if(state.boot.state==ARC_BOOT_WATCH_PROMPT)state.boot.state=ARC_BOOT_WATCH_CANCELLED;
+    /* A hint dismissal is not evidence that the pending read returned. */
+}
+void arc_rpc_observers_attempt_interrupt(ArcRpcAttemptInterrupt reason)
+{
+    ArcRpcLaunchBinding old=state.binding;
+    if(old.attempt)arc_riscpc_attempt_interrupt(old.attempt,reason);
+    state.binding=(ArcRpcLaunchBinding){0};state.prompt_phase=false;state.prompt_watch=0;
+    arc_rpc_observer_filter(ARC_RPC_OBS_LAUNCH,NULL);arc_rpc_observer_filter(ARC_RPC_OBS_BOOT,NULL);
+    if(old.aborted)old.aborted(old.opaque,reason);
+}
+void arc_rpc_observers_attempt_media(void)
+{if(state.binding.media_changed)state.binding.media_changed(state.binding.opaque);}
 void arc_rpc_observers_error_snapshot(ArcErrorBox *out)
 {
     if(!out)return;*out=state.error;
@@ -488,12 +674,14 @@ bool arc_rpc_observers_answer(ArcErrorAnswer answer)
     arc_rpc_observer_watch_live(ARC_RPC_OBS_ERROR,state.error_watch) && arc_error_request(&state.error,answer); }
 void arc_rpc_observers_discard(void) { arc_error_discard(&state.error); }
 void arc_rpc_observers_boot_arm(void)
-{ if(arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))arc_boot_watch_arm_profile(&state.boot,now(),&boot_profile); }
+{ if(state.binding.attempt && state.prompt_phase && arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))
+    arc_boot_watch_arm_profile(&state.boot,now(),&boot_profile); }
 void arc_rpc_observers_boot_cancel(void) { arc_boot_watch_cancel(&state.boot); }
 ArcBootWatchState arc_rpc_observers_boot_state(void)
 { return arc_rpc_observers_capability(ARC_RPC_CELL_BOOT)?state.boot.state:ARC_BOOT_WATCH_DISABLED; }
 bool arc_rpc_observers_launch_arm(const char *command)
-{ return arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH) && arc_outcome_arm_profile(&state.launch,command,now(),state.launch.profile); }
+{ return state.binding.attempt && command && !strcmp(command,state.binding.controller->text) &&
+    arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH); }
 void arc_rpc_observers_launch_cancel(const char *why) { arc_outcome_cancel(&state.launch,why); }
 void arc_rpc_observers_refused(unsigned drive) { arc_outcome_refused(&state.launch,drive); }
 void arc_rpc_observers_launch_snapshot(ArcLaunchOutcome *out)
@@ -540,3 +728,8 @@ void arc_rpc_observers_disc_status(ArcRpcDiscStatus *out)
         !arc_rpc_observers_capability(ARC_RPC_CELL_ERROR)?"error-observation-disabled":
         state.error.recognised_open?"user-error-open":state.error.modal_unknown?"modal-unknown":"eligible";
 }
+
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
+void arc_rpc_observers_test_boot_snapshot(ArcBootWatch *out)
+{ if(out){*out=state.boot;if(!arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))memset(out,0,sizeof(*out));} }
+#endif

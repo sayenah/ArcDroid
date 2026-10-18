@@ -5,6 +5,7 @@
 #include "rpc_selection.h"
 #include "rpc_cmos_store.h"
 #include "rpc_boot.h"
+#include "rpc_boot_record.h"
 #define ARC_RPC_PREP_OFFLINE_BUDGET_NS UINT64_C(13333333)
 #define ARC_RPC_PREP_HEADROOM_NS UINT64_C(833333)
 #define ARC_RPC_PREP_NAMESPACE_UNIT_NS UINT64_C(8333333)
@@ -22,7 +23,8 @@ typedef enum {
     ARC_RPC_PREP_START, ARC_RPC_PREP_RUNNING, ARC_RPC_PREP_FAILED,
     ARC_RPC_PREP_CANCELLED
 } ArcRpcPreparationState;
-#define ARC_RPC_PREP_COST_KINDS (ARC_RPC_PREP_CANCELLED+(ARC_RPC_BOOT_CANCELLED+1)*ARC_RPC_BOOT_WORK_COUNT)
+#define ARC_RPC_PREP_PRODUCT_KIND (ARC_RPC_PREP_CANCELLED+(ARC_RPC_BOOT_CANCELLED+1)*ARC_RPC_BOOT_WORK_COUNT)
+#define ARC_RPC_PREP_COST_KINDS (ARC_RPC_PREP_PRODUCT_KIND+1)
 typedef struct {
     uint64_t (*clock)(void *);
     void (*notice)(void *, const char *, bool terminal);
@@ -33,6 +35,13 @@ typedef struct {
     void (*started)(void *, bool factory);
     void (*diagnostics)(void *);
     void (*attached)(void *);
+    /* Frozen A-3 steps 3 and 5. Neither executes guest instructions. The
+     * first re-stages drive 0 only; the second resets/rebinds observers/input. */
+    bool (*restage_drive0)(void *,char *,size_t);
+    bool (*reset_rebind)(void *,char *,size_t);
+    /* Exact ordered media/policy lease: no I/O/allocation; <=32768 metadata bytes.
+     * False refuses observation publication, never command delivery. */
+    bool (*media_identity)(void *,uint8_t[32]);
     void *opaque;
 } ArcRpcPreparationHost;
 typedef struct {
@@ -47,6 +56,8 @@ typedef struct {
     uint64_t epoch;
     bool hard_disc, populate;
     bool helper_override; /* Explicit drive1, including empty, suppresses generation. */
+    const ArcRpcLaunchPlan *launch; /* NULL: delivery unavailable/no plan. Copied. */
+    uint64_t session_id; /* Injected; unique per library load, kept across Restart; not RTC epoch. */
 } ArcRpcPreparationRequest;
 typedef struct ArcRpcPreparation ArcRpcPreparation;
 typedef struct {
@@ -75,6 +86,14 @@ ArcRpcPreparationState arc_riscpc_preparation_state(const ArcRpcPreparation *);
 const char *arc_riscpc_preparation_error(const ArcRpcPreparation *);
 void arc_riscpc_preparation_stats(const ArcRpcPreparation *, ArcRpcPreparationStats *);
 ArcRpcHdStore *arc_riscpc_preparation_disc(ArcRpcPreparation *);
+void arc_riscpc_preparation_attempt(const ArcRpcPreparation *,ArcRpcLaunchAttempt *);
+bool arc_riscpc_preparation_execution_allowed(const ArcRpcPreparation *);
+bool arc_riscpc_preparation_observation(ArcRpcPreparation *,ArcRpcBootRecord *);
+void arc_riscpc_preparation_interrupt(ArcRpcPreparation *,ArcRpcAttemptInterrupt);
+/* Explicit low-level drive-1 lease, captured after frontend attachment. */
+bool arc_riscpc_preparation_helper_override(ArcRpcPreparation *,const ArcEngineMedia *);
+/* Step-3 callback may update permission, never backing identity/content. */
+bool arc_riscpc_preparation_helper_write_policy(ArcRpcPreparation *,bool);
 bool arc_riscpc_preparation_reset(ArcRpcPreparation *);
 void arc_riscpc_preparation_cancel(ArcRpcPreparation *);
 /* Running schedule: exactly one HD tick + eager persistence, no batching clock. */

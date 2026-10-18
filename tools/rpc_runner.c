@@ -22,11 +22,55 @@
 #include <string.h>
 #if defined(_WIN32)
 #include <windows.h>
+#include <mmsystem.h>
 #include <io.h>
 #include <fcntl.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 static HMODULE library;
 static void *symbol(const char *s) { return (void *)GetProcAddress(library, s); }
-static void pause_ns(uint64_t n) { Sleep((DWORD)((n+999999)/1000000)); }
+static HANDLE pause_timer;
+static bool pause_initialized, pause_period;
+static void pause_cleanup(void)
+{
+    if (pause_timer) CloseHandle(pause_timer);
+    if (pause_period) timeEndPeriod(1);
+}
+static void pause_ns(uint64_t n)
+{
+    if (!pause_initialized) {
+        if (atexit(pause_cleanup)) {
+            fputs("Cannot register pacing cleanup\n", stderr);
+            exit(2);
+        }
+        pause_timer = CreateWaitableTimerExW(NULL, NULL,
+            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
+        if (!pause_timer) {
+            /* Older Windows may refuse the high-resolution flag. Hold a 1 ms
+             * timer period until exit so Sleep avoids the default coarse tick,
+             * without spending a CPU on a spin loop. Pair it even on errors. */
+            if (timeBeginPeriod(1) != TIMERR_NOERROR) {
+                fputs("Cannot enable one-millisecond pacing fallback\n", stderr);
+                exit(2);
+            }
+            pause_period = true;
+        }
+        pause_initialized = true;
+    }
+    if (pause_timer) {
+        /* Relative, one-shot deadline in 100 ns units, rounded up. */
+        LARGE_INTEGER due;
+        due.QuadPart = -(LONGLONG)(n / 100 + (n % 100 != 0));
+        if (!SetWaitableTimer(pause_timer, &due, 0, NULL, NULL, FALSE) ||
+                WaitForSingleObject(pause_timer, INFINITE) != WAIT_OBJECT_0) {
+            fprintf(stderr, "Pacing timer wait failed (%lu)\n", (unsigned long)GetLastError());
+            exit(2);
+        }
+    } else {
+        Sleep((DWORD)((n + 999999) / 1000000));
+    }
+}
 #else
 #include <dlfcn.h>
 #include <time.h>
@@ -195,6 +239,8 @@ int main(int argc, char **argv)
     uint64_t prefix_last=0;bool prefix_single=false;
     uint64_t measure_first=0,measure_last=0;unsigned measure_drained=0;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
+    uint64_t preparation_reset_at=UINT64_MAX, reset_stage_frame=2600;
+    const char *reset_stage=NULL;
     for (int i = 1; i < argc; ++i) {
         const char *key = argv[i];
         if (!strcmp(key,"--fail-observation-close")) { fail_observation_close=true;continue; }
@@ -267,6 +313,12 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--ram-offset")) { if (!unsigned_number(v,33554428,&ram_offset) || ram_offset%4) goto usage; }
         else if (!strcmp(key,"--ram-words")) { if (!unsigned_number(v,1024,&ram_count)) goto usage; }
         else if (!strcmp(key,"--reset-at")) { if (!unsigned_number(v,1000000,&reset_at)) goto usage; }
+        else if (!strcmp(key,"--preparation-reset-at")) { if (!unsigned_number(v,1000000,&preparation_reset_at)) goto usage; }
+        else if (!strcmp(key,"--preparation-reset-stage")) {
+            if(strcmp(v,"prepared")&&strcmp(v,"consumed")&&strcmp(v,"dispatch")&&strcmp(v,"handoff"))goto usage;
+            reset_stage=v;
+        }
+        else if (!strcmp(key,"--reset-stage-frame")) {if(!unsigned_number(v,999999,&reset_stage_frame))goto usage;}
         else if (!strcmp(key,"--fault-at")) { if (!unsigned_number(v,1000000,&fault_at)) goto usage; }
         else if (!strcmp(key,"--fail-alloc")) { if (!unsigned_number(v,5,&fail_alloc) || !fail_alloc) goto usage; }
         else goto usage;
@@ -274,7 +326,9 @@ int main(int argc, char **argv)
 #if defined(ARCDROID_RPC_PROFILE)
     if(profile_options && !profile_path)goto usage;
 #endif
-    if (!core || !plan || (!measure && warmup) || (strcmp(pacing,"flat") && strcmp(pacing,"burst") && strcmp(pacing,"realtime"))) goto usage;
+    if (!core || !plan || (!measure && warmup) ||
+        (reset_stage && (measure || preparation_reset_at!=UINT64_MAX || reset_stage_frame>=frames)) ||
+        (strcmp(pacing,"flat") && strcmp(pacing,"burst") && strcmp(pacing,"realtime"))) goto usage;
 #if defined(_WIN32)
     library = LoadLibraryA(core);
 #else
@@ -311,6 +365,11 @@ int main(int argc, char **argv)
     LOAD(capture,"arc_rpc_test_capture_status"); LOAD(read_ram,"arc_rpc_test_read_ram"); LOAD(frame_ns,"arc_engine_test_frame_ns");
     void (*cmos_snapshot)(uint8_t *), (*fault_next)(void);
     LOAD(cmos_snapshot,"arc_rpc_test_cmos_snapshot"); LOAD(fault_next,"arc_rpc_test_fault_next");
+    void (*preparation_restart)(void)=NULL;
+    bool (*advance)(uint64_t)=NULL;
+    void (*attempt_snapshot)(ArcRpcLaunchAttempt *)=NULL;
+    if(preparation_reset_at!=UINT64_MAX || reset_stage)LOAD(preparation_restart,"arc_test_plan_preparation_restart");
+    if(reset_stage){LOAD(advance,"arc_rpc_test_advance");LOAD(attempt_snapshot,"arc_test_plan_launch_snapshot");}
     unsigned (*plan_phase)(void)=NULL;
     void *phase_symbol=symbol("arc_test_plan_cmos_phase");if(phase_symbol)memcpy(&plan_phase,&phase_symbol,sizeof(plan_phase));
     if(plan_phase && plan_phase() && (print_cmos || capture_path)) {fprintf(stderr,"Persistent CMOS is never exported as bytes\n");unload();deinit(); vfs_assert_no_open_handles();return 2;}
@@ -394,6 +453,24 @@ int main(int argc, char **argv)
             variable_updated=true;
         }
         if (f == reset_at) reset();
+        if (f == preparation_reset_at) preparation_restart();
+        if(reset_stage && f==reset_stage_frame){
+            /* Test-only instruction-boundary reset. Existing engine advance
+             * respects this virtual deadline; no CPU/observer hook or guest
+             * state rewrite is needed. A missed stage fails qualification. */
+            bool hit=false;
+            for(unsigned step=0;step<50000000u;++step){
+                ArcRpcLaunchAttempt a;attempt_snapshot(&a);
+                hit=(!strcmp(reset_stage,"prepared") && a.delivery==ARC_RPC_DELIVERY_PREPARED) ||
+                    (!strcmp(reset_stage,"consumed") && a.delivery==ARC_RPC_DELIVERY_CONSUMED) ||
+                    (!strcmp(reset_stage,"dispatch") && a.delivery==ARC_RPC_DELIVERY_DISPATCH && !a.start_returned) ||
+                    (!strcmp(reset_stage,"handoff") && a.start_returned);
+                if(hit){fprintf(stderr,"preparation reset at stage=%s delivery=%u outcome=%u\n",reset_stage,a.delivery,a.outcome);
+                    preparation_restart();break;}
+                if(!a.live || a.delivery==ARC_RPC_DELIVERY_INTERRUPTED || !advance(100))break;
+            }
+            if(!hit){fprintf(stderr,"Requested preparation reset stage was not reached\n");result=1;break;}
+        }
         if (f == fault_at) fault_next();
         if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());result=2;break;}
         uint64_t frontend_start = arc_test_clock_ns();
@@ -577,6 +654,6 @@ usage:
 #if defined(ARCDROID_RPC_PROFILE)
     fputs("Profile build: --profile FILE [--profile-interval FRAMES] [--profile-sample-stride 0..1048576]\n",stderr);
 #endif
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--exercise] [--ranking] [--endpoint-instructions FIRST:LAST:DRAIN | --intrusive-instructions FIRST:LAST:DRAIN] [--prefix-instructions LAST [--single-step-prefix]] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--preparation-reset-at N | --preparation-reset-stage prepared|consumed|dispatch|handoff --reset-stage-frame N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--exercise] [--ranking] [--endpoint-instructions FIRST:LAST:DRAIN | --intrusive-instructions FIRST:LAST:DRAIN] [--prefix-instructions LAST [--single-step-prefix]] [--reject]\n",stderr);
     return 2;
 }

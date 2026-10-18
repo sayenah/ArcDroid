@@ -142,6 +142,18 @@ int main(int argc, char **argv)
    assert(arc_launch_recovery_decide(&d, &selected) == ARC_LAUNCH_RECOVERY_NONE);
    assert(selected == -1);
    fixture_decisions(argv[1]);
+   ArcBootWatch rpc;const ArcBootProfile profile={120000000,250000,0,true,false,true};
+   arc_boot_watch_arm_profile(&rpc,0,&profile);
+   arc_boot_watch_observe(&rpc,0x2000e,0x10020000,255,0,255,0,16,false,0);
+   assert(!rpc.pending);
+   arc_boot_watch_observe(&rpc,0x2000e,0x10020000,255,32,126,0,16,false,0);
+   arc_boot_watch_frame(&rpc,249999);assert(rpc.state==ARC_BOOT_WATCH_ARMED && rpc.pending);
+   arc_boot_watch_frame(&rpc,250000);assert(rpc.state==ARC_BOOT_WATCH_PROMPT);
+   for(unsigned mode=0;mode<32;++mode){
+      arc_boot_watch_arm_profile(&rpc,0,&profile);
+      arc_boot_watch_observe(&rpc,0x2000e,0x10020000,255,32,126,0,mode,false,0);
+      assert(rpc.pending==(mode==0 || mode==16));
+   }
    puts("boot-watch: passed");
    return 0;
 }
