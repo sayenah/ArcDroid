@@ -17,15 +17,17 @@ add_test(NAME rpc-lockstep-compare COMMAND "${Python3_EXECUTABLE}" -B
   "${RPC_LOCKSTEP_PY}/rpc_lockstep_compare_test.py")
 add_test(NAME rpc-lockstep-compare-pipes COMMAND "${Python3_EXECUTABLE}" -B
   "${RPC_LOCKSTEP_PY}/rpc_lockstep_compare_test.py" --stress)
-add_test(NAME rpc-lockstep-compare-mutants COMMAND "${Python3_EXECUTABLE}" -B
-  "${RPC_LOCKSTEP_PY}/rpc_lockstep_compare_test.py" --mutants)
+foreach(shard RANGE 0 3)
+  add_test(NAME rpc-lockstep-compare-mutants-${shard} COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_compare_test.py" --mutants --shard ${shard} 4)
+  set_tests_properties(rpc-lockstep-compare-mutants-${shard} PROPERTIES TIMEOUT 1260 LABELS slow)
+endforeach()
 add_test(NAME rpc-lockstep-schedule COMMAND "${Python3_EXECUTABLE}" -B
   "${RPC_LOCKSTEP_PY}/rpc_lockstep_schedule_test.py")
 add_test(NAME rpc-lockstep-determinism COMMAND "${Python3_EXECUTABLE}" -B
   "${RPC_LOCKSTEP_PY}/rpc_lockstep_determinism_test.py")
 set_tests_properties(rpc-lockstep-compare PROPERTIES TIMEOUT 180)
 set_tests_properties(rpc-lockstep-compare-pipes PROPERTIES TIMEOUT 240)
-set_tests_properties(rpc-lockstep-compare-mutants PROPERTIES TIMEOUT 1260 RUN_SERIAL TRUE)
 set_tests_properties(rpc-lockstep-schedule PROPERTIES TIMEOUT 60)
 set_tests_properties(rpc-lockstep-determinism PROPERTIES TIMEOUT 60)
 add_executable(rpc_lockstep_interval tests/rpc_lockstep_interval.c)
