@@ -40,7 +40,7 @@ def kill(name,content,target='rpc_l1_directed_test',field=None):
         print(name+': killed',flush=True)
 mutants=[
  ('unconditional-hint-store','if (side->hints[index] != way) L1_HINT_WRITE(side,index,way);','L1_HINT_WRITE(side,index,way);'),
- ('always-linear','    if (side->gate) {','    if (false) {'),
+ ('always-linear','    } else if (side->gate) {','    } else if (false) {'),
  ('hint-no-va',' && c->tags[base+way].va == line',''),
  ('hint-no-valid',' && c->tags[base+way].valid',''),
  ('hint-no-bound','way < c->ways && ','true && '),
@@ -55,6 +55,17 @@ mutants=[
  ('hint-counter-way','unsigned way = result ? (unsigned)(result-c->tags)-base : 0;','unsigned way = result ? side->hints[hint_index(c,line)] : 0;'),
 ]
 for name,old,new in mutants:kill(name,replace(old,new))
+way0='    if (start && c->tags[base].valid && c->tags[base].va == line) {\n        result = &c->tags[base];\n'
+skip_way0=replace(way0,'    if (false) {\n        result = &c->tags[base];\n')
+kill('skip-way0',skip_way0)
+# Move the canonical way-0 check behind validation: an accepted hint bypasses
+# it, while a rejected hint still finds way 0. This is guest-equivalent under
+# uniqueness; the directed no-hint-work expectations make the ordering binding.
+rejected='        } else {\n            ARC_RPC_COUNT(l1_hint_rejected,1);'
+if skip_way0.count(rejected)!=1:raise RuntimeError('hint-before-way0 anchor')
+kill('hint-before-way0',skip_way0.replace(rejected,
+    '        } else if (start && c->tags[base].valid && c->tags[base].va == line) {\n'
+    '            result = &c->tags[base];\n'+rejected))
 geometry='    m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 64;'
 gates='    l1_instruction.gate = lookup_gate(&m.instruction);\n    l1_data.gate = lookup_gate(&m.data);\n'
 if text.count(gates)!=1:raise RuntimeError('gate anchor')

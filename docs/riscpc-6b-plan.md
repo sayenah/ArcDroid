@@ -79,17 +79,17 @@ will shift them again. The research measurements retain their stated anchors.
   - The ledger in this plan therefore uses **timing ≈ 14.5, fetch ≈ 4.6, dispatch ≈ 4.6, bus ≈ 4.7 ns** of 28.5.
   - "Bus 7.3 ns" and "bus_calls 0.644" are not used. The documented figure is about **0.38 bus calls per instruction** over the whole run (`PHASE1A-DRAFT.md:8`). The racing-window figures (50.6 MIPS executed, 9.76 ns stall, 0.644) are [U] until M1 reproduces them.
 - **The 1,666,667 backstop is at `rpc_session.c:413-415`** [C]: line 413 is the fatal, 414 the quota and 415 the 200 cap. One judge's "415-416" is wrong.
-- **Cache-hit handling** is at `rpc_mem_timing.c:678-686` [C], not `:329-336`.
+- **Cache-hit handling** is at `rpc_mem_timing.c:683-691` [C], not `:329-336`.
   - A hit increments `stats.hits`.
   - A fetch hit calls `memo_set`.
   - A read hit returns with no request.
-  - **Only on SA-110 (model 2)** does a store hit set a dirty half and return (`rpc_mem_timing.c:685`). On ARM610/710/7500 a store hit falls through to the buffered-write path, which creates a request.
+  - **Only on SA-110 (model 2)** does a store hit set a dirty half and return (`rpc_mem_timing.c:690`). On ARM610/710/7500 a store hit falls through to the buffered-write path, which creates a request.
   - So a "regime" survives cache-hit loads on every model, but store hits only on SA.
 - **Burst-ROM tracking is per fetch, not only when `rom_sequential` is true.**
-  - `arc_rpc_mem_access` sets `track_rom`, `after_branch=false` and `fetch_pc` for any fetch from a burst-ROM region (`(r ? romcr1 : romcr0) & 24`, `rpc_mem_timing.c:661-666`) [C].
+  - `arc_rpc_mem_access` sets `track_rom`, `after_branch=false` and `fetch_pc` for any fetch from a burst-ROM region (`(r ? romcr1 : romcr0) & 24`, `rpc_mem_timing.c:666-671`) [C].
   - `arc_rpc_mem_fetch` writes `fetch_pc` on every fetch while `track_rom` is set (`rpc_mem_timing.h:132`) [C].
   - Blocks must therefore exclude **code in a burst-ROM region** as well as any entry with `rom_sequential == true`.
-- **The SA empty-data-tag shortcut** (`rpc_mem_timing.c:652-659`) appends DEMAND and calls `uncached_clock()` on reads. That can rebase `base_*` (`rpc_mem_timing.c:616-626`, `:542-555`) [C]. Re-read `base_*` after any access helper.
+- **The SA empty-data-tag shortcut** (`rpc_mem_timing.c:657-664`) appends DEMAND and calls `uncached_clock()` on reads. That can rebase `base_*` (`rpc_mem_timing.c:621-631`, `:547-560`) [C]. Re-read `base_*` after any access helper.
 - **Event check.**
   - The check runs whenever `arm.event != 0`.
   - In 26-bit modes it first refreshes `reg[16]` from R15's I/F bits (`arm.c:1933-1937`) [C], then takes ABORT/FIQ/IRQ (`:1939-1949`).
@@ -107,13 +107,13 @@ will shift them again. The research measurements retain their stated anchors.
 - `getpccache` clears 0x40 and returns NULL (`:463-466`).
 - The fetch-timing call is charged under COST_TIMING (`:470-476`).
 - The batch admission ternary is at `arm.c:2011-2015`.
-- `rate > 100` is fatal at `rpc_mem_timing.c:520`.
+- `rate > 100` is fatal at `rpc_mem_timing.c:525`.
 - `arc_rpc_session_test_rate` silently ignores values above 100 (`rpc_session.c:563`).
 - Rates are 20/35/100/35 (`rpc_session.c:43-46`). Duplicate tables exist at `libretro/rpc_cmos_store.c:66` and `libretro/rpc_preparation.c:323`.
 - `arc_fault_jump.h:10-12` selects `__USE_MINGW_SETJMP_NON_SEH`.
 - Env 83/84 are at `libretro.h:2644`/`:2659`, and `GET_JIT_CAPABLE` 74 at `:2476`.
 - CI `android-arm64` only builds. Since W6 (S67, D-196(2)) the `host-arm64` job runs the full host suite natively on `ubuntu-24.04-arm`, so CI executes arm64 Linux; Android itself still runs only on the Odin3.
-- The memo clear sites are `rpc_mem_timing.c:545, 569, 621, 699, 765, 781`.
+- The memo clear sites are `rpc_mem_timing.c:550, 574, 626, 704, 770, 786`.
 
 ## 3. Dependency graph and sequencing
 
@@ -273,7 +273,7 @@ Each ruling is listed with what it decides; the exactness argument is to be writ
 | **R-g** | **G-9 mechanism.** Verify-on-fetch replaces the `mem_phys_write32/8` hook. Default: **per-instruction** comparison of the cached word with live backing at P0(k), through the block's (allocation, offset). This is equivalent to the oracle's re-read (`arm.c:607`) for any writer, including k writing k+1 and every mirror, and it retires Q-4. ROM blocks skip it. The native fallback (vector verify at entry plus a range check after in-block stores or MMIO) **depends on Q-4** and needs its own wording if adopted. D-142(3)'s keying is kept. | B-0 |
 | **R-e** | **G-4 / D-142(2) block permission reuse.** Within one 1 KiB tag, after the pure entry probe: the verdict is a pure function of entry.domain and entry.ap, DACR, `ctrl&0x300`, `memmode` and rw = 0. The entry changes only at the install (`cp15.c:426`, denied accesses included) or a flush (`:96`). DACR, S/R, mmu and memmode change only at E4 exits. So a host-only per-slot install generation plus a flush epoch is a complete dependency set [I, to be stated formally]. A generation change takes E2 at P0(k+1). `arc_rpc_attributes` is re-stored from the code entry at the next fetch after any data access, and never on a deny. Also amend G-4 and §1.4 to "stored on success only". | B-5 |
 | **R-t** | **Timing folds, each classified separately.** (A) Base-step regime in closed form, integer and rational. (B) S1-generalised bus window with W = min(`next_ns`, limit, visible(finish)). (D) Fetch timing per line through a static memo-line map. (F) Bulk materialisation. Lazy multi-transition catch-up (G-8) is **deferred** to R-l. | B-1, B-2, B-3 |
-| **R-l** | **G-8 lazy catch-up.** A written proof that `run(t)` at P0, before any possibly-requesting instruction, equals stepped service when there are no own requests, `m.count == 0` and `rom_sequential == false`. P0 placement is forced because `run()` calls `commands()` before completing cycles (`rpc_mem_timing.c:988`) [re-read at L1]. | B-7b |
+| **R-l** | **G-8 lazy catch-up.** A written proof that `run(t)` at P0, before any possibly-requesting instruction, equals stepped service when there are no own requests, `m.count == 0` and `rom_sequential == false`. P0 placement is forced because `run()` calls `commands()` before completing cycles (`rpc_mem_timing.c:993`) [re-read at L1]. | B-7b |
 | **R-x** | **§2.2 host-only exclusions:** block tables, slot generations, `slot_unit`, cached words, chain links, way hints, regime state, inline caches. Each is reset at every G-13 point. | B-0 |
 | **R-8** | **A1's TLB-exposure shape is chosen once, for 1a and for blocks.** Recommendation: a namespaced header context, because emitters need slot addresses and generations. | 1a A1 work order |
 | **R-c2** | **Cycle-model readiness.** The IR carries a static cost per instruction in abstract cost units. The regime budget is in cost units. The exit contract reserves a carried previous-instruction-latency slot. Canonical state gains **no field now**. Every instruction-count bound in translator code is derived from the rate or expressed in ns. Also rule whether a future model may depend on data (SA multiply early termination) or on the previous instruction (interlocks). | B-0 IR freeze |
@@ -325,7 +325,7 @@ Every B slice must show that the default path gains no per-instruction cost (an 
   - Materialise `opcode`, `recording`, `pccache2` and `arc_rpc_attributes` before every helper and at every exit.
 - **Exactness.** `memo_valid` cannot change without a data access or a helper; after either, re-test it per instruction. `stats.hits` and `fetch_hits` stay individually exact.
 - **ACs.**
-  - SA D-fill memo clear (`rpc_mem_timing.c:699`) followed by a fetch;
+  - SA D-fill memo clear (`rpc_mem_timing.c:704`) followed by a fetch;
   - a unified-cache data fill evicting the executing line (G-6);
   - mmu-off (attributes 0);
   - unbacked fetch;
@@ -496,7 +496,7 @@ Every B slice must show that the default path gains no per-instruction cost (an 
 | Slice | Kind | Content | Decided by |
 |---|---|---|---|
 | C-0 | test-only | The guest-time ledger inside M1. It settles stall against idle for 031: D-163's "memory-stall model halves throughput" against S65's "62 MIPS executed, the rest is idle" (`TRANSLATOR-MAIN.md:211`). It predicts the 200-rate gain with no change. | Evidence |
-| C-1 | behaviour-preserving | A rate-derived backstop replacing `1666667u` (`rpc_session.c:413-415`), keeping the `next==limit` extra instruction. One shared rate table (`rpc_session.c:43-46`, `rpc_cmos_store.c:66`, `rpc_preparation.c:323`). One named admission maximum, still 100, covering `rpc_mem_timing.c:520`, `rpc_session.c:563`, `arcdroid_engine.c:474` [U] and `tests/arc_test_plan.c:407` [U]. Out-of-range test rates refused, not silently ignored. The `divide()` reciprocal proof restated for any d < 2³². Overflow horizons documented. Gate: everything byte-identical; mutants on the derived budget killed. | Fable |
+| C-1 | behaviour-preserving | A rate-derived backstop replacing `1666667u` (`rpc_session.c:413-415`), keeping the `next==limit` extra instruction. One shared rate table (`rpc_session.c:43-46`, `rpc_cmos_store.c:66`, `rpc_preparation.c:323`). One named admission maximum, still 100, covering `rpc_mem_timing.c:525`, `rpc_session.c:563`, `arcdroid_engine.c:474` [U] and `tests/arc_test_plan.c:407` [U]. Out-of-range test rates refused, not silently ignored. The `divide()` reciprocal proof restated for any d < 2³². Overflow horizons documented. Gate: everything byte-identical; mutants on the derived budget killed. | Fable |
 | C-2 | test-only | Test rates 1..R_max (R_max ≥ 202). The independent oracle extended to `range(1, R_max+1)`, with long runs at 200 and 202 (202 covers SA rational continuation). New calibrations come only from the independent oracle. Production defaults unchanged. **Lands before B-Q.** | Fable |
 | C-3 | test-only, offline | A recorded bus-request stream replayed through oracle variants: G4 open page, G6 read-around-buffer, video-hold overlap, SA per-class cycles. Output is a Founder pack with predicted fps for 031 and the 3D title per variant. | Evidence |
 | C-4 | Founder information | Real 202 MHz Risc PC data or recordings, as `docs/riscpc.md:60` requires [path per map, U]. | Founder |
@@ -557,9 +557,9 @@ Every B slice must show that the default path gains no per-instruction cost (an 
 2. R-g: is per-instruction verify-on-fetch equivalent to `arm.c:607` for every writer, including an STM partial abort and a store into k+1? What wording is required for the entry-plus-range fallback (Q-4)?
 3. R-t (A): is one entry check sufficient in rational mode, with `integer_batch` dropping exactly at `.h:153-155`?
 4. R-t (B): beyond S1's tie set, are any further guards needed when blocks span chains?
-5. R-l: what is the formal statement and proof of P0-only lazy catch-up, given `commands()`-before-completion and the bus-side writes to `rom_sequential` (`rpc_mem_timing.c:849-885`, per the map)?
+5. R-l: what is the formal statement and proof of P0-only lazy catch-up, given `commands()`-before-completion and the bus-side writes to `rom_sequential` (`rpc_mem_timing.c:854-890`, per the map)?
 6. Is the `arm.event == 0` admission rule sufficient for G-3 in 26-bit modes (`arm.c:1933-1937`)? Is `arm.event` provably constant inside a helper-free batch?
-7. R-burst: is folding `track_rom`/`fetch_pc` (`rpc_mem_timing.c:661-666`, `.h:132`) worth a ruling?
+7. R-burst: is folding `track_rom`/`fetch_pc` (`rpc_mem_timing.c:666-671`, `.h:132`) worth a ruling?
 8. R-c2: does reserving a latency slot now, without a canonical field, constrain a later interlock model correctly?
 9. Is the call-threaded X-1 worth a slice, compared with going straight to X-2?
 10. G1/G2 placement against D-142's phase wording.
@@ -571,7 +571,7 @@ Every B slice must show that the default path gains no per-instruction cost (an 
 - §1.1: `arm.c:571/574/581/582` → `:597/600/607/608`; the event check is at `:1933`.
 - §1.8: `cp15.c:379-438` → `:390-449` (install at `:426`, attributes at `:439`).
 - §1.4 and G-4: change to "stored on success only".
-- Memo clear sites (invariants :213-215): `:335/:220/:230-233/:369,382/:262` → `rpc_mem_timing.c:699/545/569/765,781/621`.
+- Memo clear sites (invariants :213-215): `:335/:220/:230-233/:369,382/:262` → `rpc_mem_timing.c:704/550/574/770,786/626`.
 
 **Other carried items:**
 
@@ -682,7 +682,7 @@ Four of the findings are material (1–4); the rest are amendments. All were che
 
 **7. MEDIUM, exactness: measurement endpoints can fall inside a fold.**
 - **Evidence:**
-  - `arc_rpc_mem_begin_slow` captures the interval at `measure_first` (rpc_mem_timing.c:600-612).
+  - `arc_rpc_mem_begin_slow` captures the interval at `measure_first` (rpc_mem_timing.c:605-617).
   - `test_stop` ends the batch at `measure_last` (rpc_mem_timing.h, batch_next).
   - B-1's bulk updates to `instructions`/`fetch_hits`, B-2's regimes and B-4's chains must split exactly at those ordinals under E0's endpoint mode.
 - **Amendment:** add an acceptance criterion placing endpoints at every position inside a fold, regime or chain, plus a mutant that fails to split.
@@ -731,8 +731,8 @@ Four of the findings are material (1–4); the rest are amendments. All were che
 
 The other premises I re-checked hold:
 - rpc_session.c:413-415 and :43-46;
-- rpc_mem_timing.c:520, and the store hit setting a dirty half and returning only on SA;
-- burst-ROM tracking at rpc_mem_timing.c:661-666 and `.h:132`;
+- rpc_mem_timing.c:525, and the store hit setting a dirty half and returning only on SA;
+- burst-ROM tracking at rpc_mem_timing.c:666-671 and `.h:132`;
 - `uncached_clock` rebasing time;
 - cp15.c storing attributes on success only;
 - `arc_fault_jump.h:10-12`;

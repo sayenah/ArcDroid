@@ -18,7 +18,7 @@ import time
 started=time.monotonic()
 sys.dont_write_bytecode=True
 from rpc_ninja_commands import rebuild_commands,split_command
-p=argparse.ArgumentParser(description=__doc__);p.add_argument('build',type=Path);p.add_argument('--variants',nargs='+',default=['default','0','1','2','poison']);p.add_argument('--goldens-only',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser(description=__doc__);p.add_argument('build',type=Path);p.add_argument('--variants',nargs='+',choices=['default','0','1','2','3','4','poison','poison3','poison4'],default=['default','0','1','2','3','4','poison','poison3','poison4']);p.add_argument('--goldens-only',action='store_true');a=p.parse_args()
 build=a.build.resolve();root=Path(__file__).resolve().parents[1]
 cache=(build/'CMakeCache.txt').read_text();ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands=[x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
         print('secondary sanitizer RPC/hash overlays: -O2; all sanitizer, ABI and preprocessor flags retained',flush=True)
     for variant in a.variants:
         defs=['-DARCDROID_RPC_CROSSCHECK=1']
-        if variant=='poison':defs+=['-DARCDROID_RPC_L1_GATE=2','-DARCDROID_RPC_L1_POISON=1']
+        if variant.startswith('poison'):defs+=['-DARCDROID_RPC_L1_GATE='+('2' if variant=='poison' else variant[-1]),'-DARCDROID_RPC_L1_POISON=1']
         elif variant!='default':defs+=['-DARCDROID_RPC_L1_GATE='+variant]
         with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-',dir=build) as tmp:
             folder=Path(tmp);replacements={}
@@ -111,8 +111,9 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
                 print(f'{variant}: 25 immutable goldens exact',flush=True)
                 continue
             if comparisons==0:raise RuntimeError('cross-check never exercised')
-            if variant in ['1','2','poison'] and (totals[40]==0 or totals[41]==0):raise RuntimeError('hint accepted/rejected floor')
-            if variant=='poison' and totals[42]==0:raise RuntimeError('poison fallback floor')
+            if variant not in ['default','0'] and (totals[40]==0 or totals[41]==0):raise RuntimeError('hint accepted/rejected floor')
+            if variant in ['poison','poison4'] and totals[42]==0:raise RuntimeError('poison mirror fallback floor')
+            if variant=='poison3' and totals[44]==0:raise RuntimeError('poison linear fallback floor')
             if totals[43]:raise RuntimeError('exact mirror recheck failures')
             print(f'{variant}: 25 immutable goldens, 4677 intrusive/endpoint intervals, observation quota/mode matrix exact; crosscheck={comparisons} mismatches=0',flush=True)
 

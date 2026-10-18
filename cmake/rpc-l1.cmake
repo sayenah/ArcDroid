@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 if(TARGET arcdroid_rpcmeasure_libretro AND ARCDROID_RPC_L1_VARIANTS)
-  foreach(variant IN ITEMS sa_linear sa_hint sa_mirror off)
+  foreach(variant IN ITEMS sa_linear sa_hint sa_mirror sa_way0_hint sa_way0_mirror off)
     set(l1_target arcdroid_rpcmeasure_l1_${variant}_libretro)
     arcdroid_add_libretro(${l1_target} FALSE arcdroid_core_test)
     target_compile_definitions(${l1_target} PRIVATE ARCDROID_TEST_FAULTS=1
@@ -13,8 +13,12 @@ if(TARGET arcdroid_rpcmeasure_libretro AND ARCDROID_RPC_L1_VARIANTS)
         set(l1_gate 0)
       elseif(variant STREQUAL "sa_hint")
         set(l1_gate 1)
-      else()
+      elseif(variant STREQUAL "sa_mirror")
         set(l1_gate 2)
+      elseif(variant STREQUAL "sa_way0_hint")
+        set(l1_gate 3)
+      else()
+        set(l1_gate 4)
       endif()
       target_compile_definitions(${l1_target}_rpc PRIVATE ARCDROID_RPC_L1_SA_GATE=${l1_gate})
     endif()
@@ -90,7 +94,8 @@ endif()
 if(TARGET rpc_l1_crosscheck_test AND CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ANDROID)
   add_test(NAME rpc-l1-corpus COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_l1_corpus_test.py" "${CMAKE_CURRENT_BINARY_DIR}")
-  # Local Release matrix 2492 s; sanitizer subset sum 2558.37 s.
-  # 7200 s exceeds twice either observation; native Windows margin awaits CI.
-  set_tests_properties(rpc-l1-corpus PROPERTIES TIMEOUT 7200 RUN_SERIAL TRUE)
+  # Run B's five configurations: local 2492 s / sanitizer subset sum 2558.37 s.
+  # Run C adds two gates and their poison legs (nine configurations); scale
+  # the established twice-observed allowance. Native Windows awaits CI.
+  set_tests_properties(rpc-l1-corpus PROPERTIES TIMEOUT 12960 RUN_SERIAL TRUE)
 endif()

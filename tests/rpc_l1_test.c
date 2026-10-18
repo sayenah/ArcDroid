@@ -121,7 +121,7 @@ static void directed(unsigned model,bool data,unsigned gate)
         uint64_t floor=arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted];
         unchanged(c,va,(int)n);
 #if !defined(ARCDROID_RPC_L1_POISON)
-        assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted]==floor+(gate!=0));
+        assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted]==floor+(gate!=0 && !(gate>=3 && n==0)));
 #else
         (void)floor;
 #endif
@@ -317,14 +317,56 @@ static void reference_isolation(void)
     assert(!memcmp(&counters,&arc_rpc_exercise,sizeof(counters)));
 #endif
 }
+/* Way-0 candidates must not consult even a valid hint first. A rejected hint
+ * also cannot trigger remainder work or a store; poison must not touch it. */
+static void way0_priority(unsigned model,bool data,unsigned gate)
+{
+    bind_model(model,gate);Cache *c=data?&m.data:&m.instruction;
+    fill_slot(c,0,0);fill_slot(c,c->ways-1,1);
+    uint32_t va=address(c,0);
+    unsigned hints[]={0,c->ways-1,c->ways,255};
+    for(unsigned i=0;i<sizeof(hints)/sizeof(hints[0]);++i){
+        set_hint(c,va,hints[i]);LookupSide before=*side_state(c);
+        ArcRpcExercise counts=arc_rpc_exercise;unsigned writes=test_hint_writes;
+#if defined(ARCDROID_RPC_L1_POISON)
+        uint32_t poison=l1_poison_state;
+#endif
+        unchanged(c,va,0);
+        assert(!memcmp(&before,side_state(c),sizeof(before)));
+        assert(test_hint_writes==writes);
+        for(unsigned counter=ARC_RPC_COUNT_l1_hint_accepted;counter<=ARC_RPC_COUNT_l1_linear_fallback;++counter)
+            assert(arc_rpc_exercise.values[counter]==counts.values[counter]);
+#if defined(ARCDROID_RPC_L1_POISON)
+        assert(l1_poison_state==poison);
+#endif
+    }
+    /* Once way 0 misses, both the validated hint and its fallback remain live. */
+    va=address(c,1);set_hint(c,va,c->ways);
+    uint64_t rejected=arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_rejected];
+    uint64_t searched=arc_rpc_exercise.values[gate==3?ARC_RPC_COUNT_l1_linear_fallback:ARC_RPC_COUNT_l1_mirror_search];
+    unchanged(c,va,(int)c->ways-1);
+#if !defined(ARCDROID_RPC_L1_POISON)
+    assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_rejected]==rejected+1);
+    assert(arc_rpc_exercise.values[gate==3?ARC_RPC_COUNT_l1_linear_fallback:ARC_RPC_COUNT_l1_mirror_search]==searched+1);
+    set_hint(c,va,c->ways-1);
+    uint64_t accepted=arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted];
+    unchanged(c,va,(int)c->ways-1);
+    assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted]==accepted+1);
+#else
+    (void)rejected;(void)searched;
+#endif
+}
 int main(void)
 {
     geometry_and_stores();
     reference_isolation();
-    for(unsigned gate=0;gate<3;++gate)for(unsigned cpu=0;cpu<4;++cpu){
+    for(unsigned gate=3;gate<5;++gate)for(unsigned cpu=0;cpu<4;++cpu){
+        way0_priority(cpu,false,gate);if(cpu==2)way0_priority(cpu,true,gate);
+    }
+    for(unsigned gate=0;gate<5;++gate)for(unsigned cpu=0;cpu<4;++cpu){
         directed(cpu,false,gate);random_model(cpu,false,gate,0x61a20001u+cpu);
         if(cpu==2){directed(cpu,true,gate);random_model(cpu,true,gate,0xd1100061u);}
     }
-    for(unsigned gate=0;gate<3;++gate)split_and_unified(gate);
-    puts("L1 directed matrix and 300000 independent operations passed");return 0;
+    for(unsigned gate=0;gate<5;++gate)split_and_unified(gate);
+    puts("L1 directed matrix and 500000 independent operations passed");return 0;
 }

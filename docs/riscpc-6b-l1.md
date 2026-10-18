@@ -572,3 +572,21 @@ are unchanged; SA-110 remains linear pending Fable's repeated selection.
 - **way0-mirror:** the same with the mirror for the remainder.
 - Hint-only and hint-plus-mirror stay on record as measured; they are not re-run.
 Sol builds both variants as selectable SA-110 gate configurations in the variant measurement cores (the same mechanism as run A's variants), with the same exactness tests, reference cross-check, mutants (including one that skips the way-0 check and one that consults the hint before way 0) and identity checks; ARM610, ARM710 and ARM7500 gates unchanged. Fable then runs **selection run 3** (way0-hint and way0-mirror against linear, the same three workloads, on a device verified at normal speed before the run and re-checked after it). If neither qualifies, SA-110 stays linear and L1 is not merged on benefit grounds; S1 is then re-planned onto `main`.
+
+### Run C implementation note (Sol, 2026-10-18)
+
+Before code: gate values 3 and 4 select way0-hint and way0-mirror respectively;
+values 0/1/2 and the production gate table retain their Run B meanings. The
+new gates compare canonical way 0 before computing the hint index or touching
+the hint. A way-0 hit performs no hint store or hint/mirror/fallback counting;
+the existing probe/way counters still describe the retained linear scan. On a
+way-0 miss the ordinary bounds/valid/VA validation applies, followed by the
+remainder starting at way 1 (canonical tags for gate 3, exact mirror for gate 4).
+Only that hint path updates a hit hint, through Run B's conditional writer.
+No new state, counter, ABI or snapshot field is needed. Unit expectations cover
+both valid and rejected hints behind a way-0 hit and prove no hint work/store,
+including poison builds; the independent model runs all five gates. Two ordering
+mutants skip the first check or move it behind hint validation. Separately named
+SA-only measurement targets preserve the production SA linear default pending
+Fable's selection run 3. The resolved incoming-main tree is the Run C identity
+baseline, so R3c-3b and W8/W9 changes are present on both sides of that comparison.

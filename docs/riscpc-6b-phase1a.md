@@ -244,9 +244,9 @@ at the L1 implementation (2026-10-17); S1 will shift them again.
 
 | Candidate | Current reference path |
 |---|---|
-| L1 | `engine/rpc/rpc_mem_timing.c:391` (lookup), `engine/rpc/rpc_mem_timing.c:674` (access caller), `engine/rpc/rpc_mem_timing.c:778` (maintenance caller) |
-| S1 / B2 | `engine/rpc/rpc_mem_timing.c:1076` (service), `engine/rpc/rpc_mem_timing.c:950` (commands), `engine/rpc/rpc_mem_timing.c:984` (resumable run) |
-| B3 | `engine/rpc/rpc_mem_timing.c:842`, `engine/rpc/rpc_mem_timing.c:1125`, `engine/rpc/rpc_mem_timing.c:1146` |
+| L1 | `engine/rpc/rpc_mem_timing.c:391` (lookup), `engine/rpc/rpc_mem_timing.c:679` (access caller), `engine/rpc/rpc_mem_timing.c:783` (maintenance caller) |
+| S1 / B2 | `engine/rpc/rpc_mem_timing.c:1081` (service), `engine/rpc/rpc_mem_timing.c:955` (commands), `engine/rpc/rpc_mem_timing.c:989` (resumable run) |
+| B3 | `engine/rpc/rpc_mem_timing.c:847`, `engine/rpc/rpc_mem_timing.c:1130`, `engine/rpc/rpc_mem_timing.c:1151` |
 | A1 / F1 | `engine/rpcemu/src/cp15.c:390`, `engine/rpcemu/src/cp15.c:471` |
 | A1 accesses | `engine/rpcemu/src/mem.c:704`, `engine/rpcemu/src/mem.c:722` |
 | D1 / D2 | `engine/rpcemu/src/arm.c:619`, `engine/rpcemu/src/arm.c:620` |

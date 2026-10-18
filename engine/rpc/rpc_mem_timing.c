@@ -411,8 +411,13 @@ static Tag *lookup(Cache *c, uint32_t va
     LookupSide *side = lookup_side(c);
     unsigned base = (line & side->set_mask) << side->way_shift;
     unsigned index = 0;
+    unsigned start = side->gate >= 3 ? 1u : 0u;
     Tag *result = NULL;
-    if (side->gate) {
+    /* Run C: way 0 pays the canonical linear comparison before any hint
+     * access. Uniqueness makes a validated hint exact on the remainder. */
+    if (start && c->tags[base].valid && c->tags[base].va == line) {
+        result = &c->tags[base];
+    } else if (side->gate) {
         index = hint_index(c,line);
 #if defined(ARCDROID_RPC_L1_POISON) && defined(ARCDROID_TEST_FAULTS)
         l1_poison_state = l1_poison_state*1664525u + 1013904223u;
@@ -425,10 +430,10 @@ static Tag *lookup(Cache *c, uint32_t va
             ARC_RPC_COUNT(l1_hint_accepted,1);
         } else {
             ARC_RPC_COUNT(l1_hint_rejected,1);
-            if (side->gate == 2) {
+            if (side->gate == 2 || side->gate == 4) {
                 ARC_RPC_COUNT(l1_mirror_search,1);
                 uint64_t matches = 0;
-                for (unsigned n=0;n<c->ways;++n)
+                for (unsigned n=start;n<c->ways;++n)
                     if (side->keys[base+n] == line) matches |= UINT64_C(1) << n;
                 /* Never apply ctz to zero; ARM610 requires all 64 bits. */
                 if (matches) {
@@ -440,12 +445,13 @@ static Tag *lookup(Cache *c, uint32_t va
                 }
             } else {
                 ARC_RPC_COUNT(l1_linear_fallback,1);
-                for (unsigned n=0;n<c->ways;++n) {
+                for (unsigned n=start;n<c->ways;++n) {
                     Tag *t = &c->tags[base+n];
                     if (t->valid && t->va == line) { result=t; break; }
                 }
             }
         }
+        if (result) hint_store(side,index,(uint8_t)((unsigned)(result-c->tags) & side->way_mask));
     } else {
         ARC_RPC_COUNT(l1_linear_fallback,1);
         for (unsigned way = 0; way < c->ways; ++way) {
@@ -464,7 +470,6 @@ static Tag *lookup(Cache *c, uint32_t va
     unsigned way = result ? (unsigned)(result-c->tags)-base : 0;
     lookup_count(maintenance,result?2:1,result?way+1:c->ways,way);
 #endif
-    if (side->gate && result) hint_store(side,index,(uint8_t)((unsigned)(result-c->tags) & side->way_mask));
     return result;
 }
 
