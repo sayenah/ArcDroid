@@ -22,11 +22,55 @@
 #include <string.h>
 #if defined(_WIN32)
 #include <windows.h>
+#include <mmsystem.h>
 #include <io.h>
 #include <fcntl.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 static HMODULE library;
 static void *symbol(const char *s) { return (void *)GetProcAddress(library, s); }
-static void pause_ns(uint64_t n) { Sleep((DWORD)((n+999999)/1000000)); }
+static HANDLE pause_timer;
+static bool pause_initialized, pause_period;
+static void pause_cleanup(void)
+{
+    if (pause_timer) CloseHandle(pause_timer);
+    if (pause_period) timeEndPeriod(1);
+}
+static void pause_ns(uint64_t n)
+{
+    if (!pause_initialized) {
+        if (atexit(pause_cleanup)) {
+            fputs("Cannot register pacing cleanup\n", stderr);
+            exit(2);
+        }
+        pause_timer = CreateWaitableTimerExW(NULL, NULL,
+            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
+        if (!pause_timer) {
+            /* Older Windows may refuse the high-resolution flag. Hold a 1 ms
+             * timer period until exit so Sleep avoids the default coarse tick,
+             * without spending a CPU on a spin loop. Pair it even on errors. */
+            if (timeBeginPeriod(1) != TIMERR_NOERROR) {
+                fputs("Cannot enable one-millisecond pacing fallback\n", stderr);
+                exit(2);
+            }
+            pause_period = true;
+        }
+        pause_initialized = true;
+    }
+    if (pause_timer) {
+        /* Relative, one-shot deadline in 100 ns units, rounded up. */
+        LARGE_INTEGER due;
+        due.QuadPart = -(LONGLONG)(n / 100 + (n % 100 != 0));
+        if (!SetWaitableTimer(pause_timer, &due, 0, NULL, NULL, FALSE) ||
+                WaitForSingleObject(pause_timer, INFINITE) != WAIT_OBJECT_0) {
+            fprintf(stderr, "Pacing timer wait failed (%lu)\n", (unsigned long)GetLastError());
+            exit(2);
+        }
+    } else {
+        Sleep((DWORD)((n + 999999) / 1000000));
+    }
+}
 #else
 #include <dlfcn.h>
 #include <time.h>

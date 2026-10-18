@@ -359,6 +359,7 @@ if(ARCDROID_RPC_RUNNER AND ((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN3
     target_link_libraries(rpc_runner PRIVATE m)
   endif()
   if(WIN32)
+    target_link_libraries(rpc_runner PRIVATE winmm)
     target_link_options(rpc_runner PRIVATE -static-libgcc)
   endif()
   if(ARCDROID_SANITIZERS)
@@ -2574,6 +2575,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-runner-timing-window COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_timing_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+  add_test(NAME rpc-runner-realtime-pacing COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_timing_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}" cadence)
+  # One-second warm-up plus three measured seconds; the child is bounded to
+  # 15 seconds, with twice that limit for CTest (W4).
+  set_tests_properties(rpc-runner-realtime-pacing PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
   foreach(mode IN ITEMS devices lifecycle factory)
     add_test(NAME rpc-plan-${mode} COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_lifecycle_test.py"
