@@ -668,3 +668,13 @@ Opus QA (effort 15, `b346d29`): **FAIL** on H-1. Adjudication:
 - L-4 needs no action. The Mac-only `i8042` inventory failure is pre-existing; R3c-3b's mapping on `main` covers it once merged.
 
 M2b also merges `main` (R3c-3b's lockstep schema and observer changes): conflicts in `engine/rpc/rpc_observers.c`, `engine/rpcemu/manifest.json` and `tests/rpc_lockstep_schema.json` are resolved keeping both sides, and R3c-3b's new observer state is emitted and classified as M2a requires.
+
+## Fable's adjudication of the Opus re-check (S68)
+
+Opus re-check of run E (effort 15): **PASS WITH FINDINGS**. H-1 and every S67 finding are closed as ruled; shipping objects identical to `main`; CI green on every job at the run E head. Dispositions:
+- **M-1 (defect, validated; AC-15, R-M2b-C2):** run E set lockstep timeouts from Mac durations. W4's rule applies to CI's own durations: each limit is at least twice the worst observed CI duration. From run 39103912401: the three consistency-fuzz tests (worst 216 s) → at least 480 s; `rpc-lockstep-emitter-reach` (666 s, grown because every checkpoint now verifies the cache) → at least 1380 s; `rpc-lockstep-emitter-mutants` (371 s) → at least 780 s. Any other lockstep test above 50 % of its limit in that run gets the same rule. Timeouts only.
+- **L-1 (test gap, validated):** the cache check kills only the mouse dirty-mark mutant. Add a case that kills the removal of the two VIDC20 cursor dirty marks (QA found the `video-paths` plans catch it; the committed `video-paths-0-cursor-lanes` case at 5,000 instructions does not). Record that the interrupt-status marks are redundant because `updateirqs()` already marks IOMD.
+- **L-2 (test gap, validated):** a lockstep test that changes the launch preparation's retirement bit mid-stream and kills the mutant that disables its invalidation (`rpc_lockstep.c:61`).
+- **L-3 (test gap, validated):** a comparator test that kills the variant checking the page-boundary marker only on a stream's first page (`compare.py:379`).
+
+**Run F** carries exactly these four items; a short Opus confirmation follows, then merge.
