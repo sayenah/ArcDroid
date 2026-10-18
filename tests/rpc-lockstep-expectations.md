@@ -197,3 +197,27 @@ trace-toggle (d), including unmatched records at online span close. A genuine
 P0 state difference still fails each mode. Eight independently authored v1
 adversarial witnesses kill QA's surviving comparator mutants; three additional
 P3 reader/comparator-skip variants are also killed.
+
+## Run F cache and page-boundary witnesses
+
+The video cache case uses `video-paths-3-words`, bounded to 12,000 instructions
+per frame. Removing both VIDC20 IOMD cursor invalidations (`dma_reload` and
+`next_quad`) must fail with `lockstep mutating projection`; the same compiled
+mutant with caching disabled must match the reference stream and guest stdout.
+The cross-unit interrupt-status marks are redundant: each writer calls
+`updateirqs()`, which already marks IOMD dirty. Those extra marks remain as
+defence in depth and are not claimed as independently killable mutations.
+
+The preparation cache fixture appends a probe only to a disposable lockstep
+copy of the preparation TU. It binds real preparation-owned attempt/controller
+storage and invokes the real `launch_consumed` callback after the first P0 is
+written, without calling an observer mutator. The emitted retirement bit must
+change from 0 at P0 to 1 at the next fetch checkpoint. Disabling the preparation
+generation invalidation must fail cached and pass uncached with identical guest
+stdout and stream. This is an authored test fixture, not guest-reachable launch
+coverage; no probe or fixture storage is linked into any repository core target.
+
+The v1 comparator witness supplies a valid first page occurrence, then omits
+the marker on the second occurrence of the same boundary kind. It must reject
+that stream even when the first occurrence had a marker; adding the missing
+second marker is a passing control.

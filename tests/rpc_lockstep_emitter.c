@@ -20,6 +20,8 @@ static void *find(const char *name) { return dlsym(library,name); }
 #define LOAD(v,n) do { void *p=find(n);if(!p){fprintf(stderr,"missing %s\n",n);return 2;}memcpy(&v,&p,sizeof(v)); } while(0)
 static void revalidate(void *opaque) { (void)opaque; }
 static uint64_t written;
+static bool (*retirement_probe)(unsigned);
+static bool retirement_changed;
 static unsigned sink_control;
 static bool hash_sink,discard_sink;
 static ArcSha256 stream_hash;
@@ -42,7 +44,17 @@ static bool sink(void *opaque,const void *data,size_t bytes)
     if(written>193 && sink_control==2)(void)end_stream();
     if(hash_sink){arc_sha256_update(&stream_hash,data,bytes);return true;}
     if(discard_sink)return true;
-    return fwrite(data,1,bytes,opaque)==bytes;
+    bool ok=fwrite(data,1,bytes,opaque)==bytes;
+    /* This optional test fixture invokes the preparation's real consumed
+     * callback after P0 was cached and before the fetch checkpoint. It never
+     * marks the observer owner directly. Normal loader runs have no probe. */
+    const uint8_t *frame=data;
+    if(ok && retirement_probe && !retirement_changed && bytes>=53 &&
+        (frame[0]==1 || frame[0]==2) && frame[29]==0){
+        retirement_changed=retirement_probe(1);
+        if(!retirement_changed)return false;
+    }
+    return ok;
 }
 static int refusal_probe(const char *path,bool shipping)
 {
@@ -128,6 +140,10 @@ int main(int argc,char **argv)
         free(rom);return (int)result;
     }
     if(!ok){fprintf(stderr,"start refused: %s\n",error);return 2;}
+    if(!strcmp(argv[11],"preparation-retirement")){
+        LOAD(retirement_probe,"arc_test_lockstep_retirement");
+        if(!retirement_probe(0))return 2;
+    }
     ArcRpcLaunchAttempt attempt;ArcRpcAttemptToken token;ArcRpcLaunchController controller;
     bool byte_text=strstr(argv[11],"byte-text")!=NULL;
     if(byte_text){
@@ -205,7 +221,7 @@ int main(int argc,char **argv)
         bool (*read_ram)(unsigned,uint32_t *);LOAD(read_ram,"arc_rpc_test_read_ram");
         fputs("ram=",stdout);for(unsigned i=0;i<ram_words;++i){uint32_t value;if(!read_ram(262144u+4u*i,&value))return 2;printf("%s%08x",i?",":"",value);}puts("");
     }
-    unsigned result=0;
+    unsigned result=retirement_probe && !retirement_changed?1:0;
     if(attached){
         if(!end() || !end() || status()){fprintf(stderr,"emitter: %s\n",status()?status():"End failure");result=1;}
         if(stream && fclose(stream))result=1;

@@ -40,6 +40,16 @@ def checks(c=reference):
     wrong=w.event(key(p=1,site=3),0)
     reject([entry,wrong,w.fatal(key(p=5,site=2),1,2)],'event outside open data access')
     reject([w.page(key(),boundary=1,allocation=2)],'missing page-boundary marker')
+    # A valid marker for occurrence 0 must not admit an unmarked occurrence
+    # 1 of the same boundary kind. Keep allocation ordering legal so the
+    # missing-marker check is the only rejection, including after real pages.
+    # Two idle boundaries share k; occurrence identity still requires a marker.
+    first=[w.page(key(),boundary=1,allocation=0,index=1),
+           w.page(key(),boundary=1,allocation=2)]
+    second=w.page(key(),boundary=1,occurrence=1,allocation=2)
+    reject([*first,second],'missing page-boundary marker')
+    marked=[*first,w.page(key(),boundary=1,occurrence=1,allocation=0,index=1),second]
+    check(compare(marked,marked)['ok'],'valid later page occurrence rejected')
     short=w.frame(5,struct.pack('<7Q',*key(p=5),1))
     reject([short],'fatal reason width')
     check(not compare([w.fatal(key(p=5),1,2)],[w.fatal(key(p=5),1,3)])['ok'],
@@ -87,6 +97,7 @@ def mutations():
     yield 'exit-without-entry-accepted', [("            require(edge==1, 'data access exit without entry')",'            pass')]
     yield 'event-outside-access-accepted', [("                require(key == self.open_access, 'event outside open data access')",'                pass')]
     yield 'page-marker-unchecked', [("                    require(alloc==0 and page<=1,'missing page-boundary marker')",'                    pass')]
+    yield 'page-marker-first-page-only', [("                if prior is None or identity[:3]!=prior[:3]:", "                if prior is None:")]
     yield 'reproduce-ignores-prefix', [("    if original.get('prefix')!=rerun.get('prefix'):return False",'    pass')]
     yield 'compact-mode-exclusion-hashed', [("        if mode in f['mode_exclusions']:", '        if False:')]
     yield 'fatal-width-v0', [("                require(len(payload) == 16, 'fatal reason width')\n                value = struct.unpack('<2Q', payload); self.fatal = True", "                require(len(payload) >= 8, 'fatal reason width')\n                value = struct.unpack_from('<Q', payload); self.fatal = True")]
