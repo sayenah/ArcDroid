@@ -654,3 +654,17 @@ CI at `6dd297f` (PR #506) was green except `windows`, where `rpc-lockstep-invent
 - **R-M2b-C1 Encoding.** Every lockstep tool and test reads and writes its text files (schema, policy, inventory, expectations, streams' text metadata) as UTF-8 explicitly; a regression test runs the inventory and schema checks under a simulated cp1252 default.
 - **R-M2b-C2 Host CI.** The `host` CI job (Linux) builds the lockstep class and runs M2b's CI subset: the directed corpus, the CI seed subset (AC-8), full-audit on directed ROMs at the smallest RAM configuration (scope item), the emitter, layout, field, codegen, API, driver and consistency tests and the emitter mutants, with timeouts by W4's rule set from that job's measured durations (worst at most 60 % of the timeout, AC-15). The 75 golden-density checks and the local-full items remain local evidence in the report.
 - **R-M2b-C3 Windows.** Lockstep execution in Windows CI, and AC-15's Windows half, belong to M2c ("cross-platform CI", non-goals). M2b keeps the MinGW compile, layout and export proofs; the existing M2a lockstep tests keep running on Windows.
+
+## Fable's adjudication of Opus QA (S67)
+
+Opus QA (effort 15, `b346d29`): **FAIL** on H-1. Adjudication:
+
+- **H-1 (defect, validated):** the emitter's per-owner state cache is refreshed only when a function inside the owning translation unit marks it dirty, but other units write IOMD registers directly (mouse position in `keyboard.c`, video cursor in `vidc20.c`, sound status in `rpc_audio.c`, interrupt bits from the FDC, IDE and SuperIO), so the stream can record stale values (QA: `iomd.iomd.mousex` 0 against 12 at key (1,2,7389,0) on `input-0`, cache on against off). **Ruling R-M2b-Q1:** every write that changes emitted state marks its owner dirty wherever it occurs; a committed check runs representative items (including the input, video, audio, floppy, hard-disc and SuperIO paths) with the cache enabled and disabled and requires identical streams; a mutant that removes one cross-unit dirty mark must be killed.
+- **M-1, M-2, M-3 (test gaps, validated):** add tests that kill QA's eight surviving v1 comparator mutants (unmatched exit, event outside an open access, missing page-boundary marker, rerun matching-prefix check, compact-hash recomputation of excluded fields, fatal text hash, the two span checks), exercise optional P3 records in modes (c) and (d), and exercise the NULL-batch projection with a directed item.
+- **L-1:** add a directed outside-attempt (phase-4) event if it is reachable at this head; otherwise record why and leave it to M2c's G-13 lifecycle ROMs.
+- **L-2:** set `rpc-lockstep-emitter-reach` by W4's rule from its CI duration (259 s → at least 540 s).
+- **L-3 (clarification of R-M2b-C3):** "MinGW compile, layout and export proofs" are Sol's local evidence; Windows CI builds no lockstep core until M2c.
+- **L-5 (defect, validated):** the runner's `baseline` density and `baseline` role must not share a flag; the result may not depend on argument order.
+- L-4 needs no action. The Mac-only `i8042` inventory failure is pre-existing; R3c-3b's mapping on `main` covers it once merged.
+
+M2b also merges `main` (R3c-3b's lockstep schema and observer changes): conflicts in `engine/rpc/rpc_observers.c`, `engine/rpcemu/manifest.json` and `tests/rpc_lockstep_schema.json` are resolved keeping both sides, and R3c-3b's new observer state is emitted and classified as M2a requires.
