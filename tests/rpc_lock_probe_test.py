@@ -42,13 +42,21 @@ class Session:
         require(not error, error)
 
 
+def write_plan(path, text):
+    # Exact UTF-8/LF fixture bytes, without Windows text-mode CRLF expansion.
+    path.write_bytes(text.encode('utf-8'))
+
+
 def plan_file(base, name, root, legs):
     plan, output = base / (name + '.arcprobe'), base / (name + '.log')
-    plan.write_text('arc-lock-probe-v1\nroot=' + str(root) + '\noutput=' + str(output) +
-                    ''.join('\nleg=' + leg for leg in legs) + '\n')
+    write_plan(plan, 'arc-lock-probe-v1\nroot=' + str(root) + '\noutput=' + str(output) +
+               ''.join('\nleg=' + leg for leg in legs) + '\n')
     return plan, output
 
 
+# Log read_text() and subprocess text=True intentionally normalize CRLF to LF;
+# their protocol comparisons below use '\n' on every platform. Plan input uses
+# bytes so newline-specific parser tests do not inherit that normalization.
 def process_attempt(root):
     return subprocess.run([process, 'try', str(root)], capture_output=True, text=True, timeout=5)
 
@@ -294,7 +302,7 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
                (str(root), 'leg=unknown'), (str(root), 'leg=hold\nleg=try')]
     for index, (save, entries) in enumerate(invalid):
         plan, output = plan_file(base, 'bad' + str(index), root, ['try'])
-        plan.write_text('arc-lock-probe-v1\nroot=' + save + '\noutput=' + str(output) + '\n' + entries + '\n')
+        write_plan(plan, 'arc-lock-probe-v1\nroot=' + save + '\noutput=' + str(output) + '\n' + entries + '\n')
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
         require(reply.returncode == 3 and not output.exists() and not reply.stderr, 'invalid plan accepted')
     require(not (base / 'missing').exists() and not (base / 'escape').exists(), 'escaped creation')
@@ -321,22 +329,24 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
 
     plan, output = plan_file(base, 'parse', root, ['try'])
     valid = plan.read_bytes()
+    require(b'\r' not in valid and valid.endswith(b'\n'), 'LF plan fixture bytes')
     malformed = [valid + b'unknown=value\n', valid + b'root=\n', valid + b'output=\n',
                  valid + b'\0', valid.replace(b'v1', b'v2'), b'x' * 16385,
-                 valid + b'leg=try\n' * 16]
+                 valid + b'leg=try\n' * 16, valid.replace(b'\n', b'\r\r\n')]
     for data in malformed:
         plan.write_bytes(data)
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
         require(reply.returncode == 3 and not output.exists() and not reply.stderr, 'malformed plan accepted')
-    plan.write_bytes(valid.replace(b'\n', b'\r\n'))
-    session = Session(core, plan)
-    try:
-        session.command('f')
-        require('result leg=try outcome=held attempts=1\n' in output.read_text(), 'CRLF')
-        session.command('q', 'quit')
-        require(session.child.wait(timeout=5) == 0, 'CRLF quit')
-    finally:
-        session.close()
+    for label, data in (('LF', valid), ('CRLF', valid.replace(b'\n', b'\r\n'))):
+        plan.write_bytes(data)
+        session = Session(core, plan)
+        try:
+            session.command('f')
+            require('result leg=try outcome=held attempts=1\n' in output.read_text(), label)
+            session.command('q', 'quit')
+            require(session.child.wait(timeout=5) == 0, label + ' quit')
+        finally:
+            session.close()
 
     # Namespace redirects must never create/lock files in the outside fixture.
     if os.name != 'nt':
@@ -354,20 +364,20 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
         finally:
             session.close()
         protected = outside / 'protected'
-        protected.write_text('preserve')
+        protected.write_bytes(b'preserve')
         plan, output = plan_file(base, 'redirect-output', root, ['try'])
         output.symlink_to(protected)
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
-        require(reply.returncode == 3 and protected.read_text() == 'preserve', 'output symlink clobbered')
+        require(reply.returncode == 3 and protected.read_bytes() == b'preserve', 'output symlink clobbered')
         output.unlink()
         os.link(protected, output)
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
-        require(reply.returncode == 3 and protected.read_text() == 'preserve', 'output hard link clobbered')
+        require(reply.returncode == 3 and protected.read_bytes() == b'preserve', 'output hard link clobbered')
     # QA F-3 reproductions: resolve both existing files and not-yet-created
     # output parents. Reservation must survive case and directory aliases.
     def refuse_output(candidate):
         plan = base / 'reserved.arcprobe'
-        plan.write_text('arc-lock-probe-v1\nroot=' + str(root) + '\noutput=' + str(candidate) + '\nleg=try\n')
+        write_plan(plan, 'arc-lock-probe-v1\nroot=' + str(root) + '\noutput=' + str(candidate) + '\nleg=try\n')
         existed = candidate.exists()
         before = candidate.read_bytes() if existed and candidate.is_file() else None
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
@@ -402,7 +412,7 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
         empty_alias.symlink_to(empty, target_is_directory=True)
         plan = base / 'future-diagnostic.arcprobe'
         candidate = empty_alias / 'P10B-FLOCK.PROBE'
-        plan.write_text('arc-lock-probe-v1\nroot=' + str(empty) + '\noutput=' + str(candidate) + '\nleg=try\n')
+        write_plan(plan, 'arc-lock-probe-v1\nroot=' + str(empty) + '\noutput=' + str(candidate) + '\nleg=try\n')
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
         require(reply.returncode == 3 and not candidate.exists(), 'future diagnostic alias accepted')
     sentinel = root / 'arcdroid' / 'locks-riscpc' / ('c-' + KEY + '.lock')
