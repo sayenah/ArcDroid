@@ -17,7 +17,7 @@ typedef struct {
 enum {
     ARC_RPC_LOCKSTEP_BASELINE=1u, ARC_RPC_LOCKSTEP_EVERY=2u,
     ARC_RPC_LOCKSTEP_AUDIT=4u, ARC_RPC_LOCKSTEP_P1_OFF=8u,
-    ARC_RPC_LOCKSTEP_DETAIL=16u
+    ARC_RPC_LOCKSTEP_DETAIL=16u, ARC_RPC_LOCKSTEP_NO_CACHE=32u
 };
 #if defined(ARCDROID_RPC_LOCKSTEP)
 void arc_rpc_lockstep_p0(unsigned);
@@ -26,6 +26,9 @@ void arc_rpc_lockstep_p2(void);
 void arc_rpc_lockstep_p3(unsigned);
 void arc_rpc_lockstep_batch(uint64_t, unsigned, bool);
 void arc_rpc_lockstep_driver(uint64_t, unsigned, uint64_t, uint64_t, bool, bool);
+extern uint64_t arc_rpc_lockstep_preparation_generation;
+void arc_rpc_lockstep_service(uint64_t, bool, uint64_t);
+bool arc_rpc_lockstep_retirement_pending(const void *, bool (*)(void *));
 void arc_rpc_lockstep_epoch_begin(void);
 void arc_rpc_lockstep_epoch_end(uint64_t, bool);
 void arc_rpc_lockstep_epoch_abort(uint64_t);

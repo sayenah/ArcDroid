@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -163,6 +164,7 @@ static bool active(void)
 }
 static void dma_reload(bool init)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     if (init) iomd.vidcur = iomd.vidinit & 0x1ffffff0u;
     serial_quad = iomd.vidcur; bit_offset = 0;
@@ -221,6 +223,7 @@ static bool dma_dram(void)
 }
 static uint32_t next_quad(uint32_t address, unsigned *transfers)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_vidc20));
     if (dma_dram()) {
         ++*transfers;

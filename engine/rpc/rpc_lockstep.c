@@ -19,12 +19,14 @@ static struct {
     ArcRpcLockstepSink sink; void *opaque; ArcRpcLockstepConfig config;
     const char *error;
     char error_text[128];
-    bool ended, writing, prepared, open, pending_epoch, null_batch;
+    bool ended, writing, prepared, open, pending_epoch, null_batch, fresh_collect;
     unsigned depth, phase, edge, site, sequence, next_sequence, mode, agent;
     uint64_t generation, epoch, next_k, k, events, counts[3], phases[2];
     uint64_t boundaries[5], outside_helpers, base_executed, completed, epoch_completed;
     uint64_t base_work, limit, video_pixels, video_fields, event_work;
-    uint64_t continuations;
+    uint64_t continuations, preparation_generation;
+    uint64_t service_end, service_fields;
+    bool service_field;
     ArcSha256 output;
     bool field_completed, stop_at_field;
     unsigned observed_mode, linecyc;
@@ -56,7 +58,11 @@ void arc_rpc_lockstep_dirty(unsigned tu) { ls.dirty_tus|=UINT64_C(1)<<tu; }
 bool arc_rpc_lockstep_collect_due(unsigned tu,bool always)
 {
     uint64_t bit=UINT64_C(1)<<tu;
-    if(always || !(ls.valid_tus&bit) || (ls.dirty_tus&bit)){
+    if(tu==ARC_RPC_LS_TU_rpc_observers && ls.preparation_generation!=arc_rpc_lockstep_preparation_generation){
+        ls.preparation_generation=arc_rpc_lockstep_preparation_generation;ls.dirty_tus|=bit;
+    }
+    if(always || ls.fresh_collect || (ls.config.flags&ARC_RPC_LOCKSTEP_NO_CACHE) ||
+        !(ls.valid_tus&bit) || (ls.dirty_tus&bit)){
         ls.collected_tus|=bit;ls.valid_tus|=bit;ls.dirty_tus&=~bit;return true;
     }
     return false;
@@ -130,6 +136,9 @@ void arc_rpc_lockstep_pointer(uint64_t *out,const void *pointer,unsigned field,u
         if(off==LS_fdc__fdc__sector__view__data){out[0]=7;out[1]=3;return;}
         if(off==LS_observer__owners__filter__swis){out[0]=6;out[1]=index*64u;return;}
         if(off==LS_observer__owners__filter__callback || off==LS_observer__owners__filter__opaque ||
+            off==LS_rpc_observers__state__binding__revalidate || off==LS_rpc_observers__state__binding__media_changed ||
+            off==LS_rpc_observers__state__binding__aborted || off==LS_rpc_observers__state__binding__consumed ||
+            off==LS_rpc_observers__state__binding__boundary ||
             (off>=LS_observer__handlers__valid && off<=LS_observer__handlers__opaque) ||
             off==LS_rpc_observers__state__resolve || off==LS_rpc_observers__state__observe ||
             off==LS_rpc_observers__state__opaque || off==LS_rpc_floppy__raw_refusal ||
@@ -137,6 +146,11 @@ void arc_rpc_lockstep_pointer(uint64_t *out,const void *pointer,unsigned field,u
             off==LS_ide__ide__backend__read || off==LS_ide__ide__backend__write ||
             off==LS_ide__ide__backend__failed || off==LS_ide__ide__backend__unsupported){
             out[0]=11;out[1]=index;return;
+        }
+        if(off==LS_rpc_observers__state__binding__attempt || off==LS_rpc_observers__state__binding__controller ||
+            off==LS_rpc_observers__state__binding__opaque){
+            out[0]=6;out[1]=off==LS_rpc_observers__state__binding__attempt?1:
+                off==LS_rpc_observers__state__binding__controller?2:3;return;
         }
     }
     uintptr_t p=(uintptr_t)pointer;
@@ -174,9 +188,13 @@ static void memory_register(void)
     arc_rpc_lockstep_register(3,ram01,32u<<20);arc_rpc_lockstep_register(4,vram,vram?2u<<20:0);
 }
 #include "rpc_lockstep_arithmetic.h"
+void arc_rpc_lockstep_service(uint64_t end,bool field,uint64_t fields)
+{ ls.service_end=end;ls.service_field=field;ls.service_fields=fields; }
 static void project(void)
 {
     uint64_t *v=ls.projected;
+    v[LS_driver__service__end]=ls.service_end;v[LS_driver__service__field]=ls.service_field;
+    v[LS_driver__service__before__fields]=ls.service_fields;
     for(unsigned f=0;f<ARC_RPC_LS_FIELDS;++f){const LsField *field=ls_fields+f;
         if(ls.collected_tus&(UINT64_C(1)<<field->tu))
             memcpy(v+field->offset,ls.raw+field->offset,field->count*field->width*8u);}
@@ -218,21 +236,18 @@ static void checkpoint(unsigned phase,unsigned edge)
     ls.collected_tus=0;ls_collect(ls.raw);
     if(ls.error)return;
     uint64_t collected=ls.collected_tus;
-    for(unsigned f=0;f<ARC_RPC_LS_FIELDS;++f){const LsField *field=ls_fields+f;
-        if(collected&(UINT64_C(1)<<field->tu))
-            memcpy(ls.saved+field->offset,ls.raw+field->offset,field->count*field->width*8u);}
+    memcpy(ls.saved,ls.raw,sizeof(ls.saved));
     uint64_t dirty_before=ls.dirty_tus;
     memcpy(ls.saved_dirty,ls.dirty,sizeof(ls.dirty));
     project();
     /* Projection must not change any serialized state, including dead slots. */
-    ls_collect(ls.raw);
+    ls.fresh_collect=true;ls_collect(ls.raw);ls.fresh_collect=false;
     if(ls.dirty_tus!=dirty_before){fail("lockstep projection changed device generation");return;}
     if(memcmp(ls.saved_dirty,ls.dirty,sizeof(ls.dirty))){fail("lockstep projection changed RAM dirty sets");return;}
-    /* The complete state vector includes cached device chunks. Their dirty
-     * generations were checked above; only collected chunks can differ. */
+    /* The second collection bypasses owner reuse, so missing dirty marks
+     * cannot make this check agree with a stale first collection. */
     for(unsigned f=0;f<ARC_RPC_LS_FIELDS;++f){const LsField *field=ls_fields+f;
-        if((collected&(UINT64_C(1)<<field->tu)) &&
-            memcmp(ls.raw+field->offset,ls.saved+field->offset,field->count*field->width*8u)){
+        if(memcmp(ls.raw+field->offset,ls.saved+field->offset,field->count*field->width*8u)){
             fail("lockstep mutating projection");return;
         }
     }
@@ -431,7 +446,7 @@ void arc_rpc_lockstep_fatal_guard(void)
 RETRO_API bool arc_rpc_test_lockstep_sink(ArcRpcLockstepSink sink,void *opaque,const ArcRpcLockstepConfig *config)
 {
     if(!sink || !config || config->version!=1 || config->size!=sizeof(*config) || config->model>=4 ||
-        config->flags&~0x31fu || (config->flags>>8)>3 || active())return false;
+        config->flags&~0x33fu || (config->flags>>8)>3 || active())return false;
     __typeof__(ls.shifted) shifted;memcpy(shifted,ls.shifted,sizeof(shifted));
     bool prepared=ls.prepared;unsigned depth=ls.depth;
     for(unsigned b=0;b<3;++b)free(ls.shadow[b]);
@@ -443,7 +458,7 @@ RETRO_API bool arc_rpc_test_lockstep_sink(ArcRpcLockstepSink sink,void *opaque,c
     if(!magic_ok || ls.error){fail("lockstep sink error");return false;}
     uint8_t *p=payload();put32(p,1);memcpy(p+4,ls_compatibility_hash,32);put32(p+36,config->model);
     memcpy(p+40,config->plan,32);put64(p+72,config->seed);memcpy(p+80,config->schedule,32);
-    memcpy(p+112,config->configuration,32);put32(p+144,config->flags);
+    memcpy(p+112,config->configuration,32);put32(p+144,config->flags&~ARC_RPC_LOCKSTEP_NO_CACHE);
     memcpy(p+148,ls_schema_hash,32);
     bool ok=send_frame(0,180);arc_rpc_lockstep_prepared(prepared);return ok;
 }

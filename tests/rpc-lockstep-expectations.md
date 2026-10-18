@@ -164,3 +164,36 @@ rejected by `rpc_lockstep_timing_test.py` at **AC-M2-burst-0**, using
 `rpc_timing_oracle.duration`. `idle-no-drain` is detected by a **terminal fault
 exit** (`rc=1`, `fault=1`), before the stale-read-after-wake expectation can be
 checked. The sensitivity matrix records each actual oracle and its row.
+
+## Run E cache fidelity and boundary coverage
+
+R-M2b-Q1 compares literal streams and complete guest stdout with the owner cache
+on and off. The bounded authored cases are input-0 (12,000 instructions, including
+QA's mouse update at k=7389), cursor video, audio, timed floppy, an attached ATA
+IDENTIFY command and SuperIO parallel/serial interrupt writes. The cache switch
+exists only in the lockstep class and does not enter wire flags. Removing only
+mouse_process's cross-unit IOMD invalidation must fail the cached run; the same
+compiled mutant must pass with reuse disabled. The independent purity check
+re-collects every owner, including owners whose dirty bit was not set.
+
+The G-1 first-issue deadlines 50/29/63/29 ns exercise the existing NULL-batch
+branch on all four models. Exactly one instruction executes, with projected
+instruction_work 0 at P0 and 1 at P2. No injected budget or new execution route
+is used. NULL-batch-booked-work removes the booked-work subtraction and must be
+killed by these directed streams.
+
+Phase-4 outside-attempt events remain an unexercised M2c G-13 limit at this head.
+The RAM/MMIO event funnels are the functional CPU accessors in mem.c; timing's
+buffer service models completion without replaying their functional writes.
+Video and sound DMA use direct physical backing reads, and floppy transfers
+occur through CPU accesses to the programmed DMA port. The lifecycle/reset
+paths initialize backing directly rather than calling these event funnels.
+Thus a background service or reset does not currently produce an outside-attempt
+RAM/MMIO event. The phase-4 wire contract has synthetic coverage; no real-C
+phase-4 event or guest reachability is claimed.
+
+Optional detail/compact/page P3 records are exercised in guest-output (c) and
+trace-toggle (d), including unmatched records at online span close. A genuine
+P0 state difference still fails each mode. Eight independently authored v1
+adversarial witnesses kill QA's surviving comparator mutants; three additional
+P3 reader/comparator-skip variants are also killed.

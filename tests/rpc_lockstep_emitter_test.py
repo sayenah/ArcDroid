@@ -40,7 +40,7 @@ def records(path,schema,sh,mode='strict'):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('loader');p.add_argument('core');p.add_argument('fixtures',type=Path)
-    p.add_argument('--section',choices=('all','points','projection','fatal','audit','observers','lifecycle','sink','encoding','media','allocations','reach'),default='all')
+    p.add_argument('--section',choices=('all','points','projection','fatal','audit','observers','lifecycle','sink','encoding','media','allocations','reach','null-batch'),default='all')
     a=p.parse_args();schema,sh=c.load_schema();start=time.monotonic()
     with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-emitter-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
         root=Path(tmp);rom=root/'points.rom';rom.write_bytes(program());counter=0
@@ -147,6 +147,20 @@ def main():
                 require(sum(r.kind in (1,2) and r.key[3:5]==(1,4) for r in rr)==1,'observer-completed SWI missing P1')
                 with left.open('rb') as l,consumed.open('rb') as r:divergence=c.compare(l,r,schema,sh,'guest-output')
                 require(not divergence['ok'],'completion was treated as an equality configuration')
+        # The first due issue is reached exactly at the advance deadline.
+        # The driver therefore uses its existing arc_rpc_arm_exec_batch(1,NULL)
+        # path (G-1), whose work counter was booked before admission.
+        if a.section in ('all','null-batch'):
+            for model,first in enumerate((50,29,63,29)):
+                left,plain=run(model,flags=17,duration=first,operation='none')
+                right,out=run(model,flags=16,duration=first,operation='none')
+                require(plain==out and f'now={first} executed=1 ' in out,'NULL-batch first-issue boundary')
+                compare(left,right)
+                points=[r for r in records(right,schema,sh) if r.kind==1 and r.key[3] in (0,2)]
+                require([r.key[3] for r in points]==[0,2],'NULL-batch P0/P2 missing')
+                require([r.value['driver.instruction_work'] for r in points]==[0,1],
+                    'NULL-batch booked work was counted twice')
+                require(all(not r.value['fast.integer_batch'] for r in points),'NULL-batch rational path lost')
         # Independent shadow audit over all memory, with full P3 page evidence.
         if a.section in ('all','audit'):
             _,plain=run(stream=False);audit,audit_stdout=run(flags=4)

@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -120,6 +121,7 @@ void sound_samplefreq_change(int frequency) {
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio)); soundlatch = frequency; }
 static void arc_rpc_sound_irq(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (iomd.sndstat & IOMD_DMA_STATUS_INTERRUPT) iomd.irqdma.status |= IOMD_IRQDMA_SOUND_0;
     else iomd.irqdma.status &= ~IOMD_IRQDMA_SOUND_0;
@@ -127,6 +129,7 @@ static void arc_rpc_sound_irq(void)
 }
 void arc_rpc_sound_pointer(unsigned index, uint32_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     soundaddr[index] = value;
     if (index & 1) {
@@ -150,6 +153,7 @@ void arc_rpc_sound_pointer(unsigned index, uint32_t value)
 }
 void arc_rpc_sound_control(uint8_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (value & 0x80) {
         memset(arc_rpc_ready, 0, sizeof(arc_rpc_ready));
@@ -170,6 +174,7 @@ void arc_rpc_sound_control(uint8_t value)
 }
 static void arc_rpc_dma_sample(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (arc_rpc_quad_pos == 4) {
         unsigned bank = iomd.sndstat & IOMD_DMA_STATUS_BUFFER;

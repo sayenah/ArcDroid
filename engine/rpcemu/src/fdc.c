@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /* ArcDroid modification (2026-10-08): replace the incomplete empty-drive
  * controller with the D-139 FDC37C665GT command/FIFO/virtual-time model over
  * an instance-owned, generation-checked ArcDroid drive service.
@@ -87,6 +88,7 @@ static void arm_event(unsigned event,uint64_t delay)
 }
 static void irq_publish(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     bool value=(fdc.dor&8) && (fdc.interrupt||fdc.fifo_irq);
     if(value)iomd.irqb.status|=IOMD_IRQB_FLOPPY;else iomd.irqb.status&=~IOMD_IRQB_FLOPPY;
@@ -96,6 +98,7 @@ static void irq(bool value) {
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdc.interrupt=value;irq_publish(); }
 static void dma(bool value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); if(value)iomd.fiq.status|=IOMD_FIQ_FLOPPY_DMA_REQUEST;else iomd.fiq.status&=~IOMD_FIQ_FLOPPY_DMA_REQUEST;updateirqs(); }
 static unsigned byte_ns(void)
 {
@@ -530,6 +533,7 @@ uint8_t fdc_read(uint32_t addr)
 }
 void fdc_callback(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc));
     uint64_t now=arc_rpc_time_ns();
     for(unsigned i=0;i<EVENTS;++i){
@@ -627,6 +631,7 @@ int fdc_getdata(int last) {
 void fdc_sectorid(uint8_t c,uint8_t h,uint8_t r,uint8_t n) {
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdc.c=c;fdc.h=h;fdc.r=r;fdc.n=n;finish(0,0,false); }
 void fdc_indexpulse(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); if(arc_rpc_floppy_signals(&media,fdc.dor&3,arc_rpc_time_ns()).index){iomd.irqa.status|=IOMD_IRQA_FLOPPY_INDEX;updateirqs();} }
 
 /* ArcDroid modification (2026-10-13, observation-r3c1): controller state

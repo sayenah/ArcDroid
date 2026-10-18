@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -91,6 +92,7 @@ static uint8_t printstat = 0;
 static void
 superio_smi_update(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	if ((gp_regs[0xe] & gp_regs[0xc]) || (gp_regs[0xf] & gp_regs[0xd])) {
 		iomd.irqb.status |= IOMD2_IRQB_SUPERIO_SMI;
@@ -260,6 +262,7 @@ superio_reset(SuperIOType chosen_super_type)
 void
 superio_write(uint32_t addr, uint32_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
         /* Convert memory-mapped address to IO port */
         addr = (addr >> 2) & 0x3ff;
@@ -378,6 +381,7 @@ superio_write(uint32_t addr, uint32_t val)
 uint8_t
 superio_read(uint32_t addr)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
         /* Convert memory-mapped address to IO port */
         addr = (addr >> 2) & 0x3ff;

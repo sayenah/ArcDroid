@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -53,6 +54,7 @@ static bool master(void) {
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); return ide.backend.read&&ide.backend.sectors&&!(ide.head&0x10); }
 static void irq_update(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(master()&&ide.irq&&!(ide.control&2))iomd.irqb.status|=IOMD_IRQB_IDE;
     else iomd.irqb.status&=~IOMD_IRQB_IDE;

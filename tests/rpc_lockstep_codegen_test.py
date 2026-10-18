@@ -33,6 +33,17 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-codegen-',dir='/private/tm
             str(root/'unreviewed-tables'),'--schema',str(path)],capture_output=True,text=True, encoding='utf-8')
         if rejected.returncode==0 or 'unreviewed cross-quota condition' not in rejected.stderr:
             raise RuntimeError('O2 field condition escaped the reviewed-policy pin: '+mode)
+    for probe in ('unreviewed omission','changed bridge','missing exception'):
+        schema=json.loads((ROOT/'tests/rpc_lockstep_schema.json').read_text(encoding='utf-8'))
+        bridge=next(f for f in schema['fields'] if f['name']=='rpc_observers.state.binding.opaque.retirement_pending')
+        if probe=='unreviewed omission':schema['fields'][0]['c_layout']=False
+        elif probe=='changed bridge':bridge['c_expression']='0'
+        else:bridge.pop('c_layout')
+        path=root/'unreviewed-bridge.json';path.write_text(json.dumps(schema),encoding='utf-8')
+        rejected=subprocess.run([sys.executable,'-B',str(ROOT/'tools/rpc_lockstep_codegen.py'),
+            str(root/'unreviewed-tables'),'--schema',str(path)],capture_output=True,text=True,encoding='utf-8')
+        if rejected.returncode==0 or 'unreviewed serializer bridge' not in rejected.stderr:
+            raise RuntimeError('serializer bridge escaped independent review: '+probe)
     schema=json.loads((ROOT/'tests/rpc_lockstep_schema.json').read_text(encoding='utf-8'));schema['fields'][0]['citation']+=' metadata change'
     path=root/'schema.json';path.write_text(json.dumps(schema), encoding='utf-8')
     stale=subprocess.run(command+['--schema',str(path)],capture_output=True,text=True, encoding='utf-8')

@@ -5,7 +5,7 @@
 ## M2b format and projection (D-200, S67)
 
 This section supersedes the v0 description retained below as M2a history.
-Grounding is the M2b merge-base `0966af3`; no emitter is backported to the
+Run E grounding is the merged main `c873423` after R3c-3b; no emitter is backported to the
 performance anchor. R-M2b-S1 permits only enumerated refusing APIs in the
 measurement session object. R-M2b-S2 permits lockstep-only injections into the
 existing request, packet and instruction-budget failure paths. These are
@@ -218,8 +218,8 @@ with the same k cannot terminate reproduction prematurely. Prefix records stay
 compact; only the target attempt in the target epoch becomes detail.
 
 Cost accounting is per serialized word and active element, not just field count:
-the v1 layout has 973 fields and 188971 internal u64 words (1511768 bytes).
-Detail carries 1375728 bytes plus its 56-byte key/edge header; permanently
+the merged v1 layout has 1029 fields and 197367 internal u64 words (1578936 bytes).
+Detail carries 1442896 bytes plus its 56-byte key/edge header; permanently
 excluded and output-boundary fields have no detail or group-hash slot. Dense
 compact operation caches unchanged array digests, hashes changed included leaves
 and at most one u64 per schema field per group. A data-transfer instruction may
@@ -235,8 +235,8 @@ so every corpus item has a guest-equivalence check in every density (critic M1).
 Dirty counters invalidate each owning-TU device chunk. Membership signatures
 depend on the schema condition's referenced values, rather than scanning every
 dead packet lane at every checkpoint. Pure projection compares the complete
-serialized state through those cached chunks and dirty generations, rechecking
-all collected words and both independent RAM dirty sets. Output-boundary marker
+serialized state against an independent collection that bypasses owner reuse,
+rechecking all words and both independent RAM dirty sets. Output-boundary marker
 hashes include the published video rectangle and live queued PCM only; never
 uninitialized presentation capacity or stale audio slots. The fatal guard checks
 that End was emitted before fault publication and observer retirement: Q-9's
@@ -638,3 +638,34 @@ event limits and pixel/field budgets. M2b must provide the actual input values
 and serialise the projections. M2a does not claim to observe driver locals.
 The ELF parser also passed a locally cross-compiled Clang ELF probe; Linux GCC
 plan-core inventory and runtime evidence remain CI's decision.
+
+
+## Run E: merged launch observers and owner-cache fidelity
+
+R3c-3b's launch binding, attempt/controller payload, retirement obligation and
+outer advance service locals are part of the emitted state. Bindings use
+owner-relative tokens and guarded member reads; callbacks are identified by
+their API slot. The preparation-owned retirement bit is read through a pure,
+lockstep-only bridge, never by invoking a retirement callback. Both retirement
+yields and lockstep points retain their existing order.
+
+Every mutating entry invalidates each cached owner it writes, including writes
+from another translation unit. A lockstep-only cache-off configuration bypasses
+owner reuse and field/group reuse; it is an observation control and is omitted
+from wire flags, so cached and uncached streams must be byte-identical. The
+projection purity check re-collects all owners independently of dirty bits.
+Representative input, video, sound, floppy, IDE and SuperIO runs compare both
+paths, with a removed cross-unit invalidation as a sensitivity witness.
+
+The runner's baseline density selects the normal checkpoint schedule; the
+baseline/candidate role independently determines the cross-quota P3 policy.
+Neither argument overwrites the other. New v1 malformed-stream witnesses cover
+access pairing, event context, page markers, fatal width/text, span accounting
+and density, reproduction prefixes and mode exclusions in compact recurrence.
+
+The preparation-owned retirement bit is a reviewed serializer bridge rather
+than a member of the observer TU's private struct. Its source and pure read
+expression are pinned in both schema and reviewed policy. Only that bridge may
+omit an owning-TU offsetof row; unreviewed omissions or replacement expressions
+are rejected before table generation. This preserves complete-member checking
+for ordinary serialized C storage.

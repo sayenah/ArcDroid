@@ -9,7 +9,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 SECTIONS = ('reviewed_conditions', 'reviewed_exclusions', 'reviewed_mode_exclusions',
-            'cross_quota_projections', 'stdout_projection', 'observer_projections', 'wire', 'output_compared', 'reviewed_inventory', 'reachable_types')
+            'cross_quota_projections', 'stdout_projection', 'observer_projections', 'wire', 'output_compared', 'reviewed_inventory', 'reachable_types', 'reviewed_serializer_bridges')
 
 
 def canonical(value):
@@ -47,6 +47,17 @@ def load(schema_path=ROOT/'tests/rpc_lockstep_schema.json',
             raise ValueError('unreviewed cross-quota condition: '+name)
     if schema['reviewed_inventory'] != {k:hashlib.sha256(canonical(schema[k])).hexdigest() for k in ('inventory','object_symbols','local_static_symbols')}:
         raise ValueError('inventory metadata changed without independent review')
+    bridges={rule['field']:rule for rule in schema['reviewed_serializer_bridges']}
+    if len(bridges)!=len(schema['reviewed_serializer_bridges']):
+        raise ValueError('duplicate serializer bridge')
+    for f in schema['fields']:
+        rule=bridges.get(f['name'])
+        if (f.get('c_layout') is False)!=(rule is not None) or rule and (
+            not rule.get('reason') or not rule.get('citation') or
+            any(f.get(key)!=rule.get(key) for key in ('source','c_expression'))):
+            raise ValueError('unreviewed serializer bridge: '+f['name'])
+    if not bridges.keys() <= {f['name'] for f in schema['fields']}:
+        raise ValueError('unknown serializer bridge')
     return schema
 
 
@@ -143,7 +154,7 @@ def layout_rows(schema,source,fields):
     rows=[]
     locals_={v['name'] for v in schema['local_static_symbols'].get(source,[])}
     for fid,f in enumerate(fields.values()):
-        if f['source']!=source:continue
+        if f['source']!=source or f.get('c_layout') is False:continue
         expr=f.get('c_expression');identity=f.get('c_identity')
         if identity:
             expr=identity['expression']

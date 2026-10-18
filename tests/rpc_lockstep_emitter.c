@@ -18,6 +18,7 @@ static void *library;
 static void *find(const char *name) { return dlsym(library,name); }
 #endif
 #define LOAD(v,n) do { void *p=find(n);if(!p){fprintf(stderr,"missing %s\n",n);return 2;}memcpy(&v,&p,sizeof(v)); } while(0)
+static void revalidate(void *opaque) { (void)opaque; }
 static uint64_t written;
 static unsigned sink_control;
 static bool hash_sink,discard_sink;
@@ -127,11 +128,20 @@ int main(int argc,char **argv)
         free(rom);return (int)result;
     }
     if(!ok){fprintf(stderr,"start refused: %s\n",error);return 2;}
+    ArcRpcLaunchAttempt attempt;ArcRpcAttemptToken token;ArcRpcLaunchController controller;
     bool byte_text=strstr(argv[11],"byte-text")!=NULL;
     if(byte_text){
         void (*override)(unsigned,uint32_t,uint32_t,uint32_t);LOAD(override,"arc_engine_test_observers_override");
         override(255,0,0,UINT32_MAX);
-        if(!engine()->launch_outcome_arm("Run \x80\xff"))return 2;
+        bool (*bind)(const ArcRpcLaunchBinding *);LOAD(bind,"arc_engine_rpc_launch_bind");
+        ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};
+        strcpy(plan.target,"ADFS::0.$.!Boot");
+        if(!arc_riscpc_attempt_init(&attempt,1234,1) ||
+           !arc_riscpc_attempt_prepare(&attempt,&plan,0,&token) ||
+           !arc_riscpc_controller_build(&plan,&token,&controller))return 2;
+        strcpy(controller.text,"Run \x80\xff");
+        ArcRpcLaunchBinding binding={.attempt=&attempt,.controller=&controller,.revalidate=revalidate};
+        if(!bind(&binding) || !engine()->launch_outcome_arm(controller.text))return 2;
     }
     if(!strcmp(argv[11],"reattach")){
         if(!stream || !end() || fclose(stream))return 2;

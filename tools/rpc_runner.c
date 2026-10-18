@@ -261,7 +261,8 @@ int main(int argc, char **argv)
         if (!strcmp(key,"--core")) core = v;
         else if (!strcmp(key,"--lockstep-stream")) lockstep_path=v;
         else if (!strcmp(key,"--lockstep-density")) {
-            if(!strcmp(v,"baseline"))lockstep.flags|=ARC_RPC_LOCKSTEP_BASELINE;
+            lockstep.flags&=~(ARC_RPC_LOCKSTEP_EVERY|ARC_RPC_LOCKSTEP_AUDIT);
+            if(!strcmp(v,"baseline")){}
             else if(!strcmp(v,"every-instruction"))lockstep.flags|=ARC_RPC_LOCKSTEP_EVERY;
             else if(!strcmp(v,"full-audit"))lockstep.flags|=ARC_RPC_LOCKSTEP_AUDIT;
             else goto usage;
@@ -279,6 +280,10 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--lockstep-p1")) {
             if(!strcmp(v,"off"))lockstep.flags|=ARC_RPC_LOCKSTEP_P1_OFF;
             else if(!strcmp(v,"on"))lockstep.flags&=~ARC_RPC_LOCKSTEP_P1_OFF;else goto usage;
+        }
+        else if (!strcmp(key,"--lockstep-cache")) {
+            if(!strcmp(v,"off"))lockstep.flags|=ARC_RPC_LOCKSTEP_NO_CACHE;
+            else if(!strcmp(v,"on"))lockstep.flags&=~ARC_RPC_LOCKSTEP_NO_CACHE;else goto usage;
         }
         else if (!strcmp(key,"--lockstep-detail")) {
             char range[64];if(strlen(v)>=sizeof(range))goto usage;strcpy(range,v);char *last=strchr(range,':');
@@ -701,7 +706,7 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("Lockstep test core: --lockstep-stream FILE --lockstep-role baseline|candidate --lockstep-density baseline|every-instruction|full-audit --lockstep-mode strict|cross-quota|guest-output|trace-toggle [--lockstep-p1 on|off] [--lockstep-detail FIRST:LAST] [--lockstep-stop-after K] [--lockstep-key-context GENERATION:EPOCH] [--lockstep-model 0..3] [--lockstep-seed N] [--lockstep-plan-hash SHA256] [--lockstep-schedule-hash SHA256] [--lockstep-configuration-hash SHA256] [--lockstep-max-bytes N]\n",stderr);
+    fputs("Lockstep test core: --lockstep-stream FILE --lockstep-role baseline|candidate --lockstep-density baseline|every-instruction|full-audit --lockstep-mode strict|cross-quota|guest-output|trace-toggle [--lockstep-p1 on|off] [--lockstep-cache on|off] [--lockstep-detail FIRST:LAST] [--lockstep-stop-after K] [--lockstep-key-context GENERATION:EPOCH] [--lockstep-model 0..3] [--lockstep-seed N] [--lockstep-plan-hash SHA256] [--lockstep-schedule-hash SHA256] [--lockstep-configuration-hash SHA256] [--lockstep-max-bytes N]\n",stderr);
 #if defined(ARCDROID_RPC_PROFILE)
     fputs("Profile build: --profile FILE [--profile-interval FRAMES] [--profile-sample-stride 0..1048576]\n",stderr);
 #endif

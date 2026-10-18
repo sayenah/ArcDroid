@@ -1664,8 +1664,8 @@
     "rule": "Only page-boundary markers compare output: initialized published video rectangle and live queued PCM, canonical u64 values, SHA-256. Never read uninitialized presentation rows."
   },
   "reviewed_inventory": {
-    "inventory": "2b161e783140f666597709b203008be50a08b1330a760c78bd3cad05ee2381e5",
-    "object_symbols": "483b8104e825b967011abaf3569d90b2d7dc4238c51388637c33079f94a7add2",
+    "inventory": "1352e93a2021f516bc028991725c60e84de7b3bec3f19872338398421c10d830",
+    "object_symbols": "fe2c624c2119c814c1739ce010ca6e4358e191e5833f082a82c7989e3bec9635",
     "local_static_symbols": "6b95f1103426754c8c41342d7b455977f1e126abee346c350a0f540f6b97514a"
   },
   "reachable_types": {
@@ -2172,5 +2172,14 @@
         "dimensions": []
       }
     ]
-  }
+  },
+  "reviewed_serializer_bridges": [
+    {
+      "field": "rpc_observers.state.binding.opaque.retirement_pending",
+      "source": "engine/rpc/rpc_observers.c",
+      "c_expression": "arc_rpc_lockstep_retirement_pending(state.binding.opaque,state.binding.boundary)",
+      "reason": "R-M2b-Q1: pure read of preparation-owned storage through its owning TU, not an observer-struct offsetof omission.",
+      "citation": "docs/riscpc-lockstep-harness.md:Run E"
+    }
+  ]
 }

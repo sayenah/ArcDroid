@@ -23,7 +23,9 @@ from rpc_ninja_commands import rebuild_commands
 from rpc_lockstep_emitter_test import program
 E='engine/rpc/rpc_lockstep.c';A='engine/rpcemu/src/arm.c';M='engine/rpcemu/src/mem.c';T='engine/rpc/rpc_mem_timing.c';P='engine/rpcemu/src/cp15.c';S='engine/rpc/rpc_session.c';C='engine/rpcemu/src/arm_common.c'
 # Each row changes executable C, never an expected result or a golden.
-RECIPES=[('added-m-member', 'engine/rpc/rpc_mem_timing.c', '    ArcRpcMemStats stats;', '    ArcRpcMemStats stats; uint64_t unclassified_member;', 'compile'),
+RECIPES=[('NULL-batch-booked-work', E,
+ 'ls.base_work-(ls.null_batch?1u:0u)+ls.completed',
+ 'ls.base_work+ls.completed', 'null-batch'),('added-m-member', 'engine/rpc/rpc_mem_timing.c', '    ArcRpcMemStats stats;', '    ArcRpcMemStats stats; uint64_t unclassified_member;', 'compile'),
  ('projected-inscount-one-completion', E,
   'if(ls.mode==1 && ls.phase!=3)v[LS_arm__inscount]=(uint32_t)(v[LS_arm__inscount]+ls.completed);',
   'if(ls.mode==1 && ls.phase!=3)v[LS_arm__inscount]=(uint32_t)(v[LS_arm__inscount]+ls.completed+1);', 'cross-quota'),
@@ -229,6 +231,7 @@ def main():
   from rpc_d2_rom import audio
   audio_words=audio(20).words;audio_rom=root/'audio-output.rom';data=struct.pack('<'+'I'*len(audio_words),*audio_words);audio_rom.write_bytes(data+bytes(2097152-len(data)))
   def cases(kind):
+   if kind=='null-batch':return [(rom,m,1,'none',16,first) for m,first in ((0,50),(2,63))]
    if kind=='cross-quota':return [(rom,m,17,'end:17',(1<<8)|16) for m in (0,2)]
    if kind=='stm':return [(stm,0,6,'end:6',0)]
    if kind=='entry':return [(entry_rom,model,entry_steps,f'end:{entry_steps}',16) for model in (0,2)]

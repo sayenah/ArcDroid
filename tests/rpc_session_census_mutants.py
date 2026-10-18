@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory(prefix='arc-census-mutants-') as directory:
     temp = Path(directory)
     source = root / 'libretro/rpc_preparation.c'
     original = source.read_text()
-    anchor = 'bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)\n{\n    if(!p)return true;'
+    # Preserve the same post-NULL-guard leak location after the lockstep-only marker.
+    anchor = 'bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)\n{\n    ARC_RPC_PREPARATION_DIRTY();\n    if(!p)return true;'
     if original.count(anchor) != 1:
         raise RuntimeError('preparation teardown anchor changed')
     cc, link = rebuild_commands(commands, source, 'arcdroid_session_census_libretro', build, os.name == 'nt')

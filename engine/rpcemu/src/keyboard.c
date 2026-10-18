@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): invalidate the IOMD owner at cross-unit writers. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -137,6 +138,7 @@ static int oldz;
 static inline void
 keyboard_irq_rx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_keyboard_irq_raise();
@@ -149,6 +151,7 @@ keyboard_irq_rx_raise(void)
 static inline void
 keyboard_irq_rx_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_keyboard_irq_lower();
@@ -161,6 +164,7 @@ keyboard_irq_rx_lower(void)
 static inline void
 keyboard_irq_tx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	iomd.irqb.status |= IOMD_IRQB_KEYBOARD_TX;
 	updateirqs();
@@ -169,6 +173,7 @@ keyboard_irq_tx_raise(void)
 static inline void
 mouse_irq_tx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	iomd.irqd.status |= IOMD_IRQD_MOUSE_TX;
 	updateirqs();
@@ -177,6 +182,7 @@ mouse_irq_tx_raise(void)
 static inline void
 mouse_irq_tx_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	iomd.irqd.status &= ~IOMD_IRQD_MOUSE_TX;
 	updateirqs();
@@ -185,6 +191,7 @@ mouse_irq_tx_lower(void)
 static inline void
 mouse_irq_rx_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_mouse_irq_raise();
@@ -197,6 +204,7 @@ mouse_irq_rx_raise(void)
 static inline void
 mouse_irq_rx_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	if (machine.model == Model_Phoebe) {
 		i8042_mouse_irq_lower();
@@ -712,6 +720,7 @@ mouse_ps2_callback(void)
 static void
 mouse_process(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard));
 	int x, y;
 	int z, tmpz;

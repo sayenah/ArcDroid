@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): mirror outer advance locals only in the lockstep class. */
 /* ArcDroid contained RPCEmu backend. GPL-2.0-only.
  * Logging callbacks run only after protected guest execution returns. Device/CPU
  * entries have a live non-returning fault boundary. Unsupported entries touch no guest
@@ -390,9 +391,9 @@ static void arc_rpc_deliver(ArcRpcEvent event)
     switch (event) {
     case ARC_RPC_EVENT_TIMER0: arc_rpc_iomd_timer_event(0); break;
     case ARC_RPC_EVENT_TIMER1: arc_rpc_iomd_timer_event(1); break;
-    case ARC_RPC_EVENT_KEYBOARD: kcallback = 0; keyboard_callback_rpcemu(); break;
-    case ARC_RPC_EVENT_MOUSE: mcallback = 0; mouse_ps2_callback(); break;
-    case ARC_RPC_EVENT_FDC: fdccallback = 0; fdc_callback(); break;
+    case ARC_RPC_EVENT_KEYBOARD: ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard)); kcallback = 0; keyboard_callback_rpcemu(); break;
+    case ARC_RPC_EVENT_MOUSE: ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_keyboard)); mcallback = 0; mouse_ps2_callback(); break;
+    case ARC_RPC_EVENT_FDC: ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_fdc)); fdccallback = 0; fdc_callback(); break;
     case ARC_RPC_EVENT_IDE: callbackide(); break;
     case ARC_RPC_EVENT_VIDEO: arc_rpc_video_event(); break;
     case ARC_RPC_EVENT_SOUND: arc_rpc_sound_event(); break;
@@ -523,6 +524,7 @@ static bool arc_rpc_advance(uint64_t ns,bool field)
     if(ns>16666667u || arc_rpc_scheduler.now_ns>UINT64_MAX-ns)return false;
     uint64_t end=arc_rpc_scheduler.now_ns+ns;
     ArcRpcVideoStatus before,after;arc_rpc_video_status(&before);
+    ARC_RPC_LOCKSTEP(service(end,field,before.fields));
     do {
         if(!arc_rpc_observers_boundary())return false;
         if(!arc_rpc_advance_internal(end-arc_rpc_scheduler.now_ns,field))return false;

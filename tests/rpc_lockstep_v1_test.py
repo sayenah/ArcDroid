@@ -59,6 +59,12 @@ def main():
                 'R-M2b-O3 raw counter delta disappeared in projection')
         require(not field_change('arm.inscount',projected,projected+1,'cross-quota')['ok'],
                 'R-M2b-O3 projected completion divergence escaped')
+    # Phase-4 wire coverage is synthetic; M2c G-13 owns a real-C event
+    # if a later lifecycle introduces an outside-attempt memory access.
+    outside=w.event(key(phase=4),0,value=0x55)
+    require(compare([outside],[outside])['ok'],'outside-attempt wire event')
+    require(not compare([outside],[w.event(key(phase=4),0,value=0x54)])['ok'],
+            'outside-attempt event value sensitivity')
     k=key(0,1,2);entry=w.checkpoint(k,schema,values,edge=1)
     event=w.event(k,0,agent=1,kind=1,direction=0)
     exit=w.checkpoint(k,schema,values,edge=2)
