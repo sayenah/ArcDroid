@@ -66,6 +66,8 @@
 | Hold table | R-6 per-pair bounds. | 25 s for every unmeasured pair. |
 | §7 texts | N-13 to N-18, the redaction tokens, and the redacted form of every catalogue notice that carries a member name or path (R-5). | No default. They are required before `slice/r3d3-host` dispatch and not needed for `slice/r3d3-own`. |
 
+**Status (S68):** the §7 texts, redaction tokens, redacted and log forms are frozen in `docs/riscpc-ordinary-load-plan.md` §7a, which also records the P1 source-reading outcome and adopts the stated defaults for P1b, P3, P8 and the hold table. §7a rules that the staging `arc_log` lines reached from the host's media callbacks are redacted in RiscPC sessions (R-5's carve-out is the shared `arc_message` path only) and places AC-3's sentinels in a boot-archive member, a content ZIP member, the content leaf and the save path. P10b: Mac and Windows PASS (S68); Odin3 legs wait for W9 (`docs/handoff.md`).
+
 **What this work order reconciles.** It brings §6.3 of `docs/riscpc-ordinary-load-plan.md` into line with:
 - the plan's Amendments 1–8, 11 (as amended here), 17 and 19;
 - the Astra stage 1 and stage 2 plan adjudications A-3, A-5 (as amended here), A-6, A-7 and A-8;
