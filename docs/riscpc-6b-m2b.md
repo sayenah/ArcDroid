@@ -678,3 +678,7 @@ Opus re-check of run E (effort 15): **PASS WITH FINDINGS**. H-1 and every S67 fi
 - **L-3 (test gap, validated):** a comparator test that kills the variant checking the page-boundary marker only on a stream's first page (`compare.py:379`).
 
 **Run F** carries exactly these four items; a short Opus confirmation follows, then merge.
+
+## CI timeouts after run F (Fable, S68): run G
+
+Run F's first CI attempt (run 39125295471) ran the lockstep subset on a slower host runner (same image; the job took 3 h 38 min against 2 h 37 min for run E): `consistency-fuzz-…-0` and `consistency-g-1-2` timed out at 480 s and 360 s, `emitter-reach` took 1170 s of 1380 s and `emitter-mutants` 622 s of 780 s; the rerun passed (fuzz 276 s, reach 760 s). Hosted runners therefore vary by up to about 2.4× on this subset. **Run G (timeouts only):** W4's rule applied to the worst observed CI durations across runs E and F: `rpc-lockstep-emitter-reach` ≥ 2340 s, `rpc-lockstep-emitter-mutants` ≥ 1260 s, the consistency-fuzz rows ≥ 1080 s (their worst passing duration is unknown above 480 s), the other consistency rows ≥ 780 s, and any other lockstep test at least twice its worst duration in either run. No other change; no Opus re-check needed (Fable verifies the diff).
