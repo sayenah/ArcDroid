@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "arc_io.h"
-#define ARC_RPC_CMOS_PROCEDURE_REVISION 3u
+#define ARC_RPC_CMOS_PROCEDURE_REVISION 4u
 /* Procedure-defined 2000-01-01 UTC; independent of content and plan RTC. */
 #define ARC_RPC_CMOS_GENERATION_EPOCH UINT64_C(946684800)
 #define ARC_RPC_CMOS_TIMING_REVISION 1u
@@ -60,6 +60,8 @@ bool arc_riscpc_cmos_store_seed(ArcRpcCmosStore *, const uint8_t[240], char *, s
 unsigned arc_riscpc_cmos_layout(const char *name);
 bool arc_riscpc_cmos_hex(const char *text, size_t length, char *out);
 bool arc_riscpc_cmos_checksum(const uint8_t payload[240]);
+/* Generation only: preserve every bit except logical 135 bits 0..2 and checksum. */
+bool arc_riscpc_cmos_two_floppies(unsigned layout, uint8_t payload[240]);
 void arc_riscpc_cmos_required(unsigned layout, uint8_t mask[32]);
 bool arc_riscpc_cmos_oracle(unsigned layout, const uint8_t payload[240], const ArcRpcCmosEvidence *e);
 ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *store, const char *save,

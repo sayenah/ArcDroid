@@ -13,6 +13,15 @@
 #define ARC_RPC_HD_STEP_HASH_BYTES 1572864u
 #define ARC_RPC_HD_STEP_COPY_BYTES 2097152u
 typedef struct ArcRpcHdStore ArcRpcHdStore;
+#define ARC_RPC_HD_IDENTITY_REVISION 1u
+#define ARC_RPC_HD_IDENTITY_HASH_BYTES 32768u
+#define ARC_RPC_HD_IDENTITY_WORKSPACE 1024u
+typedef struct { uint8_t bytes[32]; } ArcRpcHdIdentity;
+/* Exclusively owned, published writable IDLE view only. Zero I/O/allocation;
+ * hashes resident root + namespace + maintained journal digest. Recovery
+ * suppresses capture until a clean reopen. docs/riscpc-launch-plan.md. */
+bool arc_riscpc_hd_identity(ArcRpcHdStore *, ArcRpcHdIdentity *);
+bool arc_riscpc_hd_identity_matches(ArcRpcHdStore *, const ArcRpcHdIdentity *);
 typedef enum { ARC_RPC_HD_OPEN_PENDING, ARC_RPC_HD_UNPUBLISHED,
     ARC_RPC_HD_UNSUPPORTED, ARC_RPC_HD_UNAVAILABLE, ARC_RPC_HD_CORRUPT,
     ARC_RPC_HD_LEGACY, ARC_RPC_HD_RECEIPTED } ArcRpcHdOutcome;

@@ -139,5 +139,11 @@ int main(void)
    arc_outcome_frame(&o,600000000u);
    assert(o.state == ARC_OUTCOME_CANCEL &&
           !strcmp(o.cancel_reason,"timeout"));
+   const ArcOutcomeProfile rpc={120000000u,false,false,false,true};
+   assert(arc_outcome_arm_profile(&o,command,0,&rpc));
+   start(&o,"Run Other",false);assert(o.state==ARC_OUTCOME_WAIT);
+   start(&o,command,false);assert(o.matched && o.state==ARC_OUTCOME_EXIT);
+   end(&o);swi(&o,0x400c7,0,0,0,true);swi(&o,0x400c0,0,0,0,true);
+   assert(o.state==ARC_OUTCOME_EXIT); /* no global task-exit inference */
    return 0;
 }

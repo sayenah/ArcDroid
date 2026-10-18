@@ -41,4 +41,7 @@ void arc_boot_layout_nick(const ArcBootNode *, unsigned directory,
 bool arc_boot_layout_resolve(const ArcBootLayout *, uint32_t address,
                              uint32_t offset, uint32_t requested,
                              uint32_t *physical, uint32_t *bytes);
+/* Guest-tolerant acceptance of the fixed RPC geometry, checks both maps and
+ * live allocation/free chains. Does not read a disc or trust a receipt. */
+bool arc_boot_layout_accept(ArcBootLayout *,const uint8_t boot[512],const uint8_t maps[5120]);
 #endif

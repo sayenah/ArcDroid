@@ -35,6 +35,10 @@ extern void arc_riscpc_hd_test_point(unsigned boundary);
 #define OFFSET_MASK UINT32_C(0x7fffffff)
 #define FILES_MAX 1008u
 #define CACHE_COUNT 5u
+_Static_assert(MANIFEST_BYTES + 1023u + 64u + 32u <= ARC_RPC_HD_IDENTITY_HASH_BYTES,
+               "RPC identity acquisition hash bound");
+_Static_assert(2u * sizeof(ArcSha256) + 96u + 256u <= ARC_RPC_HD_IDENTITY_WORKSPACE,
+               "RPC identity local hash workspace bound");
 
 typedef struct { uint32_t offset, lba, count, slot; } Record;
 typedef struct {
@@ -58,7 +62,7 @@ struct ArcRpcHdStore {
     size_t path_cursor;
     struct retro_vfs_dir_handle *listing;
     ArcIoFile *replay_file;
-    bool partial[2], abandon, open_validated;
+    bool partial[2], abandon, open_validated, identity_recovered;
     unsigned population_phase, population_lba, population_count;
     uint8_t *population_output; bool population_write, population_io;
     unsigned publish_step, seal_step;
@@ -197,6 +201,35 @@ static bool geometry_valid(const uint8_t *p)
 { uint8_t expected[24];geometry(expected);return !memcmp(p,expected,24); }
 static size_t manifest_length(const uint8_t *m)
 { return get(m+8,4)==2 ? MANIFEST_BYTES : MANIFEST_V1_BYTES; }
+bool arc_riscpc_hd_identity(ArcRpcHdStore *s, ArcRpcHdIdentity *out)
+{
+    if(!out||!view_ready(s)||!s->published||s->population||s->refused||
+       s->damaged||s->identity_recovered||s->state!=ARC_RPC_HD_IDLE||
+       !s->journal_present[s->current])return false;
+    /* The accepted manifest commits every immutable chunk hash. The stream
+     * digest includes the current header and each committed whole command,
+     * including writes which have not reached a checkpoint. Never hash a
+     * chunk, journal file or live sector index here. */
+    uint8_t binding[64]={0},journal[32];ArcSha256 h;
+    size_t root=manifest_length(s->manifests[s->selected]),name=strlen(s->base);
+    memcpy(binding,"ARCRHDID",8);put(binding+8,ARC_RPC_HD_IDENTITY_REVISION,4);
+    put(binding+12,name,4);put(binding+16,root,4);
+    put(binding+24,s->generation,8);put(binding+32,s->sequence,8);
+    put(binding+40,s->jgeneration[s->current],8);put(binding+48,s->lengths[s->current],8);
+    arc_sha256_final(&s->digest[s->current],journal);
+    arc_sha256_init(&h);arc_sha256_update(&h,binding,sizeof(binding));
+    arc_sha256_update(&h,s->base,name);
+    arc_sha256_update(&h,s->manifests[s->selected],root);
+    arc_sha256_update(&h,journal,sizeof(journal));arc_sha256_final(&h,out->bytes);
+    s->stats.hash_bytes+=sizeof(binding)+name+root+sizeof(journal);
+    return true;
+}
+bool arc_riscpc_hd_identity_matches(ArcRpcHdStore *s,const ArcRpcHdIdentity *expected)
+{
+    ArcRpcHdIdentity current;
+    return expected&&arc_riscpc_hd_identity(s,&current)&&
+        !memcmp(expected->bytes,current.bytes,sizeof(current.bytes));
+}
 bool arc_riscpc_hd_receipt(const ArcRpcHdStore *s,ArcRpcHdReceipt *r)
 {
     if(!view_ready(s)||!s->published||get(s->manifests[s->selected]+8,4)!=2)return false;
@@ -833,6 +866,7 @@ static bool replay_step(ArcRpcHdStore *s, unsigned slot, uint32_t *index,
            transferred < 131072) {
         uint32_t at = s->replay_at, left = s->lengths[slot] - at;
         if (left < 80) {
+            s->identity_recovered = true;
             s->torn[slot] = true;
             s->lengths[slot] = at;
             break;
@@ -852,6 +886,7 @@ static bool replay_step(ArcRpcHdStore *s, unsigned slot, uint32_t *index,
             return open_failure(s, ARC_RPC_HD_CORRUPT);
         uint32_t total = 96 + count * 512;
         if (left < total) {
+            s->identity_recovered = true;
             s->torn[slot] = true;
             s->lengths[slot] = at;
             break;
@@ -1006,6 +1041,7 @@ static bool recover_step(ArcRpcHdStore *s) {
                         (get(s->manifests[m] + 96, 8) & 1) == i)
                         return open_failure(s, ARC_RPC_HD_CORRUPT);
                 s->partial[i] = true;
+                s->identity_recovered = true;
             } else {
                 s->lengths[i] = (uint32_t)n;
                 ArcIoFile *f = open_leaf(s, leaf, false, false);
@@ -1082,10 +1118,12 @@ static bool recover_step(ArcRpcHdStore *s) {
             s->open_phase = 11;
         } else if (s->journal_present[other] &&
                    s->jgeneration[other] > s->jgeneration[s->current]) {
+            s->identity_recovered = true;
             s->replay_mode = 1;
             s->replay_slot = s->current;
             s->open_phase = 8;
         } else if (s->journal_present[other]) {
+            s->identity_recovered = true;
             s->replay_mode = 2;
             s->replay_slot = other;
             s->open_phase = 8;
@@ -1255,7 +1293,10 @@ static bool recover_step(ArcRpcHdStore *s) {
             } else
                 strcpy(leaf, s->open_at == 504 ? "chunk.tmp" : "manifest.tmp");
             if (size(s, leaf, &n))
+            {
+                s->identity_recovered = true;
                 s->open_phase = 17;
+            }
             else
                 ++s->open_at;
             if (s->stat_failed)

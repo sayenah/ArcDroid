@@ -12,7 +12,9 @@ for path in (root/'libretro').glob('*.c'):
     count=len(re.findall(r'\barc_engine_is_rpc\s*\(',text))
     # Production-module ownership check: not frontend route policy. The test
     # snapshot deliberately exposes the engine query to the behavioural oracle.
-    allowed=2 if path.name=='arcdroid_libretro.c' else 1 if path.name=='rpc_preparation.c' else 0
+    # Part 2 adds two module ownership checks (reset and execution barrier);
+    # their exact function owners are pinned below, with the original persist check.
+    allowed=2 if path.name=='arcdroid_libretro.c' else 3 if path.name=='rpc_preparation.c' else 0
     require(count==allowed,f'{path}: unexpected last-backend query ({count})')
     capabilities=len(re.findall(r'\barc_engine_capabilities\s*\(',text))
     require(capabilities==(1 if path.name=='arcdroid_libretro.c' else 0),f'{path}: unexpected capability query ({capabilities})')
@@ -23,19 +25,34 @@ for path in (root/'libretro').glob('*.c'):
     if path.name!='arcdroid_libretro.c':
         require(not re.search(r'\barc_frontend_session_id\s*\(',text),f'{path}: ID authority escaped into storage')
 require('arc_engine_is_rpc(' not in front.split('RETRO_API bool arc_libretro_test_rpc_admit(void)',1)[0], 'frontend policy must use kind, not dispatcher identity')
-def body(name):
-    match=re.search(r'(?m)^(?:static\s+|RETRO_API\s+)[^\n;{}]*\b'+re.escape(name)+r'\([^;{}]*\)\s*\{',front)
+def body(name,source=front):
+    match=re.search(r'(?m)^(?:static\s+|RETRO_API\s+)?[^\n;{}]*\b'+re.escape(name)+r'\([^;{}]*\)\s*\{',source)
     require(match is not None,f'{name}: missing policy function')
-    return front[match.end():].split('\n}',1)[0]
+    # Match the function itself, including compact one-line definitions; an
+    # adjacent function must not inherit a preparation ownership allowance.
+    masked=re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
+                  lambda m:' '*len(m[0]),source,flags=re.S)
+    depth=1
+    for end in range(match.end(),len(masked)):
+        depth+=(masked[end]=='{')-(masked[end]=='}')
+        if not depth:return source[match.end():end]
+    raise RuntimeError(f'{name}: unclosed policy function')
+prep=(root/'libretro/rpc_preparation.c').read_text()
+for name in ('arc_riscpc_preparation_persist','arc_riscpc_preparation_reset','arc_riscpc_preparation_execution_allowed'):
+    require(len(re.findall(r'\barc_engine_is_rpc\s*\(',body(name,prep)))==1, f'{name}: changed preparation engine ownership check')
 # Pinned eebfc01 has 15 frontend dispatcher-identity sites: these fourteen
-# predicates plus the now constant maximum-geometry bound. H-J added consumers
+# predicates plus the now constant maximum-geometry bound. Part 2 adds fourteen
+# input/media/rollback policy sites, pinned below with the original predicates. H-J added consumers
 # of rpc_error, but no additional dispatcher query. Pin their owner as well.
-policy_sites={'arc_disk_insert_entry':1,'arc_disc_commit':3,
+policy_sites={'arc_disk_insert_entry':1,'arc_disc_commit':5,
     'arc_disc_observation':1,'arc_disc_setup':1,'arc_rpc_disc_log':1,
-    'arc_disc_boundary':1,'arc_disk_replace':1,'arc_poll_inputs':3,
+    'arc_disc_boundary':1,'arc_disk_replace':2,'arc_poll_inputs':4,
+    'arc_disk_set_eject':1,'arc_disk_set_index':1,'arc_disk_add':1,'arc_keyboard':1,
     'retro_reset':1,'retro_run':1}
 for name,count in policy_sites.items():
     require(len(re.findall(r'\barc_kind\s*==\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==count,f'{name}: changed session-kind policy census')
+for name in ('arc_disc_commit','arc_disk_set_eject','arc_disk_set_index','arc_disk_replace','arc_disk_add','arc_keyboard'):
+    require(len(re.findall(r'\barc_kind\s*!=\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==1,f'{name}: changed part 2 non-RPC policy census')
 poll=body('arc_poll_inputs')
 require('bool rpc_error=(arc_kind == ARC_SESSION_KIND_RISCPC);' in poll,'hint/input RPC owner must use frontend kind')
 require(len(re.findall(r'\brpc_error\s*=(?!=)',poll))==1,'hint/input RPC owner must not be reassigned')
@@ -63,4 +80,4 @@ for directory in ('core','libretro'):
     for path in (root/directory).glob('*.[ch]'):
         if path.name in ('arc_session.c','arc_session.h','arcdroid_libretro.c'):continue
         require(not re.search(r'\b(?:ArcSessionIdSource|arc_frontend_session_id|arc_session_ids)\b',path.read_text()),f'{path}: persisted ID dependency')
-print('session identity source guard: 14 policy predicates + constant AV bound; hint/reset/log owners; two observer cells; preparation ownership exception; library-local nonpersisted IDs')
+print('session identity source guard: original + part 2 policy predicates + constant AV bound; hint/reset/log owners; two observer cells; preparation ownership exception; library-local nonpersisted IDs')
