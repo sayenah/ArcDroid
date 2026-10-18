@@ -53,6 +53,9 @@ def pixels(path,status):
 
 def main():
     runner,core,fixture=map(lambda p:Path(p).resolve(),sys.argv[1:4])
+    if len(sys.argv)>4:
+        from rpc_host_runner_ownership_test import runner_clients
+        runner_clients(runner.parent,Path(__file__).resolve().parents[1],runner,Path(sys.argv[4]).resolve(),fixture)
     with tempfile.TemporaryDirectory(prefix='arc-rpc-hd-native-') as temp:
         d=Path(temp);save=d/'save';shutil.copytree(fixture/'save',save)
         plan=fixture/'hd.arcplan'

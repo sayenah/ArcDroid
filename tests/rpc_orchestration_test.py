@@ -7,7 +7,10 @@ from rpc_launch_controller_guest import firmware
 exe,fixtures,profile=sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-') as temp:
     root=Path(temp)
-    system=inputs(root)
+    if profile=='host-privacy':
+        malformed=dict(BASE);malformed['HardDisc4/HOST-PRIVATE-SENTINEL-NAME-TOO-LONG']=(b'authored',0xffffff00,0,3)
+        system=inputs(root,hard=malformed)
+    else:system=inputs(root)
     many=dict(BASE)
     many.update({f'HardDisc4/Cap/D{d:02}/F{f:02}':(b'authored cap',0xffffff00,0,3) for d in range(32) for f in range(32)})
     package(system/'cap.zip',many)

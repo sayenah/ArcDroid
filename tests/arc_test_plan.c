@@ -27,7 +27,11 @@ void arc_test_plan_set_media(const ArcTestPlanMedia *callbacks) { media_callback
 static bool media_start(char *error,size_t size)
 { return (!media_content[0]&&!media_helper[0]) || (media_callbacks.start && media_callbacks.start(media_content,media_helper,error,size)); }
 
-static ArcRpcPreparation *preparation;
+static ArcRpcFrontendHost *plan_host;
+static ArcRpcFrontendOps host_ops;
+#define preparation arc_riscpc_host_preparation(plan_host)
+void arc_test_plan_set_host_ops(const ArcRpcFrontendOps *ops){host_ops=*ops;}
+ArcRpcFrontendHost *arc_test_plan_host(void){return plan_host;}
 static unsigned launch_last_delivery=UINT_MAX,launch_last_outcome=UINT_MAX;
 static ArcRpcHdStore *hard_disc;
 static char hd_save[PATH_LIMIT],hd_content[41],hd_import[PATH_LIMIT],hd_system[PATH_LIMIT];
@@ -129,25 +133,18 @@ RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t 
 
 void arc_test_plan_set_notice(void (*notice)(const char *,bool)) { plan_notice=notice; }
 void arc_test_plan_set_log(void (*log)(const char *)) { plan_log=log; }
-static void preparation_notice(void *opaque,const char *s,bool error)
-{ (void)opaque;if(plan_notice)plan_notice(s,error); }
-static void preparation_log(void *opaque,const char *s)
-{ (void)opaque;if(plan_log)plan_log(s); }
 static void preparation_started(void *opaque,bool factory)
 { (void)opaque;if(!factory)arc_engine_test_plan_rate(pending_rate);else observation_start(); }
-static void preparation_diagnostics(void *opaque) { (void)opaque;observation_frame(); }
-static bool preparation_restage(void *opaque,char *error,size_t n)
+static void observer_status(void);
+static uint64_t hd_maintenance_start;
+static void preparation_diagnostics(void *opaque)
 {
-    (void)opaque;if(!media_callbacks.restage_drive0 || !media_callbacks.restage_drive0(error,n))return false;
-    return arc_riscpc_preparation_helper_write_policy(preparation,media_callbacks.drive1_writable && media_callbacks.drive1_writable());
+    (void)opaque;observation_frame();observer_status();
+    hard_disc=arc_riscpc_preparation_disc(preparation);
+    if(hd_cost_enabled){ArcRpcHdStats stats={0};if(hard_disc)arc_riscpc_hd_stats(hard_disc,&stats);
+        hd_cost.phase=stats.state;hd_cost.phase_step=stats.phase_step;hd_cost.attached=hard_disc!=NULL;}
+    hd_maintenance_start=arc_test_clock_ns();
 }
-static bool preparation_reset_rebind(void *opaque,char *error,size_t n)
-{
-    (void)opaque;if(!arc_engine_reset(error,n))return false;
-    arc_engine_rpc_observers_bind(verified_catalogue);arc_test_plan_reset_input();return true;
-}
-static bool preparation_media_identity(void *opaque,uint8_t identity[32])
-{(void)opaque;return media_callbacks.media_identity && media_callbacks.media_identity(identity);}
 static void observer_start(void)
 {
     if(observers_off){
@@ -193,11 +190,7 @@ static void observer_status(void)
 static bool preparation_attach(void *opaque,char *e,size_t n)
 {
     (void)opaque;
-    bool ok=media_start(e,n);
-    if(ok && *media_helper){ArcEngineMedia view;
-        ok=media_callbacks.drive1_view && media_callbacks.drive1_view(&view) &&
-            arc_riscpc_preparation_helper_override(preparation,&view);
-    }
+    bool ok=true;
     hard_disc=arc_riscpc_preparation_disc(preparation);
     if(ok && hard_disc){ArcIdeBackend backend;arc_riscpc_hd_backend(hard_disc,&backend);
         hd_delegate=backend;backend.read=hd_read;backend.write=hd_write;
@@ -209,8 +202,6 @@ RETRO_API void arc_test_plan_preparation_stats(ArcRpcPreparationStats *s)
 { arc_riscpc_preparation_stats(preparation,s); }
 RETRO_API void arc_test_plan_launch_snapshot(ArcRpcLaunchAttempt *a)
 {arc_riscpc_preparation_attempt(preparation,a);}
-RETRO_API void arc_test_plan_preparation_restart(void)
-{arc_test_plan_reset();}
 RETRO_API unsigned arc_test_plan_cmos_phase(void)
 {
     if(!preparation)return 0;
@@ -229,14 +220,10 @@ void arc_test_plan_hd_frame(void)
     hard_disc=arc_riscpc_preparation_disc(preparation);
     if(!preparation)return;
     ArcRpcHdStats stats={0};if(hard_disc)arc_riscpc_hd_stats(hard_disc,&stats);
-    if(hd_cost_enabled){hd_cost.phase=stats.state;hd_cost.phase_step=stats.phase_step;hd_cost.attached=hard_disc!=NULL;}
-    uint64_t start=arc_test_clock_ns();arc_riscpc_preparation_maintenance(preparation);
-    uint64_t elapsed=arc_test_clock_ns()-start;arc_engine_test_frame_add_ns(elapsed);
+    uint64_t elapsed=arc_test_clock_ns()-hd_maintenance_start;arc_engine_test_frame_add_ns(elapsed);
     if(hd_cost_enabled && hard_disc){hd_cost.maintenance_ns=elapsed;arc_riscpc_hd_stats(hard_disc,&stats);
         hd_cost.namespace_operations=stats.tick_namespace_operations;hd_cost.next_phase=stats.state;hd_cost.generation=stats.generation;hd_cost.checkpoints=stats.checkpoints;}
 }
-bool arc_test_plan_persist(char *e,size_t n)
-{ return arc_riscpc_preparation_persist(preparation,e,n); }
 bool arc_test_plan_slice(char *error,size_t size)
 {
     (void)error;(void)size;
@@ -329,7 +316,7 @@ void arc_test_plan_clear(void)
 #if !defined(ARCDROID_RPC_MEASUREMENT)
     arc_engine_test_observation_trace(false,false);
 #endif
-    char error[256]={0};(void)arc_riscpc_preparation_free(preparation,error,sizeof(error));preparation=NULL;hard_disc=NULL;
+    plan_host=NULL;hard_disc=NULL;
     hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     event_count=next_event=disk_count=disk_next=0;media_content[0]=media_helper[0]=0;script_frame=0;script_active=false;
 }
@@ -337,7 +324,7 @@ void arc_test_plan_reset(void)
 {
     if(preparation){
         bool running=arc_riscpc_preparation_state(preparation)==ARC_RPC_PREP_RUNNING;
-        (void)arc_riscpc_preparation_reset(preparation);
+        (void)arc_riscpc_host_reset(plan_host);
         script_active=running;
     }
     next_event=disk_next=0;script_frame=0;
@@ -606,13 +593,16 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             request.seed_path=values[5]?seed_path:NULL;request.hard_disc=hd_enabled;request.populate=hd_populate;
             request.helper_override=values[11]!=NULL;
             request.import_path=hd_import[0]?hd_import:NULL;
-            ArcRpcPreparationHost host={0};host.notice=preparation_notice;host.log=preparation_log;
-            host.attach=preparation_attach;host.started=preparation_started;host.diagnostics=preparation_diagnostics;host.attached=preparation_attached;
-            host.restage_drive0=preparation_restage;host.reset_rebind=preparation_reset_rebind;
-            host.media_identity=preparation_media_identity;
             pending_rate=(unsigned)rate;
-            preparation=valid?arc_riscpc_preparation_low_level(&request,&host,error,error_size):NULL;
-            valid=preparation!=NULL;
+#if defined(ARCDROID_TEST_PLANS)
+            ArcRpcFrontendExtension extension={.started_after=preparation_started,.attach_after=preparation_attach,
+                .diagnostics_after=preparation_diagnostics,.attached_after=preparation_attached};
+            if(valid && host_ops.stage)valid=host_ops.stage(host_ops.module.opaque,media_content,media_helper,&request,error,error_size);
+            plan_host=valid?arc_riscpc_host_low_level(&request,&host_ops,&extension,error,error_size):NULL;
+            valid=plan_host!=NULL;
+#else
+            valid=false;
+#endif
         }
     }
     if(valid){

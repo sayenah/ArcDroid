@@ -166,6 +166,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   libretro/rpc_hd_store.c
   libretro/rpc_cmos_store.c
   libretro/rpc_preparation.c
+  libretro/rpc_preparation_host.c
   libretro/rpc_launch_record_store.c
   libretro/rpc_boot_zip.c
   libretro/rpc_boot.c
@@ -467,7 +468,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32 OR ANDROID))
     add_test(NAME rpc-lock-process COMMAND rpc_lock_process self-test "${CMAKE_CURRENT_BINARY_DIR}/rpc-lock-save")
     add_test(NAME rpc-lock-io-guard COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-shipping-lock-io.py" --self-test)
-    add_test(NAME rpc-lock-dormancy COMMAND "${Python3_EXECUTABLE}" -B
+    add_test(NAME rpc-lock-enforcement-source COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(rpc-lock-io-guard PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     set_tests_properties(rpc-lock-unit rpc-lock-io-guard PROPERTIES TIMEOUT 30)
@@ -3156,7 +3157,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_dependencies(rpc_runner rpc-hd-retroarch-fixtures)
   add_test(NAME rpc-hd-retroarch-guest COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
-    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}" $<TARGET_FILE:rpc_hd_process>)
   set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
   set(RPC_HD_COST_PROFILE)
   if(ARCDROID_SANITIZERS)
@@ -3368,3 +3369,119 @@ if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
     -include ${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h)
 endif()
 include(cmake/rpc-lockstep.cmake)
+
+# R3d-3: store handles require the ownership primitive in every build class.
+get_property(rpc_owner_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(rpc_owner_target IN LISTS rpc_owner_targets)
+  get_target_property(rpc_owner_sources ${rpc_owner_target} SOURCES)
+  if("${rpc_owner_sources}" MATCHES "libretro/rpc_(hd_store|cmos_store|launch_record_store|preparation)\\.c")
+    target_sources(${rpc_owner_target} PRIVATE libretro/arc_lock.c)
+  endif()
+endforeach()
+
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME rpc-host-source-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}")
+  set_tests_properties(rpc-host-source-guard PROPERTIES TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME rpc-production-host COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+    $<TARGET_FILE:rpc_orchestration_test> "${FIXTURE_DIR}" host)
+  set_tests_properties(rpc-production-host PROPERTIES TIMEOUT 360 RUN_SERIAL TRUE)
+endif()
+
+# R3d-3 frontend calls the production host through real retro_* entry points.
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_executable(rpc_host_frontend_test tests/rpc_host_frontend_test.c)
+  target_include_directories(rpc_host_frontend_test PRIVATE engine engine/rpc core libretro libretro/include)
+  target_compile_definitions(rpc_host_frontend_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_host_frontend_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(rpc_host_frontend_test PRIVATE ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_host_frontend_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-production-host-frontend COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" pending)
+  # W4: initial bound 240 s; verify >= twice the observed maximum in Run A.
+  set_tests_properties(rpc-production-host-frontend PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+endif()
+
+if((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR ARCDROID_ANDROID_TEST_CORE)
+  set(rpc_host_process_sources ${ARCDROID_LIBRETRO_SOURCES})
+  list(REMOVE_ITEM rpc_host_process_sources libretro/arc_lock.c)
+  add_executable(rpc_host_process tests/rpc_host_process.c ${rpc_host_process_sources}
+    $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
+  target_include_directories(rpc_host_process PRIVATE core engine platform libretro libretro/include third_party/zlib tests)
+  target_compile_definitions(rpc_host_process PRIVATE RELEASE_BUILD=1)
+  target_compile_options(rpc_host_process PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
+  target_link_libraries(rpc_host_process PRIVATE arcdroid_core)
+  if(UNIX)
+    target_link_libraries(rpc_host_process PRIVATE m)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_host_process PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+endif()
+if(TARGET rpc_host_process AND BUILD_TESTING)
+  add_test(NAME rpc-host-process-ownership COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_process_test.py" $<TARGET_FILE:rpc_host_process>)
+  # W4: bounded authored process matrix; retain >=2x measured maximum.
+  set_tests_properties(rpc-host-process-ownership PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+endif()
+
+if(TARGET rpc_host_frontend_test)
+  foreach(rpc_host_rate IN ITEMS 50 75)
+    add_test(NAME rpc-production-host-rate-${rpc_host_rate} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" rate${rpc_host_rate})
+    set_tests_properties(rpc-production-host-rate-${rpc_host_rate} PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+  endforeach()
+endif()
+
+if(TARGET rpc_host_frontend_test)
+  add_test(NAME rpc-production-host-freeze COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" freeze)
+  set_tests_properties(rpc-production-host-freeze PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+endif()
+
+if(TARGET rpc_host_frontend_test)
+  add_test(NAME rpc-production-host-freeze-fallback COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" freeze-fallback)
+  set_tests_properties(rpc-production-host-freeze-fallback PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+endif()
+if(TARGET rpc_orchestration_test)
+  add_test(NAME rpc-production-host-privacy COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py" $<TARGET_FILE:rpc_orchestration_test>
+    "${FIXTURE_DIR}" host-privacy)
+  set_tests_properties(rpc-production-host-privacy PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+endif()
+
+if(TARGET rpc_host_frontend_test)
+  foreach(rpc_host_failure IN ITEMS mount-fail helper-fail)
+    add_test(NAME rpc-production-host-${rpc_host_failure} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" ${rpc_host_failure})
+    set_tests_properties(rpc-production-host-${rpc_host_failure} PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+  endforeach()
+endif()
+
+if(TARGET rpc_host_frontend_test)
+  add_test(NAME rpc-production-host-slow-audio COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" slow)
+  set_tests_properties(rpc-production-host-slow-audio PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+endif()
+
+if(TARGET rpc_host_frontend_test)
+  add_test(NAME rpc-production-host-state-matrix COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_matrix_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:rpc_host_frontend_test> "${FIXTURE_DIR}")
+  # Read-only probes; original production host, module and retro_* control flow.
+  # W4: verify this bound is >=2x the measured native/sanitizer matrix duration.
+  set_tests_properties(rpc-production-host-state-matrix PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
+endif()

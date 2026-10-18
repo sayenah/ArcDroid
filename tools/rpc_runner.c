@@ -368,7 +368,7 @@ int main(int argc, char **argv)
     void (*preparation_restart)(void)=NULL;
     bool (*advance)(uint64_t)=NULL;
     void (*attempt_snapshot)(ArcRpcLaunchAttempt *)=NULL;
-    if(preparation_reset_at!=UINT64_MAX || reset_stage)LOAD(preparation_restart,"arc_test_plan_preparation_restart");
+    if(preparation_reset_at!=UINT64_MAX || reset_stage)preparation_restart=reset;
     if(reset_stage){LOAD(advance,"arc_rpc_test_advance");LOAD(attempt_snapshot,"arc_test_plan_launch_snapshot");}
     unsigned (*plan_phase)(void)=NULL;
     void *phase_symbol=symbol("arc_test_plan_cmos_phase");if(phase_symbol)memcpy(&plan_phase,&phase_symbol,sizeof(plan_phase));

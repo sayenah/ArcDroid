@@ -4,6 +4,9 @@
 
 Written before implementation, against `d374114`. Shipping ordinary loads keep
 Arculator. The shipping-source module is dormant; plan v2 is its low-level client.
+The original scheduler/resource description below records that implementation;
+the Run A host contract supersedes its eager live-publication policy and defines
+the proposed host/reset/notice behavior before host implementation.
 
 States: VERIFY → RECOVER → VALIDATE → RECORD → DEFAULTS → GENERATE →
 SAVE_DEFAULT → SAVE_RECORD → POPULATE → START → RUNNING. Existing records skip
@@ -94,37 +97,328 @@ wrap these production operations, with rate/fault seams outside policy. Synchron
 construction without altering the low-level allocation order or final bytes. V1
 factory capture keeps its separate 30 s default.
 
-Preparation reset stops generation/requested construction, closes inspections,
-aborts the candidate and restarts VERIFY/recovery with the retained request.
-Running reset retains volatile CMOS and HD, using the established engine reset.
-Unload snapshots the latest CMOS, drains/reconciles pending publication, then
-attempts the latest snapshot before detach/free. Failure is explicit; already
-published generations remain recoverable. Cancellation does not promise a new
-publication. Process termination recovers only already-published roots/records.
+## R3d-3 host contract, before implementation (Run A, 2026-10-18)
 
-Status begins on the first pending frame: checking hard disc (including firmware
-verification), checking boot files, preparing settings, preparing hard disc.
-Status refreshes every 60 pending frames with a 60 s extended-message lifetime; completion, reset
-and unload send an empty status. A fallback ordinary message also lasts 120
-frames, so an uncleared fallback expires within 120 frontend frames (2 s at 60 Hz). Terminal errors clear
-status first, then emit one terminal status; FAILED never refreshes progress.
-Extended terminal status uses the maximum unsigned lifetime and is cleared on
-reset/unload. Its ordinary-message fallback refreshes every sixty frames until
-clear. A valid saved record alongside refused CMOS data follows the same
-clear/error precedence and suppresses completion's progress clear. Receipted
-reopens with saved CMOS say "Starting RiscPC". Memory seeds, like seed paths,
-never override bytes 0–15 when a saved record is authoritative.
-Legacy discs say “without a creation receipt”. No time estimate is shown.
-Recovery advisories, including a recovered read-only view, are ordinary timed
-messages (5 s extended / 300 frames fallback), not persistent error statuses.
-The store carries notice severity; it is not inferred from text or read-only
-state. Only terminal errors use the retained error status. An advisory does not
-clear an existing terminal status.
+This section records the accepted host work order against dispatch base
+`6b8b583`. R-1a (Fable, S68) resolves the initial Run A stop: execution
+admission, RUNNING reset and persist retain the three existing module ownership
+checks, as pinned by `rpc_session_source_guard.py`. The RUNNING body remains
+byte-identical to merged `d42adbe`, including its ownership check. The frontend
+uses injected session kind and host-pending policy. Next item 3's module-site
+conversion wording is superseded. Implementation proceeds under that ruling;
+the ownership-primitive section below remains the unchanged 12a record.
 
-Pinned plan baseline: `d374114`. V1 device/AV/input/factory goldens must remain
-unchanged. V2 gains preparation black/silent frames and preparation reset now
-restarts recovery; requested virtual traces and published bytes remain identical.
-Each affected expectation is updated individually; no fixture regeneration.
+### Host ownership, presentation and boundaries
+
+The production host will be `libretro/rpc_preparation_host.c/.h`. It owns the
+preparation object and presentation state of one preparation-route session.
+The frontend injects session kind and session ID; neither is inferred from a
+retained engine backend. Production begin takes a resolved request. Only the
+plan build exposes low-level begin and an optional extension table, whose
+started-after, attach-after, attached-after and diagnostics-after hooks follow
+production behavior. Rate substitution, trace, scripts, observer overrides,
+gate faults and the HD cost wrapper remain test-only. Shipping must reference
+neither low-level begin nor the extension table.
+
+Media is staged at load, under the load-time option snapshot. The frontend owns
+backing through engine detach; preparation copies descriptor/path views and is
+the only drive-0 attacher at START. It also owns generated read-only helpers.
+Explicit drive 1, including empty, is supplied at begin and retains its identity.
+Production attach performs frontend rebind only: no second staging, drive mount,
+IDE assignment or ADFFS attachment. Observer binding follows attachment, using
+the module's verified catalogue. Production started is a no-op; diagnostics
+drain through the engine boundary without enabling generation input or hints.
+
+A preparation-route session is pending when the object is absent, its state is
+anything except RUNNING, or execution is barred. Run, reset, all four setters,
+keyboard and input polling consult that predicate before any active-engine route.
+FAILED and CANCELLED cannot fall through to Arculator. Direct-start plans are
+outside the preparation route and retain their existing engine-reset path.
+Setter rejection precedes every observer, disc, notice-ring or launch mutation.
+
+Pending frames use the normal video path exactly once and retain coherent
+presentation/pitch state. They send black and 48000 / announced-rate silent
+samples, carrying fractional samples. Load establishes 640×480 at 60 Hz once;
+pending work never repeats AV negotiation. FAILED after RUNNING keeps the last
+announced geometry/rate. Restart from such a failure re-baselines once if needed.
+The first guest field and a successful RUNNING reset issue AV only on changed
+values. Guest-driven and frontend-caused changes have separate counters.
+Each running frame preserves refusal → diagnostics → disc → maintenance order,
+with exactly one maintenance call. Pending and drain frames do not call it.
+
+The load path negotiates pixel format, RPC controller info/descriptors without
+the A3010 joystick, device capabilities and resolved input, keyboard callback,
+OSK/sampling, AV baseline and frame/fault counters. Failed pixel negotiation
+logs its reason, releases and returns false. OSK activation/interruption,
+overflow, pad, keyboard and pointer behavior require frontend parity evidence.
+
+### Reset and media-option lifetime
+
+Both reset branches first clear the frontend input, raw keyboard, sampling,
+guest time, error-hint generation/state, owned/previous/swapped disc state,
+notice ring, engine disc state and disc cache. The host clears its notice at
+priority 3. No module pre-terminal, reset-head, cancel or free clear remains.
+
+Before a RUNNING reset, the host finishes any in-flight CMOS publication using
+the dedicated completion entry. The RUNNING body at dispatch-base
+`rpc_preparation.c:673–699` stays byte-identical to merged `d42adbe`: close the
+barrier, detach, re-stage drive 0, restore drive 1 under admission policy,
+reset/rebind and resume only on complete success. The synchronous failure
+publication stays inside it. `reset_rebind` is the preparation route's sole
+direct engine-reset callback; it also resets frontend state and binds the
+verified catalogue, without the test input-ready seam. Guest-initiated reboots
+retain D-204's separate helper-retirement behavior.
+
+Every non-RUNNING Restart invalidates the attempt, stops generation or START
+construction and releases offline resources first. It keeps content ownership,
+drops defaults ownership and drops the old drive-0 view. Only then does it call
+`restage_stopped`, which stages frontend backing without engine calls, replaces
+the module view and updates explicit-helper write policy. Success restarts
+VERIFY on the next frame. Failure leaves FAILED, stopped, unattached and without
+store mutation, holding the content lock; another Restart retries. The same
+view-replacement entry is legal under the closed RUNNING reset barrier.
+
+Disk Writes, Write-protect Tab, short-tail and JFD-omitted policy freeze at the
+load-time values while pending or running. Pending frames poll variable updates.
+Each changed option gets N-11 once per session, tracked separately from the
+Arculator flag. Restart reads current values and re-stages drive 0 in the
+appropriate window; drive 1 is never re-prepared. Explicit-helper write policy
+updates in both windows. Generated helpers remain read-only.
+
+### Notices and privacy oracle
+
+Severity is supplied by the module: progress, timed advisory, terminal or
+completion clear. The host never derives it from text or a test phase. Both
+message paths enforce one display slot: terminal > advisory > progress. The
+first terminal remains, except a FAILED terminal replaces a non-stopping
+refusal, and a drain outcome replaces its fault terminal once. N-18 is final
+and never gains a drain suffix. Each terminal/advisory is logged once; progress
+logging is deduplicated by severity and text, independently of refresh.
+
+Progress refreshes every 60 frames and expires within 120 frames of the last
+refresh. Advisories last 5 s extended / 300 fallback frames. During that lifetime
+progress and hold updates are logged but hidden; current progress resumes on
+expiry. Terminals persist until host clear, with fallback refresh every 60
+frames. Reset, unload and switch clears have priority 3; host arbitration is
+authoritative even when the frontend ignores priority. Every extended host
+message targets `RETRO_MESSAGE_TARGET_OSD`. The exact same redacted text is used
+on both paths, per frozen plan §7a, regardless of frontend logging behavior.
+
+At RUNNING, the host emits "Starting RiscPC" and defers completion clear unless
+a terminal is retained. It ends on the guest-time bound or a terminal, yields
+to advisories and resumes within the bound. Successful RUNNING reset restarts
+it; pending reset, unload and switch cancel it. These S68 defaults are not
+measurements and make no claim of desktop readiness:
+
+| Firmware | CPU | Hold bound, emulated seconds |
+|---|---|---|
+| 3.50 | ARM610 | 25 |
+| 3.60 | ARM710 | 25 |
+| 3.60 | ARM7500 | 25 |
+| 3.70 | SA-110 | 25 |
+| 3.71 | ARM710 | 25 |
+| 3.71 | ARM7500 | 25 |
+| 3.71 | SA-110 | 25 |
+
+The ID-to-text oracle for N-1 through N-18 is plan §7/§7a, with these source
+mappings at `6b8b583`. N-1–N-6, N-9, N-10 and N-12 have no new ordinary-load
+caller in this slice. The same source-site mapping determines the family;
+there is no substring classification of an error buffer.
+
+| Source/event | ID or family | Text/redacted form |
+|---|---|---|
+| `status`, preparation lines 70–78 | N-7 | Checking hard disc; checking boot files; first-use settings; preparing hard disc; Starting RiscPC (exact existing literal texts) |
+| RECOVER revision-1 notice, line 372 | N-8 | Existing revision-1 text, advisory |
+| Changed fixed media-option label | N-11 | `{option} takes effect after Restart.` |
+| RECORD unsaved marker | N-13 | RiscPC settings from the last session could not be saved. |
+| Content contention after 10 s | N-14 | This RiscPC title is open in another RetroArch. Close it there or restart RetroArch, then close and reload this content. |
+| Lock failure | N-15 | ArcDroid cannot lock RiscPC save files in this folder. Choose another save folder in RetroArch's directory settings. |
+| Defaults contention after 120 s | N-16 | Another copy of RetroArch is preparing RiscPC settings. Wait for it to finish, then close and reload this content. |
+| HD close failure | N-17 reset/unload | Recent RiscPC hard disc changes could not be saved. |
+| Ownership identity lost | N-18 | Another app changed ArcDroid's RiscPC save files; this session stopped without saving. Close and reload this content. |
+| Begin validation/allocation/path failures | N-B begin | Existing constant reasons; missing-firmware reason uses literal `<system>` |
+| VERIFY fingerprint, lines 342–345 | N-B firmware | Existing family-name verification reason; no firmware path |
+| Boot begin/step, lines 376/384; `rpc_boot.c` failure producers | N-B boot/boot-zip/boot-named | Frozen boot-family sentence with redacted reason |
+| HD open/outcome, import, population, seal/publish, lines 362–420 | N-B hd | Existing constant outcomes, including without a creation receipt |
+| CMOS begin/inspect/default/store publication failures | N-B cmos | Existing store constant reasons |
+| Seed read, line 427 | N-B seed | Existing unavailable/wrong-size reason |
+| Isolated construction/capture/advance/oracle, lines 449–475 | N-B generate | Existing engine or generation constant/numeric reasons |
+| Requested construction, lines 489–492 | N-B engine | Existing engine constant/numeric reason |
+| Product verification, line 504 | N-B product | Existing verification reason |
+| Helper construction/mount, lines 524/689–690 | N-B helper | Existing constant/numeric reason |
+| Launch binding, line 547 | N-B launch | Existing binding reason |
+| Attach callback, lines 536–542 | N-B attach | Allow-listed literal or generic attach form below |
+| RUNNING restage callback, line 680 | N-B restage | Allow-listed cause or generic restage form, with frozen snapshot suffix |
+| New stopped restage callback | N-B restage-stopped | Allow-listed cause or generic restage form |
+| Reset failure, lines 675/694–696 | N-B reset | Existing cause and snapshot outcome |
+| Fault/invalidation, lines 717/727 | N-B fault/observation | Existing cause; later drain outcome under N-B drain |
+| Rollback/retirement, lines 287/300 | N-B rollback/retire | Existing constant cause and applicable snapshot outcome |
+| RUNNING one-drive notice, line 550 | launch-unavailable | Existing delivery-unavailable text, advisory |
+| Running HD recovery/terminal, lines 719–721 | hd-recovered / N-B hd | Store severity, existing safe text |
+| Usable record with refused CMOS, line 435 | cmos-refused | Store reason, non-stopping terminal |
+| Live persist refusal, line 723 | cmos-persist | Store reason, non-stopping terminal |
+| Free persist/marker failure | unload-cmos / unload-marker | Safe unload advisory/reason, always logged |
+| Boot statistics, line 388 | boot-packages | Qualification/counts only |
+| HD diagnostic, line 719 | hd-diagnostic | Redacted diagnostic; no store path |
+| Progress and measurement lines | status / summary | Transition or numeric data only |
+
+The line format is `<ID-or-token>[ <reason>]: <redacted text>`. N-15 uses only
+`lock-root`, `lock-create`, `lock-unsupported` or `lock-error` (optional numeric
+errno); N-18's unsaved outcome is logged as `N-18 unsaved`. Boot text is
+"RiscPC boot files in <system>/arcdroid/riscpc/boot/ cannot be used ({reason}).
+Replace them with unmodified copies." Member-derived portions of the reason
+become `a file in the boot archives`; required-member/authored constant names
+remain. Redaction happens at the producer/callback before the module's error
+buffer. Other tokens are `the selected disc`, `another disc`,
+`the selected content`, `the content folder`, and `the save folder`.
+
+Media callbacks stage into a private scratch error buffer, clear the module
+output on every successful exit, and forward only the following literal
+allow-list or a frozen generic form. Locations are pre-edit frontend lines;
+tests must assert each source literal (including absence of conversions).
+The module clears its error buffer before a reset sequence, so a stale cause
+cannot survive a callback that returns without a diagnostic.
+Trailing full stops are removed from restage causes. The digest-mismatch
+literal maps to "The JFD disc changed on storage".
+
+| Literal allow-list | Source line |
+|---|---|
+| Unable to publish staged media with flush, close and rename. | 1530 |
+| invalid media preparation input | 1562 |
+| Short image cannot use original writes; choose shadow or off. | 1647 |
+| out of memory | 1652 |
+| unable to prepare staged media directory | 1677 |
+| Writable media shadow has a structural fault and was not replaced. | 1691 |
+| unable to replace invalid immutable staged media | 1700 |
+| Zip archive exceeds 32 MiB. | 2081 |
+| Unable to read the zip through the frontend VFS. | 2082 |
+| Unsupported archive container; ArcDroid supports .zip files only. | 2303 |
+| Unable to read the selected content through the frontend VFS. | 2312 |
+| prepared logical media exceeds 256 MiB | 2358 |
+| Zip archive exceeds 32 MiB during reset. | 2490 |
+| Unable to re-open the zip during reset. | 2491 |
+| Staged JFD digest mismatch. | 2781 |
+| RPC drive 1 requires raw helper media | 7649 |
+
+All other attach causes use "The discs in this content could not be loaded.
+Check that the file is complete and a supported type." All other restage
+causes use "The disc could not be reloaded". ZIP-index reason pass-through and
+playlist-line formatting are excluded. Shared staging `arc_log` producers use
+the tokens in RiscPC sessions only, including JFD title, ZIP leaf/member/order
+and folder diagnostics. Arculator log bytes are unchanged. The shared
+`arc_message` function and its carried disk/media notices remain unchanged for
+R3d-4; host/module catalogue notices never enter it. The test-only Windows
+crash locator stays outside this catalogue.
+
+### Publication, fault drain and teardown
+
+S-4 uses the frozen stepped default: publish changed CMOS through maintenance
+steps within 60 frames. Reset and swap rollback finish an earlier publication
+before their synchronous publication; these two error-path exceptions are
+counted separately with measured costs. Unchanged-payload persistence succeeds
+without a new generation. Failure expectations follow the actual publication
+phase, not a blanket generation increment or a no-files-changed assumption:
+
+| Last completed boundary | Allowed authoritative/temp outcome |
+|---|---|
+| Unchanged-payload no-op | Slots, generation and payload unchanged |
+| Candidate written/read back | Previous authoritative slot(s) retained; exact candidate `.tmp` may remain |
+| Older destination retired | Latest authoritative slot retained; older target may be absent; candidate `.tmp` retained |
+| Rename published, readback fails | Candidate slot may already be authoritative at the next generation; `.tmp` moved |
+| Completed publication | Exact candidate slot/generation accepted; marker removal is a separate namespace unit |
+
+Tests enumerate every file and byte at each injected boundary, reopen without
+false CORRUPT, and apply the same oracle twice when an earlier publication is
+in flight. HD, launch-record and defaults bytes otherwise remain equal.
+
+Both RUNNING maintenance failures (engine fault and observation invalidation)
+capture the latest CMOS while readable, then stop and emit their cause at once.
+FAILED frames drive a separate drain entry: finish any earlier publication,
+then publish the captured snapshot with begin/step, within 60 frames under the
+offline allowance. No guest or maintenance work runs in that drain. Its outcome
+replaces the cause once with saved/could-not-save. A queued Restart waits for
+drain completion; unload/switch finish it synchronously inside free. On ownership
+loss no mutation or drain publication occurs, stores close in discard mode and
+N-18 stays final. A publication-begin token check and per-running-frame identity
+check both stop mutation on loss. The accepted D-208 same-UID shared-storage
+rename-over residual remains explicit; it is not an exclusion guarantee.
+
+Free on a live RUNNING engine captures/persists before stop. Stopped FAILED or
+failed-attachment cleanup does not require a live engine. Engine stop detaches
+IDE and both borrowed drives before freeing generated helper, media entries or
+backing. Cleanup runs exactly once. Release retains the HD flush/close result;
+reset reports N-17 and unload logs/displays it after the host clear. Content
+ownership is released only after final persistence, drain and HD close. A
+pending reset keeps it, dropping only defaults ownership. Cancel releases after
+resource cleanup. No dirty writable VFS handle may survive an ownership-loss
+boundary: write/flush/close is one bounded unit in each store; a buffering-close
+VFS proves it. Close-error detection is limited by what the frontend exposes.
+
+An unload publication-only CMOS failure always logs and displays its timed
+advisory after the host clear and writes a zero-byte `.unsaved` marker while
+holding content ownership. RECORD queries it for N-13; a successful persist
+removes it as one namespace unit. Refused/corrupt records write no marker.
+Marker-write failure logs/displays the immediate outcome but cannot cause N-13
+on a later load. This applies to unload, deinit without unload and switching.
+
+### Permanent measurement channels
+
+One pending summary is emitted at RUNNING, FAILED or release before RUNNING,
+and one live summary at release. Each records frames, elapsed host time, final
+state and per-phase (offline, generation, attach, live, drain) preparation-work
+maximum, complete-run duration maximum/p99 and run-interval maximum/p99. T uses
+the phase's announced rate. Histograms are static, nearest-rank, 0.05 T buckets
+through 8 T plus overflow. Summary fields ending in `p99_005T` report the
+upper bucket index in units of 0.05 T; 161 denotes overflow. Exact maxima
+remain in nanoseconds. Intervals over 0.5 s count as frontend gaps and are
+excluded from over-2 T counts. Fast-forward uses GET_FASTFORWARDING or unknown.
+Counters separately attribute D-169 namespace spikes, D-162 checkpoint ticks,
+reset/rollback synchronous exceptions, frontend/guest AV changes, lock attempts,
+lock-wait frames, identity checks and maximum native lock-call cost (outside
+the arc_io census); the dedicated RUNNING identity check also has its own
+`identity_max_ns` field. Store ownership checks remain part of their measured
+store unit. D-172 endpoints are milliseconds since load entry: first
+pending presentation, RUNNING and first guest field; desktop readiness is
+unavailable. One first-field AV line records values, whether full AV was issued
+and frame index. No channel includes a private name, path or data bytes.
+
+### A-6 comparison projection
+
+The host comparison base is `6b8b583`, containing merged R3c-3b part 2
+`d42adbe` and the dormant lock primitive. No fixtures are regenerated. Each
+changed expectation must assert the applicable delta individually:
+
+1. Catalogue, transition, summary and first-field log lines.
+2. N-8 advisory precedence/lifetime.
+3. First-use wording during receipted regeneration.
+4. Host-owned startup hold and deferred completion clear.
+5. Priority-3 host clears and removal of module pre-terminal clears.
+6. Per-option N-11 wording.
+7. Unload failure log/advisory and conditional N-13 marker.
+8. AV suppression while pending/unchanged; explicit failed-session re-baseline.
+9. RUNNING detach → drive-0 restage → reset; restored drive 1.
+10. Stopped terminal result on reset failure.
+11. Side-effect-free pending setter rejection.
+12. Disc-state/cache reset through real retro_reset, including runner flags.
+13. Load-time media staging and post-release stopped restaging.
+14. Load-time option freeze baseline.
+15. RPC load negotiation/controller descriptors.
+16. Persistent zero-byte content/default sentinel files and lock directory.
+17. Catalogue-ID logs and redacted text at every level.
+18. Fractional silence at the announced rate.
+19. Captured-snapshot FAILED drain and explicit outcome.
+20. Redacted fallback/extended text and OSD-only extended targeting.
+21. Retained/reported HD close failure.
+22. Lock mkdir, attempt, identity and wait counts in unit/frame output.
+23. Earlier in-flight publication completed before reset/rollback.
+
+Unaffected persisted bytes remain strictly equal. Authorized filesystem changes
+are only zero-byte lock sentinels/directory, conditional `.unsaved` creation and
+removal, and phase-qualified CMOS slot/temp changes holding captured snapshots.
+Shipping ordinary-load output admits no new R3d-3 delta: only the cumulative
+R3d-1 G-3 line and R3d-2 diagnostic wording/reason changes already accepted.
+Ordinary loads do not call the host or locks. The library A/B in both package
+states and real firmware/RetroArch/device evidence remain Fable's private legs.
 
 ## R3c-3b run B: generated helper-drive configuration (D-190)
 

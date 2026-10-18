@@ -1,4 +1,5 @@
 /* Real MMIO/interpreter/scheduler/backend guest proof. GPL-2.0-only. */
+#include "rpc_store_owner.h"
 #include "rpc_session.h"
 #include "engine_test.h"
 #include "rpc_ide_rom.h"
@@ -27,7 +28,7 @@ static bool commit(void *opaque,uint32_t lba,uint32_t count,const uint8_t *p)
  return backend.write(backend.opaque,lba,count,p);}
 static ArcRpcTestSnapshot run(unsigned pacing,bool slow)
 {
-    fresh_files();ArcRpcHdStore *store=arc_riscpc_hd_open("/save","0123456789012345678901234567890123456789",true,NULL,0);assert(store);
+    fresh_files();ArcRpcHdStore *store=arc_riscpc_hd_open("/save","0123456789012345678901234567890123456789",true,rpc_store_test_owner(),NULL,0);assert(store);
     for(unsigned i=0;i<3;++i)arc_riscpc_hd_tick(store);arc_riscpc_hd_backend(store,&backend);
     uint8_t *rom=calloc(1,2097152);assert(rom);for(unsigned i=0;i<2097152;i+=4){uint32_t w=i/4<sizeof(rpc_ide_rom)/4?rpc_ide_rom[i/4]:0xeafffffe;
         for(unsigned b=0;b<4;++b)rom[i+b]=(uint8_t)(w>>(b*8));}
@@ -39,7 +40,7 @@ static ArcRpcTestSnapshot run(unsigned pacing,bool slow)
     assert(commits==1);uint8_t p[1024];assert(arc_riscpc_hd_read(store,511,2,p));for(unsigned i=0;i<1024;++i)assert(p[i]==0x5a);
     ArcRpcTestSnapshot s;guest_snapshot(&s);assert(s.events[5]==4&&!s.faulted&&s.now_ns==40000000);audio(&sound_counts[pacing]);
     assert(attach(NULL));assert(engine_api()->reset(NULL,0));assert(advance(1000));ArcRpcTestSnapshot reset;guest_snapshot(&reset);assert(reset.events[5]==0);
-    engine_api()->stop();arc_riscpc_hd_close(store);return s;
+    engine_api()->stop();arc_riscpc_hd_close(store,false);return s;
 }
 int main(int argc,char **argv)
 {

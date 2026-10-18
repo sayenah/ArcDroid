@@ -56,8 +56,8 @@ void arc_predicate_binding_audit(ArcRpcPreparation *p)
     ArcRpcLaunchRecordStore namespace_record=p->observations;ArcRpcHdStore *disc=p->disc;
     p->state=ARC_RPC_PREP_RECOVER;p->observations.ready=false;p->observations.phase=5;
     assert(next_namespace(p));p->observations.ready=true;
-    char error[128];p->disc=arc_riscpc_hd_open_begin(p->save,p->request.key.content,error,sizeof(error));assert(p->disc);
-    assert(next_namespace(p));arc_riscpc_hd_close(p->disc);p->disc=NULL;assert(!next_namespace(p));
+    char error[128];p->disc=arc_riscpc_hd_open_begin(p->save,p->request.key.content,&p->content_owner,error,sizeof(error));assert(p->disc);
+    assert(next_namespace(p));arc_riscpc_hd_close(p->disc,false);p->disc=NULL;assert(!next_namespace(p));
     p->disc=disc;p->observations=namespace_record;
     /* A queued checkpoint has namespace effects after open has completed.
      * START reserves the larger ceiling for every waited maintenance tick. */

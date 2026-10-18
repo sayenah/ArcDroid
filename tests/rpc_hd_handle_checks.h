@@ -3,10 +3,10 @@
  * Only an empty inactive ROTATE writer may survive a successful call. Real process kills intentionally
  * never return; the OS owns their handle cleanup. */
 #include "rpc_hd_store.h"
-static inline ArcRpcHdStore *checked_hd_open(const char *save,const char *id,bool blank,char *error,size_t size)
-{ArcRpcHdStore *s=arc_riscpc_hd_open(save,id,blank,error,size);rpc_hd_test_no_open_handles();return s;}
-static inline void checked_hd_close(ArcRpcHdStore *s)
-{arc_riscpc_hd_close(s);rpc_hd_test_no_open_handles();}
+static inline ArcRpcHdStore *checked_hd_open(const char *save,const char *id,bool blank,ArcLock *owner,char *error,size_t size)
+{ArcRpcHdStore *s=arc_riscpc_hd_open(save,id,blank,owner,error,size);rpc_hd_test_no_open_handles();return s;}
+static inline bool checked_hd_close(ArcRpcHdStore *s,bool discard)
+{bool ok=arc_riscpc_hd_close(s,discard);rpc_hd_test_no_open_handles();return ok;}
 static inline void checked_hd_handles(ArcRpcHdStore *s)
 {
  if(!s){rpc_hd_test_no_open_handles();return;}

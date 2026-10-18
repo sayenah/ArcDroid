@@ -3,7 +3,7 @@
 #define ARC_TEST_PLAN_H
 #include "arcdroid_core.h"
 #include "libretro.h"
-#include "rpc_preparation.h"
+#include "rpc_preparation_host.h"
 #include <stdbool.h>
 #include <stddef.h>
 #define ARC_TEST_PLAN_EXTENSION "arcplan"
@@ -30,7 +30,8 @@ bool arc_test_plan_slice(char *error, size_t size);
 void arc_test_plan_hd_frame(void);
 void arc_test_plan_diagnostics(void);
 void arc_test_plan_hd_begin_frame(void);
-bool arc_test_plan_persist(char *error, size_t size);
+void arc_test_plan_set_host_ops(const ArcRpcFrontendOps *);
+ArcRpcFrontendHost *arc_test_plan_host(void);
 typedef struct {
     uint64_t read_ns, acknowledgement_ns, maintenance_ns, read_commands, write_commands,
         generation, checkpoints, open_ns, namespace_operations;
@@ -45,7 +46,6 @@ RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t 
 RETRO_API unsigned arc_test_plan_cmos_phase(void);
 RETRO_API void arc_test_plan_preparation_stats(ArcRpcPreparationStats *);
 RETRO_API void arc_test_plan_launch_snapshot(ArcRpcLaunchAttempt *);
-RETRO_API void arc_test_plan_preparation_restart(void);
 RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames);
 void arc_test_plan_reset(void);
 void arc_test_plan_reset_input(void);
