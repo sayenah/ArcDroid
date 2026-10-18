@@ -280,6 +280,8 @@ The A-3 RUNNING body and the `restage_drive0`/`reset_rebind` host fields exist o
     - M1 independence is not currently on the critical path.
     - This is revisited if part 2 slips.
 
+**R-1a (Fable, S68; Sol's Run A stop).** The module keeps three `arc_engine_is_rpc()` calls on `main` (`libretro/rpc_preparation.c`: `arc_riscpc_preparation_execution_allowed`, `arc_riscpc_preparation_reset` inside the frozen RUNNING body, and `arc_riscpc_preparation_persist`), and `tests/rpc_session_source_guard.py` admits exactly these three, pinned to those functions, as **module ownership checks**: the module confirms that the live engine behind the dispatcher is the RPC engine before it executes, resets or persists. They are not frontend route policy, which R3d-1 converted to session kind, and the module has no frontend session kind to consult. R3d-1's stop-time neutrality (the dispatcher reports no RPC identity after `arc_engine_stop`) keeps them sound. Next item 3's wording ("convert its module sites") is superseded by the merged base: these three stay as they are, the frozen RUNNING body stays byte-identical including its check, and Run A proceeds.
+
 ### R-2 Setter ownership (collision C2)
 
 - Part 2 keeps `arc_disk_rpc_pending` as the single first-statement admission function in all four setters (eject, index, replace, add).
