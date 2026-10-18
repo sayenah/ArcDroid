@@ -187,6 +187,7 @@ jobs:
             build/windows/rpc*.exe
             build/windows/hash_accel_test.exe
             build/windows/arcdroid*libretro*.dll
+            !build/windows/arcdroid_lockprobe*.dll
             build/windows/rpc-repeat.log
             build/windows/Testing/Temporary/LastTest*.log
           if-no-files-found: warn
@@ -347,3 +348,7 @@ jobs:
         env:
           LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
         run: tools/check-android.sh build/android/arcdroid_libretro_android.so
+      - name: P10b test core ELF and libretro exports
+        env:
+          LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+        run: tools/check-android.sh build/android/arcdroid_lockprobe_libretro_android.so
