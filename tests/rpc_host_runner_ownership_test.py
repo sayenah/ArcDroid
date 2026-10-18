@@ -2,6 +2,7 @@
 from pathlib import Path
 import json,os,queue,shutil,subprocess,sys,tempfile,threading
 from rpc_ninja_commands import rebuild_commands,same_path
+from rpc_save_snapshot import save_snapshot
 
 def holder(binary,save,content):
     child=subprocess.Popen([str(binary),str(save),'ownership-hold',content,'0'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
@@ -45,10 +46,14 @@ def runner_clients(build,root,runner,binary,fixture):
         for command in (cc,link):
             result=subprocess.run(command,cwd=build,capture_output=True,text=True,timeout=90);assert result.returncode==0,result.stderr
         save=temp/'save';shutil.copytree(fixture/'save',save);native_clients(binary,save)
+        # The Windows test core CREATE_ALWAYSs this diagnostic before ownership
+        # admission. Seed its empty fixture before the baseline on every OS,
+        # then keep comparing its bytes along with every store file.
+        (save/'rpc-hd-exception.txt').touch()
         child=holder(binary,save,'c'*40)
         owned_plan=temp/'owned.arcplan'
         owned_plan.write_text('\n'.join(f'firmware={fixture/"hd.rom"}' if line.startswith('firmware=') else line for line in (fixture/'hd.arcplan').read_text().splitlines() if not line.startswith(('media=','disk_control=')))+'\n')
-        def persisted():return {str(p.relative_to(save)):p.read_bytes() for p in save.rglob('*') if p.is_file() and 'locks-riscpc' not in p.parts}
+        def persisted():return save_snapshot(save)
         def run(plan):return subprocess.run([str(runner),'--core',str(library),'--plan',str(plan),'--system',str(fixture),'--save',str(save),'--frames','1'],capture_output=True,text=True,timeout=120)
         try:
             before=persisted();result=run(owned_plan)

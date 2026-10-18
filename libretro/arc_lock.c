@@ -227,12 +227,20 @@ void arc_lock_release(ArcLock *lock)
     lock->held = lock->opened = lock->lost = false;
 }
 
+static bool identity(ArcLock *lock)
+{
+    if(lock->identity_observer)lock->identity_observer(lock->identity_opaque,true);
+    bool ok=lock->backend->identity(lock->opaque,lock->handle,lock->path);
+    if(lock->identity_observer)lock->identity_observer(lock->identity_opaque,false);
+    return ok;
+}
+
 ArcLockResult arc_lock_verify(ArcLock *lock)
 {
     if (!lock || !lock->valid) return ARC_LOCK_ROOT_REFUSED;
     if (lock->lost) return ARC_LOCK_IDENTITY_LOST;
     if (!lock->held) return ARC_LOCK_ERROR;
-    if (!lock->backend->identity(lock->opaque, lock->handle, lock->path)) {
+    if (!identity(lock)) {
         arc_lock_release(lock);
         lock->lost = true;
         return ARC_LOCK_IDENTITY_LOST;
@@ -275,7 +283,7 @@ ArcLockResult arc_lock_acquire(ArcLock *lock)
         return result;
     }
     lock->held = true;
-    if (!lock->backend->identity(lock->opaque, lock->handle, lock->path)) {
+    if (!identity(lock)) {
         arc_lock_release(lock);
         return ARC_LOCK_TRANSIENT;
     }

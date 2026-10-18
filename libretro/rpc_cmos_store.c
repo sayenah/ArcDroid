@@ -123,6 +123,8 @@ static ArcIoFile *open_record(ArcRpcCmosStore *s, const char *p, bool create) {
     s->stats.metadata += s->stats.operations - before;
     return f;
 }
+static bool held(ArcRpcCmosStore *s)
+{ return s && arc_lock_held(s->owner); }
 static bool owned(ArcRpcCmosStore *s)
 { return s && arc_lock_held(s->owner) && arc_lock_verify(s->owner)==ARC_LOCK_HELD; }
 static bool close_record(ArcRpcCmosStore *s, ArcIoFile *f) {
@@ -222,7 +224,7 @@ invalid:
 }
 ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *s, char *e,
                                             size_t n) {
-    if(!owned(s)){fail(e,n,"RiscPC settings ownership unavailable");return ARC_RPC_CMOS_UNAVAILABLE;}
+    if(!held(s)){fail(e,n,"RiscPC settings ownership unavailable");return ARC_RPC_CMOS_UNAVAILABLE;}
     if (s->reconciled || s->exhausted || s->putting) {
         begin_count(s);
         end_count(s);
@@ -381,7 +383,7 @@ bool arc_riscpc_cmos_store_put_begin(ArcRpcCmosStore *s,
 bool arc_riscpc_cmos_store_put_step(ArcRpcCmosStore *s, bool *done, char *e,
                                     size_t n) {
     *done = false;
-    if(!owned(s))return fail(e,n,"RiscPC settings ownership unavailable");
+    if(!held(s))return fail(e,n,"RiscPC settings ownership unavailable");
     if (s->phase == 100) {
         begin_count(s);
         end_count(s);

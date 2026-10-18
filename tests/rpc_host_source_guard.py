@@ -55,7 +55,7 @@ def validate(files):
     drain=block(prep,'void arc_riscpc_preparation_failed_frame(')
     require('arc_riscpc_cmos_store_put(' not in drain and 'arc_riscpc_cmos_store_put_step(' in drain,'synchronous drain')
     require('arc_riscpc_preparation_failed_frame' not in block(prep,'void arc_riscpc_preparation_maintenance('),'drain driven by maintenance')
-    free=block(prep,'bool arc_riscpc_preparation_free(')
+    free=block(prep,'bool arc_riscpc_preparation_free_stats(')
     require(free.index('snapshot_cmos(')<free.index('release(p);'),'free snapshots after stop')
     require('arc_riscpc_cmos_store_mark_unsaved(' in free,'publication-only marker omitted')
     require('release(p);release(p);' not in prep,'double release')
@@ -106,7 +106,7 @@ mutants=[
  ('hd-close-discarded','rpc_preparation.c','p->hd_close_ok=arc_riscpc_hd_close','(void)arc_riscpc_hd_close'),
  ('snapshot-after-stop','rpc_preparation.c','snapshot_cmos(p->drain_payload);','failed(p,cause);snapshot_cmos(p->drain_payload);'),
  ('drain-synchronous','rpc_preparation.c','ok=arc_riscpc_cmos_store_put_step(&p->record,&done,error,sizeof(error));','ok=arc_riscpc_cmos_store_put(&p->record,p->drain_payload,NULL,error,sizeof(error));'),
- ('drain-through-maintenance','rpc_preparation.c','    ++p->stats.identity_checks;','    arc_riscpc_preparation_failed_frame(p);++p->stats.identity_checks;'),
+ ('drain-through-maintenance','rpc_preparation.c','    ArcLockResult identity=arc_lock_verify(&p->content_owner);','    arc_riscpc_preparation_failed_frame(p);ArcLockResult identity=arc_lock_verify(&p->content_owner);'),
  ('marker-skipped','rpc_preparation.c','arc_riscpc_cmos_store_mark_unsaved(','removed_mark_unsaved('),
  ('defaults-after-release','rpc_preparation.c','&p->defaults_owner,p->error','&p->content_owner,p->error'),
  ('free-after-stop','arcdroid_libretro.c','if(arc_rpc_host){char error','arc_engine_stop();if(arc_rpc_host){char error'),

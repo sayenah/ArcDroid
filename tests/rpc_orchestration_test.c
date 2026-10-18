@@ -18,7 +18,8 @@
 static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512],last_notice_id[96];
 static uint64_t clock_value,clock_delta;
-static unsigned clock_mode,clock_reads,all_clock_reads;
+static unsigned clock_mode,clock_reads,all_clock_reads,charged_steps;
+static bool measuring_frame;
 static unsigned observations,stall_after;
 static unsigned spike_at;
 static bool work_seen[ARC_RPC_BOOT_WORK_COUNT];
@@ -32,6 +33,7 @@ static ArcRpcPreparation *current;
 static ArcRpcFrontendHost *frontend_test_host;
 static bool use_frontend_host,host_extended;
 static char host_display[512];
+static unsigned host_duration,host_frames,host_n18_unsaved;
 static unsigned host_messages,host_clears,host_logs,host_n13,host_unload,host_marker,host_n17;
 static bool measure_summaries;
 static int fast_answer=-1;
@@ -45,18 +47,19 @@ static bool host_environment(unsigned command,void *data)
         if(!*m->msg)assert(m->priority>=3);
         if(!host_extended)return false;
         assert(m->duration==1 || m->duration==2000 || m->duration==5000 || m->duration==UINT_MAX);
-        snprintf(host_display,sizeof(host_display),"%s",m->msg);++host_messages;if(!*m->msg)++host_clears;return true;
+        host_duration=m->duration;snprintf(host_display,sizeof(host_display),"%s",m->msg);++host_messages;if(!*m->msg)++host_clears;return true;
     }
     if(command==RETRO_ENVIRONMENT_SET_MESSAGE){
         struct retro_message *m=data;assert(!host_extended);
         assert(m->frames==1 || m->frames==120 || m->frames==300);
-        snprintf(host_display,sizeof(host_display),"%s",m->msg);++host_messages;if(!*m->msg)++host_clears;return true;
+        host_frames=m->frames;snprintf(host_display,sizeof(host_display),"%s",m->msg);++host_messages;if(!*m->msg)++host_clears;return true;
     }
     return false;
 }
 static void host_log(void *opaque,enum retro_log_level level,const char *text)
 {
     (void)opaque;(void)level;assert(strchr(text,':'));assert(!strstr(text,"PRIVATE-SENTINEL"));++host_logs;
+    if(!strncmp(text,"N-18 unsaved:",13))++host_n18_unsaved;
     if(!strncmp(text,"N-13:",5))++host_n13;if(!strncmp(text,"unload-cmos:",12))++host_unload;if(!strncmp(text,"unload-marker:",14))++host_marker;
     if(!strncmp(text,"N-17 ",5)){assert(host_clears);++host_n17;}
     if(measure_summaries && !strncmp(text,"summary:",8)){assert(summary_count<2);snprintf(measured_summaries[summary_count++],4096,"%s",text);}
@@ -102,6 +105,13 @@ static const char *id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static uint64_t clock_read(void *opaque)
 {
     (void)opaque;++all_clock_reads;
+    /* Scheduler clocks assign a cost to each completed unit. Identity timing
+     * probes inside that unit observe its clock, not a second simulated unit. */
+    if(measuring_frame && clock_mode>=3 && clock_reads){
+        ArcRpcPreparationStats stats;arc_riscpc_preparation_stats(current,&stats);
+        if(stats.steps==charged_steps)return clock_value;
+        charged_steps=stats.steps;
+    }
     if(clock_mode==1)return 0;
     if(clock_mode==2)return clock_value--;
     if(clock_mode==3){
@@ -282,7 +292,9 @@ static ArcRpcPreparationState frame(ArcRpcPreparation *p)
     unsigned clear_before=clears;
     uint64_t ns=namespace_calls;ArcRpcPreparationState old=arc_riscpc_preparation_state(p);
     clock_reads=previous_ns=0;frame_budget=old==ARC_RPC_PREP_GENERATE?UINT64_C(66666664):UINT64_C(13333333);
+    measuring_frame=true;charged_steps=0;
     ArcRpcPreparationState state=arc_riscpc_preparation_frame(p);ArcRpcPreparationStats s;
+    measuring_frame=false;
     arc_riscpc_preparation_stats(p,&s);
     if(state==ARC_RPC_PREP_FAILED)assert(clears==clear_before);
     helper_construction_bytes+=s.helper_bytes;
@@ -1018,7 +1030,7 @@ static void host_fault_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         uint8_t captured[256];arc_rpc_cmos_snapshot(captured);captured[101]^=1;arc_rpc_cmos_seed(captured);
         assert(!arc_engine_rpc_advance(10000));
         const char *fault_text=NULL;assert(arc_engine_faulted(&fault_text));
-        char expected[512];snprintf(expected,sizeof(expected),"%s",fault_text);
+        char expected[512];snprintf(expected,sizeof(expected),"%s",fault_text);size_t length=strlen(expected);while(length && (expected[length-1]=='\n' || expected[length-1]=='\r'))expected[--length]=0;
         arc_riscpc_host_maintenance(frontend_test_host);
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && arc_riscpc_preparation_draining(p));
         assert(!strcmp(host_display,expected));
@@ -1226,16 +1238,16 @@ static void host_unload_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHo
     uint8_t latest[256];arc_rpc_cmos_snapshot(latest);latest[100]^=1;arc_rpc_cmos_seed(latest);
     uint64_t mutations=namespace_calls;rpc_fixture_lost=true;char lost_error[512]={0};
     assert(!arc_riscpc_host_free(frontend_test_host,lost_error,sizeof(lost_error)));
-    assert(namespace_calls==mutations && !host_marker && strstr(host_display,"Another app changed"));
+    assert(namespace_calls==mutations && !host_marker && strstr(host_display,"Another app changed") && host_duration==5000);
     for(unsigned i=0;i<TEST_FILES;++i)assert(!files[i].present || !strstr(files[i].path,".unsaved"));
     rpc_fixture_lost=false;frontend_test_host=NULL;current=NULL;use_frontend_host=false;test_vfs_no_open_handles();
     restore();clock_mode=0;clock_value=0;clock_delta=1000;use_frontend_host=true;host_extended=true;host_marker=0;
     ArcLockBackend close_backend=rpc_preparation_test_backend;close_backend.identity=unload_identity;callbacks.lock_backend=&close_backend;
     new_request(rom,size,true,true,callbacks);
     while(arc_riscpc_host_pending(frontend_test_host))arc_riscpc_host_pending_frame(frontend_test_host);
-    mutations=namespace_calls;unload_identity_countdown=3; /* unchanged CMOS begin/step, then HD close */
+    mutations=namespace_calls;unload_identity_countdown=3; /* teardown identity, unchanged CMOS begin, then HD close */
     assert(!arc_riscpc_host_free(frontend_test_host,lost_error,sizeof(lost_error)) && !unload_identity_countdown);
-    assert(namespace_calls==mutations && !host_marker && strstr(host_display,"Another app changed"));
+    assert(namespace_calls==mutations && !host_marker && strstr(host_display,"Another app changed") && host_duration==5000);
     rpc_fixture_lost=false;frontend_test_host=NULL;current=NULL;use_frontend_host=false;test_vfs_no_open_handles();
     puts("production host: unload publication failure after clear, marker success/failure, exact N-13 next-load rule, successful no-op persist removes marker passed");
 }
@@ -1271,8 +1283,10 @@ static void host_hd_close_cases(const uint8_t *rom,size_t size,ArcRpcPreparation
         else if(operation==1){
             arc_engine_stop();assert(!arc_riscpc_host_reset(frontend_test_host));
             assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && !host_n17);
-            assert(arc_riscpc_host_reset(frontend_test_host));assert(host_n17==1 && !arc_riscpc_preparation_hd_close_ok(p));
-            close_injection=0;assert(!arc_riscpc_host_free(frontend_test_host,error,sizeof(error)));assert(host_n17==2);
+            assert(arc_riscpc_host_reset(frontend_test_host));assert(host_n17==1 && arc_riscpc_preparation_hd_close_ok(p));
+            close_injection=0;while(arc_riscpc_host_pending(frontend_test_host))arc_riscpc_host_pending_frame(frontend_test_host);
+            reset_probe=true;reset_steps=0;assert(arc_riscpc_host_reset(frontend_test_host));reset_probe=false;assert(host_n17==1);
+            assert(arc_riscpc_host_free(frontend_test_host,error,sizeof(error)));assert(host_n17==1);
         }else{
             rpc_fixture_lost=true;arc_riscpc_host_maintenance(frontend_test_host);
             uint64_t mutations=namespace_calls;assert(!arc_riscpc_host_free(frontend_test_host,error,sizeof(error)));
@@ -1621,6 +1635,7 @@ static void buffered_ownership(void)
     }
     assert(explicit_buffer_flushes);puts("buffering VFS: close demonstrably flushes pending bytes; HD/CMOS/observation ownership loss at publication boundaries leaves no buffered writes or namespace mutation");
 }
+#include "rpc_host_run_b.inc"
 int main(int argc,char **argv)
 {
     assert(argc==5);bool sanitizer=!strcmp(argv[4],"sanitizer") || !strcmp(argv[4],"sanitizer-idle");
@@ -1652,6 +1667,7 @@ int main(int argc,char **argv)
         free(rom);fresh_files();puts("production host privacy: boot-archive member is redacted before module error buffer on both message paths and every host log level");return 0;
     }
     if(!strcmp(argv[4],"scheduler")){scheduler_matrix(rom,size,host);free(rom);fresh_files();return 0;}
+    if(!strcmp(argv[4],"host-b")){host_run_b(rom,size,host);free(rom);fresh_files();return 0;}
     if(!strcmp(argv[4],"host")){
         host_cases(rom,size,host);host_fault_cases(rom,size,host);host_reset_inflight(rom,size,host);host_reset_publication_failures(rom,size,host);host_unload_cases(rom,size,host);host_hd_close_cases(rom,size,host);host_observation_fault(rom,size,host);host_measurements(rom,size,host);ownership_refusals(rom,size,host);store_interleavings();buffered_ownership();free(rom);fresh_files();return 0;
     }
@@ -1684,7 +1700,7 @@ int main(int argc,char **argv)
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&before_tick);
         unsigned reads=all_clock_reads;
         arc_riscpc_preparation_maintenance(p);
-        assert(all_clock_reads==reads+2); /* A-6 measurement: bracket identity only; no live admission clock. */
+        assert(all_clock_reads==reads+4); /* Maintenance plus CMOS publication-begin identity, both measured. */
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&after_tick);
         assert(before_tick.state==ARC_RPC_HD_RETIRE && after_tick.phase_step==1);
         uint8_t hash[32];disk_hash(hash);if(!mode)memcpy(gold,hash,32);else assert(!memcmp(gold,hash,32));

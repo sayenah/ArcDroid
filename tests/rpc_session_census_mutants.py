@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='arc-census-mutants-') as directory:
     temp = Path(directory)
     source = root / 'libretro/rpc_preparation.c'
     original = source.read_text()
-    anchor = 'bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)\n{\n    if(!p)return true;'
+    anchor = 'bool arc_riscpc_preparation_free_stats(ArcRpcPreparation *p,char *e,size_t n,ArcRpcPreparationStats *stats)\n{\n    if(!p)return true;'
     if original.count(anchor) != 1:
         raise RuntimeError('preparation teardown anchor changed')
     cc, link = rebuild_commands(commands, source, 'arcdroid_session_census_libretro', build, os.name == 'nt')

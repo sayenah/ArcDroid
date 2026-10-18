@@ -3393,6 +3393,9 @@ foreach(rpc_owner_target IN LISTS rpc_owner_targets)
 endforeach()
 
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME rpc-retroarch-notice-privacy COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_rpc_privacy_test.py")
+  set_tests_properties(rpc-retroarch-notice-privacy PROPERTIES TIMEOUT 30)
   add_test(NAME rpc-host-source-guard COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}")
   set_tests_properties(rpc-host-source-guard PROPERTIES TIMEOUT 30)
@@ -3403,6 +3406,23 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
     $<TARGET_FILE:rpc_orchestration_test> "${FIXTURE_DIR}" host)
   set_tests_properties(rpc-production-host PROPERTIES TIMEOUT 360 RUN_SERIAL TRUE)
+  add_test(NAME rpc-production-host-run-b COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+    $<TARGET_FILE:rpc_orchestration_test> "${FIXTURE_DIR}" host-b)
+  set_tests_properties(rpc-production-host-run-b PROPERTIES TIMEOUT 360 RUN_SERIAL TRUE)
+  add_test(NAME rpc-production-host-run-b-mutants COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_run_b_mutants.py"
+    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}"
+    $<TARGET_FILE:rpc_orchestration_test> $<TARGET_FILE:rpc_host_frontend_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}")
+  set_tests_properties(rpc-production-host-run-b-mutants PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+  foreach(rpc_message_interface extended legacy)
+    add_test(NAME rpc-plan-message-${rpc_message_interface} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py"
+      $<TARGET_FILE:rpc_host_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+      "${FIXTURE_DIR}" message-${rpc_message_interface})
+    set_tests_properties(rpc-plan-message-${rpc_message_interface} PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+  endforeach()
 endif()
 
 # R3d-3 frontend calls the production host through real retro_* entry points.
@@ -3439,6 +3459,9 @@ if((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR ARCDROID_ANDROID_T
   endif()
 endif()
 if(TARGET rpc_host_process AND BUILD_TESTING)
+  add_test(NAME rpc-save-snapshot COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_save_snapshot_test.py")
+  set_tests_properties(rpc-save-snapshot PROPERTIES TIMEOUT 30)
   add_test(NAME rpc-host-process-ownership COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_process_test.py" $<TARGET_FILE:rpc_host_process>)
   # W4: bounded authored process matrix; retain >=2x measured maximum.

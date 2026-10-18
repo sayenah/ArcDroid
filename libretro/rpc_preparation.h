@@ -77,6 +77,7 @@ typedef struct {
     uint64_t frames, elapsed_ns, max_frame_ns, reserved_ns, namespace_attempts;
     uint64_t lock_attempts,lock_wait_frames,identity_checks,identity_max_ns,lock_max_ns;
     uint64_t namespace_exceptions,checkpoint_exceptions,rollback_exceptions,rollback_max_ns;
+    uint64_t restart_record_exceptions,restart_record_max_ns,restart_defaults_exceptions,restart_defaults_max_ns;
     uint64_t budget_ns, attachment_operations, attachment_bytes, attachment_namespace;
     /* Last estimate and kind: state, or CANCELLED + boot phase * WORK_COUNT
      * + work. Boot DONE groups low-level blank/import units without a boot
@@ -112,6 +113,7 @@ bool arc_riscpc_preparation_helper_write_policy(ArcRpcPreparation *,bool);
 bool arc_riscpc_preparation_reset(ArcRpcPreparation *);
 void arc_riscpc_preparation_cancel(ArcRpcPreparation *);
 /* Borrowed ownership diagnostics; no caller may release these tokens. */
+void arc_riscpc_preparation_pair(const ArcRpcPreparation *,unsigned *model,unsigned *os);
 bool arc_riscpc_preparation_owned(const ArcRpcPreparation *);
 unsigned arc_riscpc_preparation_catalogue(const ArcRpcPreparation *);
 bool arc_riscpc_preparation_replace_media(ArcRpcPreparation *,const ArcEngineMedia *);
@@ -119,10 +121,12 @@ bool arc_riscpc_preparation_complete_publication(ArcRpcPreparation *,char *,size
 bool arc_riscpc_preparation_draining(const ArcRpcPreparation *);
 void arc_riscpc_preparation_failed_frame(ArcRpcPreparation *);
 bool arc_riscpc_preparation_hd_close_ok(const ArcRpcPreparation *);
+bool arc_riscpc_preparation_take_hd_close(ArcRpcPreparation *); /* Consume this lifecycle event once. */
 /* Running schedule: exactly one HD tick + eager persistence, no batching clock. */
 void arc_riscpc_preparation_maintenance(ArcRpcPreparation *);
 bool arc_riscpc_preparation_persist(ArcRpcPreparation *, char *, size_t);
 /* Persist latest snapshot on normal unload, then detach/free even on failure. */
+bool arc_riscpc_preparation_free_stats(ArcRpcPreparation *,char *,size_t,ArcRpcPreparationStats *);
 bool arc_riscpc_preparation_free(ArcRpcPreparation *, char *, size_t);
 bool arc_riscpc_preparation_pacing(ArcRpcPreparation *, unsigned);
 uint64_t arc_riscpc_preparation_clock(void *);

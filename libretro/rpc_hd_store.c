@@ -87,6 +87,8 @@ static void step_start(ArcRpcHdStore *,ArcRpcHdStats *);
 static void step_finish(ArcRpcHdStore *,const ArcRpcHdStats *);
 /* Identity may be lost only at unit boundaries. Writable handles are clean
  * there; write, flush and close run together before the next check. */
+static bool held(ArcRpcHdStore *s)
+{ return s && arc_lock_held(s->owner); }
 static bool owned(ArcRpcHdStore *s)
 { return s && arc_lock_held(s->owner) && arc_lock_verify(s->owner)==ARC_LOCK_HELD; }
 static bool view_ready(const ArcRpcHdStore *s)
@@ -159,15 +161,15 @@ static bool size(ArcRpcHdStore *s,const char *leaf,size_t *n)
     return false;
 }
 static bool remove_leaf(ArcRpcHdStore *s,const char *leaf)
-{ if(!owned(s))return false;char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation="remove";path(s,leaf,p);++s->stats.namespace_operations;metadata(s);return arc_io_remove(p); }
+{ if(!held(s))return false;char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation="remove";path(s,leaf,p);++s->stats.namespace_operations;metadata(s);return arc_io_remove(p); }
 /* The split destination step already proved absence under exclusive ownership. */
 static bool rename_empty(ArcRpcHdStore *s,const char *from,const char *to)
-{ if(!owned(s))return false;char a[1100],b[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",to);s->io_operation="rename";
+{ if(!held(s))return false;char a[1100],b[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",to);s->io_operation="rename";
   path(s,from,a);path(s,to,b);++s->stats.namespace_operations;metadata(s);return arc_io_rename(a,b); }
 static bool rename_leaf(ArcRpcHdStore *s,const char *from,const char *to)
 { size_t n;if(size(s,to,&n)||s->refused)return false;return rename_empty(s,from,to); }
 static ArcIoFile *open_leaf(ArcRpcHdStore *s,const char *leaf,bool write,bool create)
-{ if((write||create)&&!owned(s))return NULL;char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);if(create)++s->stats.namespace_operations;metadata(s);
+{ if((write||create)&&!held(s))return NULL;char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);if(create)++s->stats.namespace_operations;metadata(s);
   uint64_t before=s->stats.operations;ArcIoFile *f=create?arc_io_create_file_counted(p,&s->stats.operations):arc_io_open_stream_counted(p,write,&s->stats.operations);
   s->stats.metadata_operations+=s->stats.operations-before;return f; }
 /* Cleanup must not replace the operation that already failed. */
@@ -619,13 +621,13 @@ static bool rotate_step(ArcRpcHdStore *s)
 }
 void arc_riscpc_hd_tick(ArcRpcHdStore *s)
 {
-    if(!s || !owned(s))return;
+    if(!s || !held(s))return;
     s->stats.tick_bytes=s->stats.tick_operations=s->stats.tick_hash_bytes=s->stats.tick_copied_bytes=s->stats.tick_metadata_operations=s->stats.tick_namespace_operations=0;
     if(s->outcome==ARC_RPC_HD_OPEN_PENDING||s->population||s->refused)return;
     uint64_t bytes=s->stats.requested_bytes,ops=s->stats.operations,
         hashes=s->stats.hash_bytes,copies=s->stats.copied_bytes,meta=s->stats.metadata_operations,namespace=s->stats.namespace_operations;
     bool ok=true;switch(s->state){
-    case ARC_RPC_HD_IDLE:if(s->requested){s->requested=false;s->state=ARC_RPC_HD_ROTATE;s->phase_step=0;}break;
+    case ARC_RPC_HD_IDLE:if(s->requested){if(!owned(s)){failure(s,false);return;}s->requested=false;s->state=ARC_RPC_HD_ROTATE;s->phase_step=0;}break;
     case ARC_RPC_HD_ROTATE:ok=rotate_step(s);break;
     case ARC_RPC_HD_MATERIALIZE:ok=materialize_step(s);break;
     case ARC_RPC_HD_MANIFEST:
@@ -682,7 +684,7 @@ bool arc_riscpc_hd_read(ArcRpcHdStore *s,uint32_t lba,uint32_t count,uint8_t *ou
 }
 bool arc_riscpc_hd_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count,const uint8_t *in)
 {
-    if(!s||!owned(s)||s->outcome==ARC_RPC_HD_OPEN_PENDING||!in||!s->published||s->population||s->refused||!range(lba,count))return false;
+    if(!s||!held(s)||s->outcome==ARC_RPC_HD_OPEN_PENDING||!in||!s->published||s->population||s->refused||!range(lba,count))return false;
     s->io_operation="append-admission";journal_leaf(s->current,s->io_leaf);
     uint32_t bytes=96+count*512;uint64_t aggregate=(uint64_t)s->lengths[0]+s->lengths[1];
     if(aggregate+bytes>ARC_RPC_HD_JOURNAL_CAP||s->sequence==UINT64_MAX||s->records_count==RECORDS_MAX)return failure(s,false);
@@ -1336,7 +1338,7 @@ static bool recover_step(ArcRpcHdStore *s) {
     }
 }
 ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *s) {
-    if (!s || !owned(s))
+    if (!s || !held(s))
         return ARC_RPC_HD_UNAVAILABLE;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1530,7 +1532,7 @@ static bool population_publish_chunk_step(ArcRpcHdStore *s, unsigned i,
 }
 bool arc_riscpc_hd_population_io_step(ArcRpcHdStore *s, bool *done) {
     *done = false;
-    if (!s || !owned(s) || !s->population_io || s->refused)
+    if (!s || !held(s) || !s->population_io || s->refused)
         return false;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1694,7 +1696,7 @@ static bool seal_unit(ArcRpcHdStore *s, bool *done) {
     return true;
 }
 bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *s, bool *done) {
-    if (!s || !done || !owned(s))
+    if (!s || !done || !held(s))
         return false;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1798,7 +1800,7 @@ static bool population_publish_unit(ArcRpcHdStore *s, bool *done) {
     }
 }
 bool arc_riscpc_hd_population_publish_step(ArcRpcHdStore *s, bool *done) {
-    if (!s || !done || !owned(s))
+    if (!s || !done || !held(s))
         return false;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1816,7 +1818,7 @@ bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s) {
     return true;
 }
 void arc_riscpc_hd_population_abort(ArcRpcHdStore *s) {
-    if (!s || !s->population || !owned(s))
+    if (!s || !s->population || !held(s))
         return;
     s->population = false;
     s->population_io = s->reconstruction_active = false;

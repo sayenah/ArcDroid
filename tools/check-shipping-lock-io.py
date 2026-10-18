@@ -36,11 +36,13 @@ NATIVE_CALLS = {
     (POSIX, 'close((int)handle)'): 1,
 }
 PURE_CALLS = {'strlen', 'strstr', 'strrchr', 'snprintf', 'memset'}
-HELPERS = {'mapped_error', 'separator', 'root_cursor', 'hex_key', 'initialize',
+HELPERS = {'identity', 'mapped_error', 'separator', 'root_cursor', 'hex_key', 'initialize',
            'arc_lock_content', 'arc_lock_defaults', 'arc_lock_next_namespace',
            'arc_lock_held', 'arc_lock_release', 'arc_lock_verify', 'arc_lock_acquire'}
 ADAPTER_CALLS = {
     'arc_io_mkdir(lock->path)',
+    'lock->identity_observer(lock->identity_opaque,true)',
+    'lock->identity_observer(lock->identity_opaque,false)',
     'arc_io_metadata(lock->path,NULL)', 'arc_io_metadata(lock->path,&size)',
     'lock->backend->open_handle(lock->opaque,lock->path,&lock->handle)',
     'lock->backend->try_lock(lock->opaque,lock->handle)',
@@ -117,6 +119,12 @@ def module_calls(source):
             counts[key] += 1
         elif name not in PURE_CALLS | HELPERS and expression not in ADAPTER_CALLS:
             errors.append('call outside module allowlist: ' + expression)
+    # S68 F9/S4 measurement carries only opaque context and before/after state;
+    # no sentinel handle/path or data operation is admitted by this callback.
+    for state in ('true', 'false'):
+        expression = f'lock->identity_observer(lock->identity_opaque,{state})'
+        if len(re.findall(re.escape(expression), re.sub(r'\s+', '', code))) != 1:
+            errors.append('identity measurement callback must occur exactly once per boundary')
     if counts != Counter(NATIVE_CALLS):
         errors.append('native call census/arguments/platform changed')
     ofd_fields = Counter(re.sub(r'\s+', '', assignment) for assignment in
@@ -206,6 +214,13 @@ def self_test():
         reject({MODULE: original + f'\nvoid injected(void) {{ {name}(0); }}'}, name)
     for name in ('F_SETLK', 'F_SETLKW', 'F_OFD_SETLKW'):
         reject({MODULE: original + f'\nvoid injected(void) {{ fcntl(0,{name},0); }}'}, name)
+    for call in ('lock->identity_observer(lock->handle,true)',
+                 'lock->identity_observer(lock->path,false)',
+                 'lock->identity_observer(lock->identity_opaque,1)'):
+        reject({MODULE: original + f'\nvoid injected(void) {{ {call}; }}'},
+               'measurement callback broadening: ' + call)
+    reject({MODULE: original.replace('lock->identity_observer(lock->identity_opaque,true);', '')},
+           'missing measurement boundary')
     for call in ('lockf(fd,F_TLOCK,0)', 'fallocate(fd,0,0,1)', 'posix_fallocate(fd,0,1)',
                  'SetFileInformationByHandle(h,0,0,0)', 'ioctl(fd,0)', 'dup(fd)',
                  'lseek(fd,0,0)', 'sendfile(fd,fd,0,1)', 'fcntl(fd,F_SETFD,0)',

@@ -12,6 +12,8 @@ bool arc_riscpc_launch_record_begin(ArcRpcLaunchRecordStore *s,const char *save,
     snprintf(s->path,sizeof(s->path),"%s/launch.observation",s->directory);
     snprintf(s->temporary,sizeof(s->temporary),"%s.tmp",s->path);return true;
 }
+static bool held(ArcRpcLaunchRecordStore *s)
+{return s && arc_lock_held(s->owner);}
 static bool owned(ArcRpcLaunchRecordStore *s)
 {return s && arc_lock_held(s->owner) && arc_lock_verify(s->owner)==ARC_LOCK_HELD;}
 bool arc_riscpc_launch_record_namespace(const ArcRpcLaunchRecordStore *s)
@@ -25,7 +27,7 @@ static bool fail(ArcRpcLaunchRecordStore *s)
 {arc_riscpc_launch_record_close(s);s->failed=true;s->have_old=false;return false;}
 bool arc_riscpc_launch_record_recover(ArcRpcLaunchRecordStore *s,bool *done)
 {
-    if(!s || !done || s->failed || !owned(s))return false;*done=false;
+    if(!s || !done || s->failed || !held(s))return false;*done=false;
     switch(s->phase){
     case 0:
         s->scan=arc_io_open_directory(s->directory);
@@ -73,7 +75,7 @@ bool arc_riscpc_launch_record_publish_begin(ArcRpcLaunchRecordStore *s,const Arc
 bool arc_riscpc_launch_record_publish_step(ArcRpcLaunchRecordStore *s,bool valid,bool *done)
 {
     if(!s || !done || s->failed || s->phase<10)return false;*done=false;
-    if(!owned(s))return fail(s);
+    if(!held(s))return fail(s);
     if(!valid){s->have_old=false;arc_riscpc_launch_record_close(s);s->phase=16;}
     switch(s->phase){
     case 10:s->file=arc_io_create_file(s->temporary);if(!s->file)return fail(s);s->phase=11;break;

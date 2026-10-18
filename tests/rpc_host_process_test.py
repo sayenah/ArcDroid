@@ -3,6 +3,7 @@ from pathlib import Path
 import queue,shutil,struct,subprocess,sys,tempfile,threading
 from rpc_boot_packages_test import inputs
 from rpc_cmos_factory_rom import generate,factory
+from rpc_save_snapshot import save_snapshot
 exe=Path(sys.argv[1]).resolve()
 class Child:
     def __init__(self,args):
@@ -41,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-process-') as temporary:
         assert r.returncode==0,r.stdout+r.stderr
         return r.stdout
     baseline=root/'baseline';baseline.mkdir();run(baseline)
-    def files(save):return {str(p.relative_to(save)):p.read_bytes() for p in save.rglob('*') if p.is_file()}
+    def files(save):return save_snapshot(save)
     for point in ('lock','cmos','chunk','manifest','observation','drain','release'):
         save=root/point;shutil.copytree(baseline,save)
         child=Child(args(save,'fault' if point=='drain' else 'run',point))

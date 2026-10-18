@@ -45,7 +45,7 @@ static bool arc_riscpc_test_helper_build(void *bytes,size_t n)
 struct ArcRpcPreparation {
     ArcRpcPreparationHost host;
     ArcLock content_owner,defaults_owner;
-    uint64_t content_wait,defaults_wait,unit_now;
+    uint64_t content_wait,defaults_wait,unit_now,identity_started;
     bool content_waiting,defaults_waiting,observations_begun;
     bool hd_close_ok,stopped_window,marker_checked,released,ownership_lost;
     const char *notice_id;
@@ -119,6 +119,16 @@ static void snapshot_cmos(uint8_t payload[240])
     uint8_t b[256],m[32];uint64_t w,l,now;unsigned s;
     arc_engine_rpc_evidence(b,m,&w,&l,&now,&s);memcpy(payload,b+16,240);
 }
+static void identity_observer(void *opaque,bool begin)
+{
+    ArcRpcPreparation *p=opaque;uint64_t stamp=p->host.clock(p->host.opaque);
+    if(begin){p->identity_started=stamp;++p->stats.identity_checks;return;}
+    uint64_t cost=stamp>=p->identity_started?stamp-p->identity_started:0;
+    if(cost>p->stats.identity_max_ns)p->stats.identity_max_ns=cost;
+    if(cost>p->stats.lock_max_ns)p->stats.lock_max_ns=cost;
+}
+static void measure_owner(ArcRpcPreparation *p,ArcLock *owner)
+{owner->identity_observer=identity_observer;owner->identity_opaque=p;}
 static void release(ArcRpcPreparation *p)
 {
     if(p->released)return;
@@ -150,7 +160,10 @@ static void failed(ArcRpcPreparation *p,const char *s)
     if(p->host.diagnostics)p->host.diagnostics(p->host.opaque);else arc_engine_rpc_diagnostics();
     if (s && s != p->error) snprintf(p->error,sizeof(p->error),"%s",s);
     if (!p->error[0]) strcpy(p->error,"RiscPC session preparation failed");
+    size_t cause_length=strlen(p->error);
+    while(cause_length && (p->error[cause_length-1]=='\n' || p->error[cause_length-1]=='\r'))p->error[--cause_length]=0;
     arc_engine_stop();p->state=ARC_RPC_PREP_FAILED;
+    arc_lock_release(&p->defaults_owner);p->defaults_waiting=false;
     notice(p,p->error,true);p->status=NULL;
     /* Keep detached resources until reset/unload: cleanup never combines a
      * second namespace operation with the failing frame's attempt. */
@@ -161,7 +174,7 @@ static bool copied(char out[1024],const char *in)
 }
 static void restart(ArcRpcPreparation *p)
 {
-    p->released=false;
+    p->released=false;p->drain_ok=true;p->draining=false;p->drain_started=false;p->drain_frames=0;
     p->launch_prepared=p->launch_captured=p->record_attempted=p->launch_unconfigured=false;
     memset(&p->record,0,sizeof(p->record));memset(&p->defaults,0,sizeof(p->defaults));
     p->state=ARC_RPC_PREP_VERIFY;p->substep=0;p->verify_at=0;p->crc=0;p->verified_catalogue=0;
@@ -212,6 +225,7 @@ static ArcRpcPreparation *begin(const ArcRpcPreparationRequest *r,
     if(r->media){p->media=*r->media;if(r->media->path){if(!copied(p->media_path,r->media->path))goto invalid;p->media.path=p->media_path;}p->request.media=&p->media;}
     if(r->helper){p->helper=*r->helper;if(r->helper->path){if(!copied(p->helper_path,r->helper->path))goto invalid;p->helper.path=p->helper_path;}p->request.helper=&p->helper;}
     (void)arc_lock_content(&p->content_owner,p->save,p->request.key.content,p->host.lock_backend,p->host.lock_opaque);
+    measure_owner(p,&p->content_owner);
     arc_engine_stop();restart(p);if(e&&n)*e=0;return p;
 invalid:
     if(e&&n)snprintf(e,n,"RiscPC preparation allocation or path failed");
@@ -525,6 +539,7 @@ static void unit(ArcRpcPreparation *p)
         if(p->seed_path[0]){p->substep=1;break;}
         ArcRpcCmosKey k=p->request.key;k.defaults=true;k.procedure=ARC_RPC_CMOS_PROCEDURE_REVISION;k.timing=ARC_RPC_CMOS_TIMING_REVISION;
         (void)arc_lock_defaults(&p->defaults_owner,p->save,k.firmware,k.model,k.procedure,k.timing,p->host.lock_backend,p->host.lock_opaque);
+        measure_owner(p,&p->defaults_owner);
         p->defaults.key=k;p->state=ARC_RPC_PREP_DEFAULTS;
         break;
     }
@@ -773,6 +788,7 @@ void arc_riscpc_preparation_interrupt(ArcRpcPreparation *p,ArcRpcAttemptInterrup
 bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
 {
     if(!p)return false;
+    while(p->draining)arc_riscpc_preparation_failed_frame(p);
     if(p->ownership_lost){failed(p,NULL);return false;}
     p->error[0]=0;p->notice_id="N-B reset";
     p->execution_barrier=true;p->launch_suppressed=true;
@@ -814,7 +830,7 @@ bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
     return true;
 }
 void arc_riscpc_preparation_cancel(ArcRpcPreparation *p)
-{ if(p){release(p);arc_lock_release(&p->content_owner);p->state=ARC_RPC_PREP_CANCELLED;p->status=NULL;} }
+{ if(p){p->draining=false;p->drain_ok=true;release(p);arc_lock_release(&p->content_owner);p->state=ARC_RPC_PREP_CANCELLED;p->status=NULL;} }
 bool arc_riscpc_preparation_persist(ArcRpcPreparation *p,char *e,size_t n)
 {
     if(!p || p->state!=ARC_RPC_PREP_RUNNING || !arc_engine_is_rpc() || !arc_engine_active())return true;
@@ -832,13 +848,7 @@ static void fault_failed(ArcRpcPreparation *p,const char *cause,const char *id)
 void arc_riscpc_preparation_maintenance(ArcRpcPreparation *p)
 {
     if(!p || p->state!=ARC_RPC_PREP_RUNNING)return;
-    ++p->stats.identity_checks;
-    /* This is measurement only; no host duration selects live guest work. */
-    uint64_t lock_start=p->host.clock(p->host.opaque);
     ArcLockResult identity=arc_lock_verify(&p->content_owner);
-    uint64_t lock_end=p->host.clock(p->host.opaque),lock_cost=lock_end>=lock_start?lock_end-lock_start:0;
-    if(lock_cost>p->stats.identity_max_ns)p->stats.identity_max_ns=lock_cost;
-    if(lock_cost>p->stats.lock_max_ns)p->stats.lock_max_ns=lock_cost;
     if(identity!=ARC_LOCK_HELD){
         p->notice_id="N-18";failed(p,"Another app changed ArcDroid's RiscPC save files; this session stopped without saving. Close and reload this content.");return;
     }
@@ -877,11 +887,12 @@ void arc_riscpc_preparation_maintenance(ArcRpcPreparation *p)
             (void)arc_riscpc_launch_record_publish_begin(&p->observations,&observation);
     }
 }
-bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
+bool arc_riscpc_preparation_free_stats(ArcRpcPreparation *p,char *e,size_t n,ArcRpcPreparationStats *stats)
 {
     if(!p)return true;
     while(p->draining)arc_riscpc_preparation_failed_frame(p);
-    bool ok=p->drain_ok;
+    if(!p->ownership_lost && arc_lock_held(&p->content_owner) && arc_lock_verify(&p->content_owner)!=ARC_LOCK_HELD)failed(p,NULL);
+    bool ok=p->drain_ok && !p->ownership_lost;
     if(p->state==ARC_RPC_PREP_RUNNING && arc_engine_active()){
         uint8_t latest[240];snapshot_cmos(latest);
         bool done=false;
@@ -896,7 +907,7 @@ bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
     if(!p->ownership_lost && (owner_lost(&p->content_owner) || owner_lost(&p->defaults_owner))){
         failed(p,NULL);ok=false;
     }
-    if(!ok){
+    if(!ok && !p->ownership_lost){
         notice_event(p,"RiscPC settings could not be saved on unload",ARC_RPC_NOTICE_ADVISORY,"unload-cmos",false);
         if(!p->ownership_lost && !p->record.refused && !arc_riscpc_cmos_store_mark_unsaved(&p->record))
             notice_event(p,"RiscPC settings could not be saved on unload",ARC_RPC_NOTICE_ADVISORY,"unload-marker",false);
@@ -904,8 +915,12 @@ bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
     release(p);
     if(!p->hd_close_ok){
         if(!p->ownership_lost && owner_lost(&p->content_owner)){failed(p,NULL);ok=false;}
-        notice_event(p,"Recent RiscPC hard disc changes could not be saved.",ARC_RPC_NOTICE_ADVISORY,"N-17 unload",false);
-    }ok=p->hd_close_ok&&ok;arc_lock_release(&p->content_owner);free(p->firmware);free(p);return ok;
+        if(!p->ownership_lost)notice_event(p,"Recent RiscPC hard disc changes could not be saved.",ARC_RPC_NOTICE_ADVISORY,"N-17 unload",false);
+    }ok=p->hd_close_ok&&ok;arc_lock_release(&p->content_owner);p->stats.state=p->state;if(stats)*stats=p->stats;free(p->firmware);free(p);return ok;
+}
+bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
+{
+    return arc_riscpc_preparation_free_stats(p,e,n,NULL);
 }
 bool arc_riscpc_preparation_pacing(ArcRpcPreparation *p,unsigned quanta)
 {
@@ -915,6 +930,8 @@ bool arc_riscpc_preparation_pacing(ArcRpcPreparation *p,unsigned quanta)
     p->pacing=quanta;return true;
 }
 
+void arc_riscpc_preparation_pair(const ArcRpcPreparation *p,unsigned *model,unsigned *os)
+{if(model)*model=p?p->request.key.model:0;if(os)*os=p?(p->verified_catalogue?p->verified_catalogue:(unsigned)p->request.selection.os):0;}
 bool arc_riscpc_preparation_owned(const ArcRpcPreparation *p)
 {return p && arc_lock_held(&p->content_owner);}
 
@@ -922,6 +939,8 @@ unsigned arc_riscpc_preparation_catalogue(const ArcRpcPreparation *p)
 {return p?p->verified_catalogue:0;}
 bool arc_riscpc_preparation_hd_close_ok(const ArcRpcPreparation *p)
 {return !p || p->hd_close_ok;}
+bool arc_riscpc_preparation_take_hd_close(ArcRpcPreparation *p)
+{if(!p)return true;bool ok=p->hd_close_ok;p->hd_close_ok=true;return ok;}
 bool arc_riscpc_preparation_replace_media(ArcRpcPreparation *p,const ArcEngineMedia *media)
 {
     if(!p || !(p->stopped_window || (p->state==ARC_RPC_PREP_RUNNING && p->execution_barrier)))return false;
@@ -934,9 +953,18 @@ bool arc_riscpc_preparation_replace_media(ArcRpcPreparation *p,const ArcEngineMe
 bool arc_riscpc_preparation_complete_publication(ArcRpcPreparation *p,char *error,size_t n)
 {
     if(!p)return false;
-    bool done=false;
-    while(p->record.putting && !done)
-        if(!arc_riscpc_cmos_store_put_step(&p->record,&done,error,n))return false;
+    ArcRpcCmosStore *stores[]={&p->record,&p->defaults};
+    for(unsigned i=0;i<2;++i){
+        if(!stores[i]->putting)continue;
+        uint64_t started=p->host.clock(p->host.opaque);bool done=false,ok=arc_lock_verify(stores[i]->owner)==ARC_LOCK_HELD;
+        while(stores[i]->putting && !done && ok)ok=arc_riscpc_cmos_store_put_step(stores[i],&done,error,n);
+        uint64_t ended=p->host.clock(p->host.opaque),cost=ended>=started?ended-started:0;
+        if(p->state!=ARC_RPC_PREP_RUNNING){
+            if(i){++p->stats.restart_defaults_exceptions;if(cost>p->stats.restart_defaults_max_ns)p->stats.restart_defaults_max_ns=cost;}
+            else{++p->stats.restart_record_exceptions;if(cost>p->stats.restart_record_max_ns)p->stats.restart_record_max_ns=cost;}
+        }
+        if(!ok){if(owner_lost(stores[i]->owner))failed(p,NULL);return false;}
+    }
     return true;
 }
 bool arc_riscpc_preparation_draining(const ArcRpcPreparation *p)
@@ -944,6 +972,7 @@ bool arc_riscpc_preparation_draining(const ArcRpcPreparation *p)
 void arc_riscpc_preparation_failed_frame(ArcRpcPreparation *p)
 {
     if(!p || p->state!=ARC_RPC_PREP_FAILED || !p->draining)return;
+    if(arc_lock_verify(&p->content_owner)!=ARC_LOCK_HELD){failed(p,NULL);return;}
     bool done=false,ok=arc_lock_held(&p->content_owner);
     ++p->drain_frames;
     char error[256]={0};

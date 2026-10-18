@@ -4,6 +4,7 @@ import shutil,subprocess,sys,tempfile,struct,zipfile
 from rpc_cmos_factory_rom import generate
 from generate_fixtures import build_extended_jfd
 from rpc_video_rom import program
+from rpc_save_snapshot import save_snapshot
 exe,core,fixtures,mode,*extra=sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
     root=Path(temporary);system=root/'system';roms=generate(system)
@@ -19,7 +20,9 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
         if rate==75:words=[0x9000018e if word==0x90000256 else word for word in words]
         if mode=='slow':words=[0x90001ffe if word==0x90000256 else word for word in words]
         selected_rom=system/'video.rom';selected_rom.write_bytes(struct.pack('<%dI'%len(words),*words)+struct.pack('<I',0xeafffffe)*(524288-len(words)))
-    plan=root/'host.arcplan';plan.write_text(f'version=2\nmodel=sa110\nfirmware={selected_rom}\ncmos=persist\nseed={seed}\ncmos_layout=ro370\ncontent_id={"d"*40}\nrate_mips=1\nrtc_epoch=0\n')
+    plan=root/('HOST-PRIVATE-SENTINEL.arcplan' if mode.startswith('message-') else 'host.arcplan');plan.write_text(f'version=2\nmodel=sa110\nfirmware={selected_rom}\ncmos=persist\nseed={seed}\ncmos_layout=ro370\ncontent_id={"d"*40}\nrate_mips=1\nrtc_epoch=0\n')
+    if mode.startswith('message-'):
+        plan.write_text(plan.read_text()+f'message_interface={mode[8:]}\n')
     if mode.startswith('freeze'):
         image=bytearray((Path(fixtures)/'jfd-writes/rw-d.jfd').read_bytes())
         struct.pack_into('<I',image,304,struct.unpack_from('<I',image,304)[0]|2)
@@ -36,13 +39,14 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
             packages=inputs(root/'boot');shutil.copytree(packages/'arcdroid/riscpc',system/'arcdroid/riscpc')
             plan.write_text(plan.read_text()+'hard_disc=on\nhd_populate=on\n')
     shutil.copyfile(Path(fixtures)/'arcdroid-test.adf',system/'replacement.adf')
+    (system/'HOST-PRIVATE-SENTINEL-invalid.zip').write_bytes(b'authored invalid archive')
     outputs=[];stores=[]
     for i,library in enumerate([core,*extra]):
-        save=root/(f'HOST-PRIVATE-SENTINEL-save{i}' if mode.startswith('freeze') else f'save{i}');save.mkdir()
+        save=root/(f'HOST-PRIVATE-SENTINEL-save{i}' if mode.startswith(('freeze','message-')) else f'save{i}');save.mkdir()
         run=subprocess.run([exe,library,str(content if mode=='shipping' else plan),str(system),str(save),mode],capture_output=True,text=True,timeout=120)
         assert run.returncode==0,run.stdout+run.stderr
         outputs.append(run.stdout.replace(str(save),'<save>').replace(str(root),'<case>'))
-        stores.append({str(p.relative_to(save)):p.read_bytes() for p in save.rglob('*') if p.is_file()})
+        stores.append(save_snapshot(save))
     if extra:
         assert outputs[0]==outputs[1], '\n'.join(__import__('difflib').unified_diff(outputs[0].splitlines(),outputs[1].splitlines()))
         assert stores[0]==stores[1] and stores[0]

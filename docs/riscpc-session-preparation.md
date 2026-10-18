@@ -236,6 +236,8 @@ there is no substring classification of an error buffer.
 | Defaults contention after 120 s | N-16 | Another copy of RetroArch is preparing RiscPC settings. Wait for it to finish, then close and reload this content. |
 | HD close failure | N-17 reset/unload | Recent RiscPC hard disc changes could not be saved. |
 | Ownership identity lost | N-18 | Another app changed ArcDroid's RiscPC save files; this session stopped without saving. Close and reload this content. |
+| Host begin fallback | N-B begin | RiscPC preparation could not begin |
+| Host silence allocation failure | N-B engine | RiscPC audio output could not be prepared. |
 | Begin validation/allocation/path failures | N-B begin | Existing constant reasons; missing-firmware reason uses literal `<system>` |
 | VERIFY fingerprint, lines 342–345 | N-B firmware | Existing family-name verification reason; no firmware path |
 | Boot begin/step, lines 376/384; `rpc_boot.c` failure producers | N-B boot/boot-zip/boot-named | Frozen boot-family sentence with redacted reason |
@@ -419,6 +421,53 @@ Shipping ordinary-load output admits no new R3d-3 delta: only the cumulative
 R3d-1 G-3 line and R3d-2 diagnostic wording/reason changes already accepted.
 Ordinary loads do not call the host or locks. The library A/B in both package
 states and real firmware/RetroArch/device evidence remain Fable's private legs.
+
+### R3d-3 host Run B: adjudicated lifecycle and evidence corrections
+
+The S68 Run B adjudication supersedes the Run A details above as follows.
+Drain outcomes belong to one attempt: a successful stopped Restart resets the
+outcome so later live unload persists normally. Each HD close result is consumed
+once by its lifecycle event; later resets and clean unload do not replay N-17.
+Cancel abandons a drain immediately; a direct module Restart finishes its bounded
+drain before leaving FAILED. The frozen RUNNING reset transaction is unchanged.
+
+N-18 replaces any retained terminal, including an active fault drain. Lost
+ownership cancels that drain, forbids further mutation and uses discard close;
+`N-18 unsaved` logs the failed snapshot outcome. During unload/deinit N-18 is
+instead a timed advisory after the host clear. Defaults ownership ends on FAILED
+and on leaving DEFAULTS–SAVE_DEFAULT, always before content ownership ends.
+
+Held-token checks do no native identity I/O. Native identity checks occur after
+acquisition, once per RUNNING maintenance or FAILED drain frame and at publication begins
+(CMOS, HD checkpoint/population, launch observation and unsaved marker), with
+additional boundary checks before synchronous completion and final teardown/HD close. Every actual
+backend identity call is counted and timed, including acquisition and store
+calls. Guest IDE writes and idle HD ticks do no identity syscalls. Identity
+measurements never select guest work. An in-flight non-RUNNING Restart finishes
+either store and reports `restart_record_exceptions`/`restart_defaults_exceptions`
+and their measured maxima separately from RUNNING reset/rollback exceptions.
+
+The startup hold uses a firmware/CPU lookup with the seven entries in the table
+above (25 seconds each), taking the verified catalogue family when available
+and otherwise the resolved selection (unqualified low-level pairs retain 25 s). Two additional host text mappings complete the oracle:
+`arc_riscpc_host_silence`: N-B engine, "RiscPC audio output could not be prepared.";
+host begin fallback: N-B begin, "RiscPC preparation could not begin". Trailing
+CR/LF is removed from a fault cause before joining its drain outcome.
+
+Run B tests isolate each QA mutant with behavioural assertions, and privacy
+checks inspect every captured log and message throughout each RiscPC session.
+Fable's S68 "F4 ruling after Sol's Run B stop" resolves the Windows log scope:
+upstream v1.22.2 `runloop.c:1836–1839` logs GET_SAVE_DIRECTORY's raw path itself.
+The unchanged raw `--verbose --log-file` capture is classified by
+`tools/check-retroarch-rpc-privacy.py`, also usable for Odin3 captures. Every
+core log callback and SET_MESSAGE/SET_MESSAGE_EXT echo is sentinel-free; every
+other sentinel line is printed with its named, source-cited RetroArch-owned
+form, and an unknown form fails. A catalogue N-7 text proves notice liveness.
+The plan-only `message_interface=extended|legacy` probe forwards environment
+calls (refusing EXT only for the legacy case) and logs acceptance of a nonempty
+message once. The legacy leg additionally requires the actual SET_MESSAGE
+notice echo. Default plans and shipping cores have no probe. The Windows job
+parses both PowerShell scripts with PowerShell's parser before running either.
 
 ## R3c-3b run B: generated helper-drive configuration (D-190)
 

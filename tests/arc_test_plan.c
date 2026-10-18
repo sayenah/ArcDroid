@@ -38,6 +38,27 @@ static char hd_save[PATH_LIMIT],hd_content[41],hd_import[PATH_LIMIT],hd_system[P
 static bool hd_populate;
 static void (*plan_notice)(const char *,bool);
 static void (*plan_log)(const char *);
+/* F4: exercise the real frontend's two message paths in plan cores only.
+ * Forward every command except the explicit legacy probe's EXT refusal. */
+static bool privacy_legacy,privacy_ext_seen,privacy_legacy_seen;
+#if defined(ARCDROID_TEST_PLANS)
+static bool privacy_environment(unsigned command,void *data)
+{
+    if(command==RETRO_ENVIRONMENT_SET_MESSAGE_EXT && privacy_legacy)return false;
+    bool accepted=host_ops.environment && host_ops.environment(command,data);
+    if(accepted && plan_log){
+        if(command==RETRO_ENVIRONMENT_SET_MESSAGE_EXT && !privacy_ext_seen &&
+            *((struct retro_message_ext *)data)->msg){
+            privacy_ext_seen=true;plan_log("RPC privacy probe: SET_MESSAGE_EXT accepted");
+        }
+        if(command==RETRO_ENVIRONMENT_SET_MESSAGE && !privacy_legacy_seen &&
+            *((struct retro_message *)data)->msg){
+            privacy_legacy_seen=true;plan_log("RPC privacy probe: SET_MESSAGE accepted");
+        }
+    }
+    return accepted;
+}
+#endif
 static unsigned pending_rate;
 static bool observation_final_failure;
 RETRO_API bool arc_test_plan_observation_complete(void) { return !observation_final_failure; }
@@ -317,6 +338,7 @@ void arc_test_plan_clear(void)
     arc_engine_test_observation_trace(false,false);
 #endif
     plan_host=NULL;hard_disc=NULL;
+    privacy_legacy=privacy_ext_seen=privacy_legacy_seen=false;
     hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     event_count=next_event=disk_count=disk_next=0;media_content[0]=media_helper[0]=0;script_frame=0;script_active=false;
 }
@@ -463,7 +485,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     arc_test_plan_clear();observation_final_failure=false;
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "gate_release_fail", "observation_status", "launch_action", "launch_session", "launch_target", "launch_index", "observer_error_numbers"};
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "gate_release_fail", "observation_status", "launch_action", "launch_session", "launch_target", "launch_index", "observer_error_numbers", "message_interface"};
     enum {KEY_COUNT=sizeof(keys)/sizeof(keys[0])};
     char *values[KEY_COUNT] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
@@ -573,6 +595,10 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         valid=!strcmp(values[40],"zero") || !strcmp(values[40],"ordinary");
         if(valid)observer_error_numbers=!strcmp(values[40],"ordinary")?ARC_ERROR_NUMBER_ORDINARY:ARC_ERROR_NUMBER_ZERO;
     }
+    if(valid && values[41]){
+        valid=persist && (!strcmp(values[41],"extended") || !strcmp(values[41],"legacy"));
+        privacy_legacy=valid && !strcmp(values[41],"legacy");
+    }
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&
         (rom_size == 2097152 || rom_size == 4194304 || rom_size == 8388608) &&
@@ -598,7 +624,9 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             ArcRpcFrontendExtension extension={.started_after=preparation_started,.attach_after=preparation_attach,
                 .diagnostics_after=preparation_diagnostics,.attached_after=preparation_attached};
             if(valid && host_ops.stage)valid=host_ops.stage(host_ops.module.opaque,media_content,media_helper,&request,error,error_size);
-            plan_host=valid?arc_riscpc_host_low_level(&request,&host_ops,&extension,error,error_size):NULL;
+            ArcRpcFrontendOps selected_ops=host_ops;
+            if(values[41])selected_ops.environment=privacy_environment;
+            plan_host=valid?arc_riscpc_host_low_level(&request,&selected_ops,&extension,error,error_size):NULL;
             valid=plan_host!=NULL;
 #else
             valid=false;

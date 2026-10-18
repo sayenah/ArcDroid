@@ -20,6 +20,9 @@ struct ArcRpcFrontendHost {
 #endif
     char progress[512],advisory[512],terminal[512],logged_progress[512];
     unsigned advisory_frames,terminal_frames,frame,phase;
+    bool unloading,unload_cleared,unload_lost,released;
+    ArcRpcPreparationStats released_stats;
+    ArcRpcPreparationState released_state;
     bool extended,stopping,drain_replaced,hold,queued_reset,pending_summary,first_field;
     bool pending_seen,running_seen,fast_known,fast_forward;
     uint64_t load_ns,frame_ns,previous_ns,hold_start,guest_us,frames,frontend_av,guest_av;
@@ -66,6 +69,11 @@ static void hold_begin(ArcRpcFrontendHost *h)
 static void module_notice(void *opaque,const char *text,ArcRpcNotice event)
 {
     ArcRpcFrontendHost *h=opaque;
+    bool lost=!strcmp(event.id,"N-18");
+    if(lost && h->unloading){
+        event.severity=ARC_RPC_NOTICE_ADVISORY;
+        if(!h->unload_cleared){snprintf(h->advisory,sizeof(h->advisory),"%s",text);h->unload_lost=true;return;}
+    }
     if(event.severity==ARC_RPC_NOTICE_PROGRESS){progress(h,text);return;}
     if(event.severity==ARC_RPC_NOTICE_CLEAR){
         if(h->preparation && arc_riscpc_preparation_state(h->preparation)==ARC_RPC_PREP_RUNNING)hold_begin(h);
@@ -80,7 +88,7 @@ static void module_notice(void *opaque,const char *text,ArcRpcNotice event)
         return;
     }
     if(strcmp(h->terminal,text))log_line(h,RETRO_LOG_ERROR,event.id,text);
-    bool replace=!*h->terminal || (event.stopping && !h->stopping) || (event.drain_outcome && !h->drain_replaced);
+    bool replace=lost || !*h->terminal || (event.stopping && !h->stopping) || (event.drain_outcome && !h->drain_replaced);
     if(!replace)return;
     if(event.drain_outcome)h->drain_replaced=true;
     h->stopping=event.stopping;h->hold=false;
@@ -212,14 +220,16 @@ static long long endpoint(bool present,uint64_t value,uint64_t load)
 static void summary(ArcRpcFrontendHost *h,const char *phase)
 {
     char text[3800];size_t at=0;uint64_t current=now(h),elapsed=current>=h->load_ns?current-h->load_ns:0;
-    ArcRpcPreparationStats stats={0};arc_riscpc_preparation_stats(h->preparation,&stats);
-    append(text,sizeof(text),&at,"phase=%s session=%llu kind=%u frames=%llu elapsed_ms=%llu state=%u frontend_av=%llu guest_av=%llu fast_forward=%s first_pending_ms=%lld running_ms=%lld first_field_ms=%lld desktop=unavailable D169=%llu D162=%llu reset_exceptions=%llu reset_max_ns=%llu rollback_exceptions=%llu rollback_max_ns=%llu lock_attempts=%llu lock_wait_frames=%llu identity_checks=%llu identity_max_ns=%llu lock_max_ns=%llu",
-        phase,(unsigned long long)h->session_id,h->ops.kind,(unsigned long long)h->frames,(unsigned long long)(elapsed/1000000),arc_riscpc_preparation_state(h->preparation),
+    ArcRpcPreparationStats stats={0};if(h->released)stats=h->released_stats;else arc_riscpc_preparation_stats(h->preparation,&stats);
+    append(text,sizeof(text),&at,"phase=%s session=%llu kind=%u frames=%llu elapsed_ms=%llu state=%u frontend_av=%llu guest_av=%llu fast_forward=%s first_pending_ms=%lld running_ms=%lld first_field_ms=%lld desktop=unavailable D169=%llu D162=%llu reset_exceptions=%llu reset_max_ns=%llu rollback_exceptions=%llu rollback_max_ns=%llu restart_record_exceptions=%llu restart_record_max_ns=%llu restart_defaults_exceptions=%llu restart_defaults_max_ns=%llu lock_attempts=%llu lock_wait_frames=%llu identity_checks=%llu identity_max_ns=%llu lock_max_ns=%llu",
+        phase,(unsigned long long)h->session_id,h->ops.kind,(unsigned long long)h->frames,(unsigned long long)(elapsed/1000000),h->released?h->released_state:arc_riscpc_preparation_state(h->preparation),
         (unsigned long long)h->frontend_av,(unsigned long long)h->guest_av,h->fast_known?(h->fast_forward?"yes":"no"):"unknown",
         endpoint(h->pending_seen,h->first_pending_ns,h->load_ns),endpoint(h->running_seen,h->running_ns,h->load_ns),endpoint(h->first_field,h->first_field_ns,h->load_ns),
         (unsigned long long)stats.namespace_exceptions,(unsigned long long)h->checkpoint_exceptions,
         (unsigned long long)h->reset_exceptions,(unsigned long long)h->reset_max_ns,
         (unsigned long long)stats.rollback_exceptions,(unsigned long long)stats.rollback_max_ns,
+        (unsigned long long)stats.restart_record_exceptions,(unsigned long long)stats.restart_record_max_ns,
+        (unsigned long long)stats.restart_defaults_exceptions,(unsigned long long)stats.restart_defaults_max_ns,
         (unsigned long long)stats.lock_attempts,(unsigned long long)stats.lock_wait_frames,
         (unsigned long long)stats.identity_checks,(unsigned long long)stats.identity_max_ns,(unsigned long long)stats.lock_max_ns);
     static const char *names[]={"offline","generation","attach","live","drain"};
@@ -307,13 +317,21 @@ bool arc_riscpc_host_reset(ArcRpcFrontendHost *h)
     uint64_t ended=now(h);
     if(running && !ok){++h->reset_exceptions;uint64_t cost=ended>=started?ended-started:0;if(cost>h->reset_max_ns)h->reset_max_ns=cost;}
     if(ok && !arc_riscpc_host_pending(h)){h->guest_us=0;hold_begin(h);}
-    if(!arc_riscpc_preparation_hd_close_ok(h->preparation))arc_riscpc_host_advisory(h,"N-17 reset","Recent RiscPC hard disc changes could not be saved.");
+    if(!arc_riscpc_preparation_take_hd_close(h->preparation))arc_riscpc_host_advisory(h,"N-17 reset","Recent RiscPC hard disc changes could not be saved.");
     return ok;
+}
+static uint64_t hold_bound(ArcRpcFrontendHost *h)
+{
+    /* Rows: 3.50, 3.60, 3.70, 3.71; columns: ARM610, ARM710, SA-110, ARM7500. */
+    static const unsigned seconds[4][4]={{25,0,0,0},{0,25,0,25},{0,0,25,0},{0,25,25,25}};
+    unsigned model=0,layout=0;arc_riscpc_preparation_pair(h->preparation,&model,&layout);
+    unsigned bound=layout>=1 && layout<=4 && model<4?seconds[layout-1][model]:0;
+    return UINT64_C(1000000)*(bound?bound:25u); /* Explicit low-level unqualified pairs. */
 }
 void arc_riscpc_host_guest_time(ArcRpcFrontendHost *h,uint64_t us)
 {
     if(!h)return;h->guest_us=us;
-    if(h->hold && us>=h->hold_start && us-h->hold_start>=25000000){h->hold=false;*h->progress=0;if(!*h->terminal && !h->advisory_frames)display(h,"",ARC_RPC_NOTICE_CLEAR);}
+    if(h->hold && us>=h->hold_start && us-h->hold_start>=hold_bound(h)){h->hold=false;*h->progress=0;if(!*h->terminal && !h->advisory_frames)display(h,"",ARC_RPC_NOTICE_CLEAR);}
 }
 void arc_riscpc_host_first_field(ArcRpcFrontendHost *h,unsigned width,unsigned height,double rate,bool issued)
 {
@@ -329,11 +347,16 @@ bool arc_riscpc_host_free(ArcRpcFrontendHost *h,char *error,size_t n)
     if(!h)return true;
     /* A completed drain may replace its fault terminal. Finish that outcome
      * before the unload clear; only unload failure advisories follow it. */
+    h->unloading=true;
     while(arc_riscpc_preparation_draining(h->preparation))arc_riscpc_preparation_failed_frame(h->preparation);
-    arc_riscpc_host_clear(h);
+    char lost[512];snprintf(lost,sizeof(lost),"%s",h->unload_lost?h->advisory:"");
+    arc_riscpc_host_clear(h);h->unload_cleared=true;
+    if(*lost)module_notice(h,lost,(ArcRpcNotice){ARC_RPC_NOTICE_ADVISORY,"N-18",true,false});
     if(!h->pending_summary){summary(h,"pending-release");h->pending_summary=true;}
-    summary(h,"live-release");
-    bool ok=arc_riscpc_preparation_free(h->preparation,error,n);free(h->silence);free(h);return ok;
+    h->released_state=arc_riscpc_preparation_state(h->preparation);
+    bool ok=arc_riscpc_preparation_free_stats(h->preparation,error,n,&h->released_stats);
+    h->preparation=NULL;h->released=true;h->released_state=h->released_stats.state;summary(h,"live-release");
+    free(h->silence);free(h);return ok;
 }
 
 #if defined(ARCDROID_TEST_FAULTS)

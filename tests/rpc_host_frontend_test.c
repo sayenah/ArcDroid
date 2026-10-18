@@ -12,20 +12,20 @@ static unsigned videos,audios,polls,av_calls,controllers,descriptors,summary_lin
 static uint64_t audio_frames,pixel_hash=1469598103934665603ULL,sound_hash=1469598103934665603ULL;
 static bool shipping,failed,changed,write_off,last_catalogue_message,matrix_mode,following_arculator,direct_start_compat;
 static char terminal[512];
+static unsigned privacy_ext,privacy_legacy,privacy_notice,privacy_ext_notice,privacy_legacy_notice;
 static void hash(uint64_t *value,const void *data,size_t size)
 {const uint8_t *p=data;for(size_t i=0;i<size;++i){*value^=p[i];*value*=1099511628211ULL;}}
 static unsigned no_phase(void){return 0;}
 static void capture_log(enum retro_log_level level,const char *format,...)
 {
     char text[8192];va_list args;va_start(args,format);vsnprintf(text,sizeof(text),format,args);va_end(args);
+    if(!shipping && !following_arculator)assert(!strstr(text,"HOST-PRIVATE-SENTINEL"));
+    if(strstr(text,"RPC privacy probe: SET_MESSAGE_EXT accepted"))++privacy_ext;
+    if(strstr(text,"RPC privacy probe: SET_MESSAGE accepted"))++privacy_legacy;
+    if(strstr(text,"N-7: Checking the RiscPC hard disc"))++privacy_notice;
     if(!strncmp(text,"ArcDroid build:",15))return; /* G-3 is the sole host-slice exception. */
     if(shipping)printf("log:%u:%s",level,text);
     else{
-        /* Shared arc_message notifications keep their frozen legacy path.
-         * Catalogue and §7a staging logs have explicit IDs. */
-        if(!strncmp(text,"N-",2)||!strncmp(text,"status:",7)||!strncmp(text,"summary:",8)||
-           !strncmp(text,"boot-packages:",14)||!strncmp(text,"hd-diagnostic:",14)||!strncmp(text,"unload-",7)||!strncmp(text,"cmos-",5))
-            assert(!strstr(text,"HOST-PRIVATE-SENTINEL"));
         if(!strncmp(text,"summary:",8))++summary_lines;
         if(!strncmp(text,"N-11:",5)){
             static const char *labels[]={"Disk Writes","Write-protect Tab","Short image tail","JFD omitted sectors"};
@@ -54,6 +54,8 @@ static bool host_environment(unsigned command,void *data)
         if(!strcmp(v->key,"arcdroid_jfd_omitted")){v->value=write_off?"strict":"file-data";return true;}}
     if(command==RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO || command==RETRO_ENVIRONMENT_SET_GEOMETRY){++av_calls;return true;}
     if(command==RETRO_ENVIRONMENT_SET_MESSAGE_EXT){struct retro_message_ext *m=data;
+        if(!strcmp(m->msg,"Checking the RiscPC hard disc"))++privacy_ext_notice;
+        if(!shipping && !following_arculator)assert(!strstr(m->msg,"HOST-PRIVATE-SENTINEL"));
         last_catalogue_message=m->type==RETRO_MESSAGE_TYPE_STATUS;
         if(!shipping && !following_arculator && !direct_start_compat && last_catalogue_message){assert(m->target==RETRO_MESSAGE_TARGET_OSD);assert(!strstr(m->msg,"HOST-PRIVATE-SENTINEL"));
             if(!*m->msg)assert(m->priority>=3);
@@ -62,7 +64,8 @@ static bool host_environment(unsigned command,void *data)
         return extended_messages;
     }
     if(command==RETRO_ENVIRONMENT_SET_MESSAGE){struct retro_message *m=data;
-        if(!shipping && last_catalogue_message)assert(!strstr(m->msg,"HOST-PRIVATE-SENTINEL"));
+        if(!strcmp(m->msg,"Checking the RiscPC hard disc"))++privacy_legacy_notice;
+        if(!shipping && !following_arculator)assert(!strstr(m->msg,"HOST-PRIVATE-SENTINEL"));
         else if(shipping)printf("fallback:%u:%s\n",m->frames,m->msg);return true;
     }
     return environment(command,data);
@@ -99,6 +102,22 @@ int main(int argc,char **argv)
     phase=no_phase;if(!shipping){LOAD(phase,"arc_test_plan_cmos_phase");}
     set_environment(host_environment);init();set_video(host_video);set_audio(host_audio);set_poll(host_poll);set_input(input);
     struct retro_game_info game={.path=argv[2]};assert(load(&game));
+    if(!strncmp(argv[5],"message-",8)){
+        for(unsigned i=0;i<65;++i)run();
+        bool legacy=!strcmp(argv[5],"message-legacy");
+        assert(legacy?(privacy_legacy==1 && !privacy_ext):(privacy_ext==1 && !privacy_legacy));
+        assert(privacy_notice && (legacy?(privacy_legacy_notice && !privacy_ext_notice):
+            (privacy_ext_notice && !privacy_legacy_notice)));
+        unload();deinit();vfs_assert_no_open_handles();
+        printf("plan message interface: %s delivered through frontend\n",legacy?"legacy":"extended");return 0;
+    }
+    if(!strcmp(argv[5],"stage-error")){
+        bool (*stage_error)(const char *,char *,size_t);LOAD(stage_error,"arc_test_host_stage_error");
+        char path[4096],error[512];snprintf(path,sizeof(path),"%s/HOST-PRIVATE-SENTINEL-invalid.zip",system_directory);
+        assert(!stage_error(path,error,sizeof(error)));
+        assert(!strcmp(error,"The discs in this content could not be loaded. Check that the file is complete and a supported type."));
+        unload();deinit();vfs_assert_no_open_handles();return 0;
+    }
     if(matrix_mode){
         unsigned target=0,target_substep=0;char action[16]={0};assert(sscanf(argv[5],"matrix:%u:%u:%15s",&target,&target_substep,action)==3);
         void (*position)(unsigned *,unsigned *),(*fingerprint)(uint8_t *),(*attempt_fingerprint)(uint8_t *);
