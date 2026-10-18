@@ -1,0 +1,15 @@
+{
+  "license": "GPL-2.0-only",
+  "ruling": "D-200 AS-2: strict retains raw state; these projections apply only in cross-quota and trace-toggle",
+  "vectors": [
+    {"name": "cheap-vs-observed-at-swi", "cheap": {"instruction": 100, "batch_live": true, "observers_active": true, "instructions": 107, "batch_start": 100, "accounted": 0}, "observed": {"instruction": 107, "batch_live": false, "observers_active": true, "instructions": 107, "batch_start": 0, "accounted": 0}, "expected": 107},
+    {"name": "quota-1-vs-200-at-p0", "cheap": {"instruction": 100, "batch_live": true, "observers_active": true, "instructions": 106, "batch_start": 100, "accounted": 0}, "observed": {"instruction": 106, "batch_live": true, "observers_active": true, "instructions": 106, "batch_start": 106, "accounted": 0}, "expected": 106},
+    {"name": "trace-on-vs-off-after-swi-credit", "cheap": {"instruction": 107, "batch_live": true, "observers_active": true, "instructions": 109, "batch_start": 100, "accounted": 7}, "observed": {"instruction": 109, "batch_live": false, "observers_active": true, "instructions": 109, "batch_start": 0, "accounted": 0}, "expected": 109},
+    {"name": "trace-only-has-no-semantic-owner-credit", "cheap": {"instruction": 0, "batch_live": true, "observers_active": false, "instructions": 200, "batch_start": 0, "accounted": 0}, "observed": {"instruction": 0, "batch_live": false, "observers_active": false, "instructions": 200, "batch_start": 0, "accounted": 0}, "expected": 0}
+  ],
+  "origin_vectors": [
+    {"name": "dead-origin-differs-by-copy", "in_swi": false, "watches": [false, false, false, false, false, false, false, false], "included": false},
+    {"name": "live-watch-retains-origin", "in_swi": false, "watches": [false, false, true, false, false, false, false, false], "included": true},
+    {"name": "swi-delivery-retains-origin", "in_swi": true, "watches": [false, false, false, false, false, false, false, false], "included": true}
+  ]
+}

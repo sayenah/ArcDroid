@@ -244,8 +244,8 @@ with 1a-0; no fast path is implemented here.
 
 | Candidate | Current reference path |
 |---|---|
-| L1 | `engine/rpc/rpc_mem_timing.c:293` (lookup), `engine/rpc/rpc_mem_timing.c:518` (access caller), `engine/rpc/rpc_mem_timing.c:604` (maintenance caller) |
-| S1 / B2 | `engine/rpc/rpc_mem_timing.c:894` (service), `engine/rpc/rpc_mem_timing.c:768` (commands), `engine/rpc/rpc_mem_timing.c:802` (resumable run) |
+| L1 | M2b merge-base `0966af3`: `engine/rpc/rpc_mem_timing.c:300` (lookup), `:498` (access entry), `:603` (maintenance entry) |
+| S1 / B2 | M2b merge-base `0966af3`: `engine/rpc/rpc_mem_timing.c:901` (service), `:775` (commands), `:809` (resumable run) |
 | B3 | `engine/rpc/rpc_mem_timing.c:660`, `engine/rpc/rpc_mem_timing.c:943`, `engine/rpc/rpc_mem_timing.c:964` |
 | A1 / F1 | `engine/rpcemu/src/cp15.c:390`, `engine/rpcemu/src/cp15.c:471` |
 | A1 accesses | `engine/rpcemu/src/mem.c:704`, `engine/rpcemu/src/mem.c:722` |

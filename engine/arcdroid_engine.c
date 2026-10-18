@@ -2,6 +2,7 @@
 #include "engine_backend.h"
 extern const ArcEngineBackendOps arc_rpc_backend;
 #include "rpc/rpc_session.h"
+#include "rpc/rpc_lockstep.h"
 #include "rpc/rpc_floppy.h"
 #include "rpc/rpc_ide.h"
 #include "rpc/rpc_rtc.h"
@@ -118,6 +119,7 @@ bool arc_engine_reset(char *error, size_t error_size)
 void arc_engine_stop(void)
 {
    arc_backend->stop();rpc_identity_clear();arc_lifecycle=false;
+   ARC_RPC_LOCKSTEP(epoch_abort(arc_rpc_session_generation()));
 }
 
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
@@ -279,18 +281,35 @@ bool arc_engine_active(void)
 bool arc_engine_rpc_start_begin(unsigned model,const uint8_t *rom,size_t size,
     const uint8_t seed[256],uint64_t epoch,bool factory,char *e,size_t n)
 {
+    ARC_RPC_LOCKSTEP(epoch_begin());
     rpc_identity_clear();arc_backend->stop();arc_backend=&arc_rpc_backend;arc_lifecycle=true;
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    bool ok=arc_rpc_session_start_begin((ArcRpcModel)model,rom,size,seed,epoch,factory,e,n);
+    if(!ok)ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_session_generation(),false));
+    return ok;
+#else
     return arc_rpc_session_start_begin((ArcRpcModel)model,rom,size,seed,epoch,factory,e,n);
+#endif
 }
 bool arc_engine_rpc_start_step(bool *done,char *e,size_t n)
-{ return arc_engine_is_rpc() && arc_rpc_session_start_step(done,e,n); }
+{
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    bool ok=arc_engine_is_rpc() && arc_rpc_session_start_step(done,e,n);
+    if(!ok || (done && *done))ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_session_generation(),ok));
+    return ok;
+#else
+    return arc_engine_is_rpc() && arc_rpc_session_start_step(done,e,n);
+#endif
+}
 bool arc_engine_rpc_start(unsigned model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, bool factory, char *error, size_t n)
 {
+    ARC_RPC_LOCKSTEP(epoch_begin());
     rpc_identity_clear();arc_backend->stop(); arc_backend = &arc_rpc_backend;arc_lifecycle=true;
     bool ok = factory ? arc_rpc_session_factory_start((ArcRpcModel)model,rom,size,epoch,error,n)
                       : arc_rpc_session_start((ArcRpcModel)model,rom,size,seed,epoch,error,n);
     if (!ok) arc_backend->stop();
+    ARC_RPC_LOCKSTEP(epoch_end(arc_rpc_session_generation(),ok));
     return ok;
 }
 void arc_engine_rpc_observers_bind(unsigned catalogue)

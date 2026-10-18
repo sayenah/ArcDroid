@@ -6,6 +6,164 @@ if(NOT BUILD_TESTING OR (CMAKE_CROSSCOMPILING AND NOT WIN32) OR
 endif()
 set(RPC_LOCKSTEP_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-lockstep")
 set(RPC_LOCKSTEP_PY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+if(TARGET arcdroid_rpclockstep_libretro)
+  # Run G / W4: worst first-attempt observations across host CI runs
+  # 39103912401 and 39125295471 (seconds): reach 1169.93, mutants 622.28,
+  # consistency up to 349 passing; non-fuzz 360 and fuzz 480 timed out
+  # (censored observations, completion times unknown). Also cache 188.37,
+  # cache-mutant 109.21 and non-sanitizer corpus 81.18. Other limits already
+  # cover compare 83.85, compare-pipes 92.41 and sensitivity-variants 62.97.
+  # Fable's Run G ruling sets the whole-minute limits below.
+  get_property(rpc_lockstep_existing_tests DIRECTORY PROPERTY TESTS)
+  add_executable(rpc_lockstep_emitter tests/rpc_lockstep_emitter.c)
+  target_include_directories(rpc_lockstep_emitter PRIVATE engine engine/rpc engine/rpcemu/src libretro/include core)
+  target_compile_definitions(rpc_lockstep_emitter PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_link_libraries(rpc_lockstep_emitter PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_options(rpc_lockstep_emitter PRIVATE -static-libgcc)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_lockstep_emitter PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_executable(rpc_lockstep_fields tests/rpc_lockstep_fields.c)
+  target_include_directories(rpc_lockstep_fields PRIVATE core libretro/include engine/rpc "${RPC_LOCKSTEP_TABLE_DIR}")
+  target_link_libraries(rpc_lockstep_fields PRIVATE arcdroid_core)
+  add_dependencies(rpc_lockstep_fields rpc-lockstep-tables)
+  if(WIN32)
+    target_link_options(rpc_lockstep_fields PRIVATE -static-libgcc)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_lockstep_fields PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-lockstep-v1 COMMAND "${Python3_EXECUTABLE}" -B "${RPC_LOCKSTEP_PY}/rpc_lockstep_v1_test.py")
+  set_tests_properties(rpc-lockstep-v1 PROPERTIES TIMEOUT 60)
+  add_test(NAME rpc-lockstep-v1-contract COMMAND "${Python3_EXECUTABLE}" -B "${RPC_LOCKSTEP_PY}/rpc_lockstep_v1_contract_test.py")
+  set_tests_properties(rpc-lockstep-v1-contract PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  add_test(NAME rpc-lockstep-cache COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_cache_test.py" $<TARGET_FILE:rpc_runner>
+    $<TARGET_FILE:arcdroid_rpclockstep_libretro> "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-plans")
+  set_tests_properties(rpc-lockstep-cache PROPERTIES TIMEOUT 420)
+  add_test(NAME rpc-lockstep-runner-arguments COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_cache_test.py" $<TARGET_FILE:rpc_runner>
+    $<TARGET_FILE:arcdroid_rpclockstep_libretro> "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-plans" --arguments)
+  set_tests_properties(rpc-lockstep-runner-arguments PROPERTIES TIMEOUT 120)
+  add_test(NAME rpc-lockstep-driver-inputs COMMAND "${Python3_EXECUTABLE}" -B "${RPC_LOCKSTEP_PY}/rpc_lockstep_driver_test.py")
+  set_tests_properties(rpc-lockstep-driver-inputs PROPERTIES TIMEOUT 60)
+  set(RPC_LOCKSTEP_REFUSING_CORES $<TARGET_FILE:arcdroid_libretro_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpcmeasure_libretro>)
+  if(TARGET arcdroid_session_census_libretro)
+    list(APPEND RPC_LOCKSTEP_REFUSING_CORES $<TARGET_FILE:arcdroid_session_census_libretro>)
+  endif()
+  add_test(NAME rpc-lockstep-api-refusal COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_api_test.py" $<TARGET_FILE:rpc_lockstep_emitter> $<TARGET_FILE:rpc_runner>
+    $<TARGET_FILE:arcdroid_libretro> ${RPC_LOCKSTEP_REFUSING_CORES})
+  set_tests_properties(rpc-lockstep-api-refusal PROPERTIES TIMEOUT 60)
+  add_test(NAME rpc-lockstep-generated-fields COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_fields_test.py" $<TARGET_FILE:rpc_lockstep_fields>)
+  set_tests_properties(rpc-lockstep-generated-fields PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  find_program(RPC_LOCKSTEP_READOBJ NAMES llvm-readobj llvm-readobj-21 llvm-readobj-20 llvm-readobj-19 llvm-readobj-18
+    HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin REQUIRED)
+  add_test(NAME rpc-lockstep-member-layout COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_layout_test.py" "${CMAKE_CURRENT_BINARY_DIR}" "${RPC_LOCKSTEP_READOBJ}")
+  set_tests_properties(rpc-lockstep-member-layout PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  add_test(NAME rpc-lockstep-codegen-guards COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_codegen_test.py" "${CMAKE_C_COMPILER}" "${RPC_LOCKSTEP_TABLE_DIR}")
+  set_tests_properties(rpc-lockstep-codegen-guards PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  if(ARCDROID_RPC_PROFILE)
+    add_test(NAME rpc-lockstep-profile-counts COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_profile_test.py" $<TARGET_FILE:rpc_runner>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpclockstep_libretro>
+      "${RPC_LOCKSTEP_DIR}")
+    set_tests_properties(rpc-lockstep-profile-counts PROPERTIES TIMEOUT 180)
+    foreach(model RANGE 0 3)
+      add_test(NAME rpc-lockstep-site-counts-${model} COMMAND "${Python3_EXECUTABLE}" -B
+        "${RPC_LOCKSTEP_PY}/rpc_lockstep_site_counts_test.py" $<TARGET_FILE:rpc_runner>
+        $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpclockstep_libretro>
+        "${RPC_LOCKSTEP_DIR}" --model ${model})
+      set_tests_properties(rpc-lockstep-site-counts-${model} PROPERTIES TIMEOUT 1200)
+    endforeach()
+  endif()
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME rpc-lockstep-projection-arithmetic COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_arithmetic_test.py" "${CMAKE_C_COMPILER}")
+    set_tests_properties(rpc-lockstep-projection-arithmetic PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  endif()
+  if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-lockstep-cache-mutant COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_cache_test.py" $<TARGET_FILE:rpc_runner>
+      $<TARGET_FILE:arcdroid_rpclockstep_libretro> "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-plans"
+      --mutant "${CMAKE_CURRENT_BINARY_DIR}")
+    set_tests_properties(rpc-lockstep-cache-mutant PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+    add_test(NAME rpc-lockstep-cache-cursor-mutant COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_cache_test.py" $<TARGET_FILE:rpc_runner>
+      $<TARGET_FILE:arcdroid_rpclockstep_libretro> "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-plans"
+      --mutant "${CMAKE_CURRENT_BINARY_DIR}" --mutant-kind cursor)
+    set_tests_properties(rpc-lockstep-cache-cursor-mutant PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    add_test(NAME rpc-lockstep-preparation-cache COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_preparation_cache_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+      $<TARGET_FILE:rpc_lockstep_emitter> $<TARGET_FILE:arcdroid_rpclockstep_libretro>)
+    set_tests_properties(rpc-lockstep-preparation-cache PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+    add_test(NAME rpc-lockstep-emitter-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_emitter_mutants.py" "${CMAKE_CURRENT_BINARY_DIR}"
+      $<TARGET_FILE:rpc_lockstep_emitter> $<TARGET_FILE:arcdroid_rpclockstep_libretro>
+      "${RPC_LOCKSTEP_DIR}" --matrix "${CMAKE_CURRENT_BINARY_DIR}/rpc-lockstep-emitter-matrix.json")
+    set_tests_properties(rpc-lockstep-emitter-mutants PROPERTIES TIMEOUT 1260 RUN_SERIAL TRUE)
+  endif()
+  if(CMAKE_GENERATOR STREQUAL "Ninja")
+    add_test(NAME rpc-lockstep-char-encoding COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_char_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+      $<TARGET_FILE:rpc_lockstep_emitter> $<TARGET_FILE:arcdroid_rpclockstep_libretro>)
+    set_tests_properties(rpc-lockstep-char-encoding PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+  endif()
+  foreach(section IN ITEMS points projection fatal audit observers lifecycle sink encoding media allocations reach null-batch)
+    add_test(NAME rpc-lockstep-emitter-${section} COMMAND "${Python3_EXECUTABLE}" -B
+      "${RPC_LOCKSTEP_PY}/rpc_lockstep_emitter_test.py" $<TARGET_FILE:rpc_lockstep_emitter>
+      $<TARGET_FILE:arcdroid_rpclockstep_libretro> "${RPC_LOCKSTEP_DIR}" --section ${section})
+    set_tests_properties(rpc-lockstep-emitter-${section} PROPERTIES TIMEOUT 60)
+  endforeach()
+  set_tests_properties(rpc-lockstep-emitter-reach PROPERTIES TIMEOUT 2340)
+  # Whole authored programs, bounded from the separate no-emitter oracle.
+  foreach(model RANGE 0 3)
+    foreach(row IN ITEMS g-1 g-2 g-3 g-4 g-6 g-8 g-9 g-10-e11 g-14 va-key ac-m2 ac-h2 fatal-mode prefetch-fiq walk-mmio fuzz-0000000000000001)
+      add_test(NAME rpc-lockstep-consistency-${row}-${model} COMMAND "${Python3_EXECUTABLE}" -B
+        "${RPC_LOCKSTEP_PY}/rpc_lockstep_consistency_test.py" $<TARGET_FILE:rpc_lockstep_emitter>
+        $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpclockstep_libretro>
+        "${RPC_LOCKSTEP_DIR}" --model ${model} --only ${row}-${model} --audit)
+      set_tests_properties(rpc-lockstep-consistency-${row}-${model} PROPERTIES TIMEOUT 780)
+      if(row STREQUAL "fuzz-0000000000000001")
+        set_tests_properties(rpc-lockstep-consistency-${row}-${model} PROPERTIES TIMEOUT 1080)
+      endif()
+    endforeach()
+  endforeach()
+  # The CI corpus is exactly the default 64 items (60 directed, four CI seeds).
+  # --audit applies only to directed ROMs, at the loader's smallest RAM size.
+  # Profile count probes and the 75 density checks remain local evidence.
+  get_property(rpc_lockstep_ci_tests DIRECTORY PROPERTY TESTS)
+  if(rpc_lockstep_existing_tests)
+    list(REMOVE_ITEM rpc_lockstep_ci_tests ${rpc_lockstep_existing_tests})
+  endif()
+  list(FILTER rpc_lockstep_ci_tests EXCLUDE REGEX "^rpc-lockstep-(profile-counts|site-counts-)")
+  set_tests_properties(${rpc_lockstep_ci_tests} PROPERTIES LABELS rpc-lockstep-emitter-ci)
+  if(ARCDROID_RPC_LOCKSTEP_LOCAL_TESTS)
+    # Keep each existing golden as a separately bounded CTest item. No committed
+    # vector is regenerated; runner checks additionally compare complete stdout.
+    set(RPC_LOCKSTEP_GOLDENS rpc-cpu-trace rpc-cmos-trace rpc-plan-devices)
+    foreach(model RANGE 0 3)
+      list(APPEND RPC_LOCKSTEP_GOLDENS rpc-video-trace-${model} rpc-video-paths-${model}
+        rpc-d2-guest-${model} rpc-plan-matrix-${model} rpc-plan-av-${model})
+    endforeach()
+    list(APPEND RPC_LOCKSTEP_GOLDENS rpc-factory-capture-2 rpc-factory-capture-3)
+    foreach(density IN ITEMS baseline every-instruction full-audit)
+      foreach(golden IN LISTS RPC_LOCKSTEP_GOLDENS)
+        add_test(NAME rpc-lockstep-golden-${density}-${golden} COMMAND "${Python3_EXECUTABLE}" -B
+          "${RPC_LOCKSTEP_PY}/rpc_lockstep_goldens_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+          $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpclockstep_libretro>
+          ${density} --only ${golden})
+        set_tests_properties(rpc-lockstep-golden-${density}-${golden} PROPERTIES TIMEOUT 6060)
+      endforeach()
+    endforeach()
+  endif()
+endif()
 add_custom_command(OUTPUT "${RPC_LOCKSTEP_DIR}/manifest.json"
   COMMAND "${Python3_EXECUTABLE}" -B "${RPC_LOCKSTEP_PY}/rpc_lockstep_fuzz.py" "${RPC_LOCKSTEP_DIR}"
   DEPENDS tests/rpc_lockstep_fuzz.py tests/rpc_lockstep_rom.py tests/rpc_lockstep_expect.py
@@ -67,7 +225,7 @@ foreach(model RANGE 0 3)
   add_test(NAME rpc-lockstep-corpus-${model} COMMAND "${Python3_EXECUTABLE}" -B
     "${RPC_LOCKSTEP_PY}/rpc_lockstep_corpus_test.py" $<TARGET_FILE:rpc_runner>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_LOCKSTEP_DIR}" --model ${model})
-  set_tests_properties(rpc-lockstep-corpus-${model} PROPERTIES TIMEOUT 120)
+  set_tests_properties(rpc-lockstep-corpus-${model} PROPERTIES TIMEOUT 180)
 endforeach()
 add_test(NAME rpc-lockstep-generator-mutants COMMAND "${Python3_EXECUTABLE}" -B
   "${RPC_LOCKSTEP_PY}/rpc_lockstep_corpus_test.py" $<TARGET_FILE:rpc_runner>
@@ -87,6 +245,10 @@ if(CMAKE_NM AND NOT ARCDROID_SANITIZERS)
     --probe-compiler "${CMAKE_C_COMPILER}"
     --write-inventory "${CMAKE_CURRENT_BINARY_DIR}/rpc-lockstep-inventory.json")
   set_tests_properties(rpc-lockstep-inventory PROPERTIES TIMEOUT 60)
+  add_test(NAME rpc-lockstep-text-encoding COMMAND "${Python3_EXECUTABLE}" -B
+    "${RPC_LOCKSTEP_PY}/rpc_lockstep_encoding_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+    ${rpc_lockstep_nm_args} --probe-compiler "${CMAKE_C_COMPILER}")
+  set_tests_properties(rpc-lockstep-text-encoding PROPERTIES TIMEOUT 60)
 endif()
 if(ARCDROID_RPC_PROFILE AND TARGET rpc-profile-tests)
   add_dependencies(rpc-profile-tests rpc-lockstep-fixtures)
@@ -107,6 +269,11 @@ endif()
 # 60 s. Allow the next whole minute above twice those limits (1260/180 s),
 # pending completed CI timings. Sanitizer profile coverage also exceeded
 # 60 s in CI; its completed local observation above requires 360 s.
+# Run D / R-M2b-C3: completed Windows observations at 6dd297f are
+# compare 50.71, pipes 76.86, mutants 79.47, sensitivity 59.91,
+# corpus <=15.8, timing 6.71 and generator mutants 5.99 seconds.
+# Each is below 60% of its existing limit (sensitivity: 59.91/180).
+# Retain the larger prior allowances; Windows gets no emitter execution.
 if(ARCDROID_SANITIZERS)
   foreach(model RANGE 0 3)
     set_tests_properties(rpc-lockstep-corpus-${model} PROPERTIES TIMEOUT 360)

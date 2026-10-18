@@ -40,7 +40,7 @@ mutants=[
  ('vram-byte-hook','engine/rpcemu/src/mem.c','vramb[addr & mem_vrammask] = val;\n    ARC_RPC_PROFILE(store(vram,addr&mem_vrammask));','vramb[addr & mem_vrammask] = val;'),
  ('read-byte-access','engine/rpcemu/src/mem.c','ARC_RPC_PROFILE(access(physical,false));\n    arc_rpc_mem_access(addr, physical, 1,','((void)0);\n    arc_rpc_mem_access(addr, physical, 1,'),
  ('write-byte-access','engine/rpcemu/src/mem.c','ARC_RPC_PROFILE(access(physical,true));\n    arc_rpc_mem_access(addr, physical, 1,','((void)0);\n    arc_rpc_mem_access(addr, physical, 1,'),
- ('cp15-read-side-exit','engine/rpcemu/src/cp15.c','cp15_read(uint32_t opcode)\n{\n    ARC_RPC_PROFILE(side_exit());','cp15_read(uint32_t opcode)\n{'),
+ ('cp15-read-side-exit','engine/rpcemu/src/cp15.c','cp15_read(uint32_t opcode)\n{\n#if defined(ARCDROID_RPC_LOCKSTEP)\n    ARC_RPC_LOCKSTEP(p1(5,0));\n#endif\n    ARC_RPC_PROFILE(side_exit());','cp15_read(uint32_t opcode)\n{\n#if defined(ARCDROID_RPC_LOCKSTEP)\n    ARC_RPC_LOCKSTEP(p1(5,0));\n#endif'),
 ]
 subprocess.run([str(target)],check=True,cwd=build,capture_output=True,timeout=30)
 for name,relative,old,new in mutants:

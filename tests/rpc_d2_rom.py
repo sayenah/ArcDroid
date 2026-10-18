@@ -154,5 +154,5 @@ def main():
         for name,writes in [('factory',True),('empty',False)]:
             g=inputs(model,factory=True,write_cmos=writes)
             out.append(f'static const uint32_t rpc_d2_{name}_{model}[] = {{'+','.join(f'0x{w:08x}u' for w in g.words)+'};')
-    Path(sys.argv[1]).write_text('\n'.join(out)+'\n')
+    Path(sys.argv[1]).write_text('\n'.join(out)+'\n', encoding='utf-8')
 if __name__=='__main__':main()

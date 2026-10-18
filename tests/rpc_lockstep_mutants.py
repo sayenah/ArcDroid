@@ -50,7 +50,9 @@ RECIPES=[
  ('permission-hit-skipped',CP,'    if (access == 1 && cp15_check_permissions(entry->ap, rw)) {',
   '    static uint32_t previous_walks; bool hit=previous_walks==tlbs; previous_walks=tlbs; if (access == 1 && !hit && cp15_check_permissions(entry->ap, rw)) {',('g-4-',)),
 ]
-# Explicit ownership for mechanisms that do not exist at this head.
+# M2a-only evidence ownership. The M2b companion emitter suite reports its own
+# demonstrated kills; this runner never claims a companion test it did not run.
+# See tests/rpc-lockstep-expectations.md and SOL-REPORT-6B-M2B.md for the merge.
 DEFERRED=[
  ('hits/fetch_hits swapped','M2b','memory.stats.hits / fast.fetch_hits','awaiting emitter'),
  ('attributes stored on fault','M2b','cp15.arc_rpc_attributes','awaiting emitter'),
@@ -69,20 +71,20 @@ EMITTER_ONLY = {'CLKCTL-after-drain': 'Pending-buffer repricing needs the A-8 st
 def port_anchors():
     # Old-side changed-line intervals, generated from the reviewed 1a-0 diff.
     # Committed data makes CI independent of unmerged/shallow git history.
-    return json.loads((ROOT/'tests/rpc_lockstep_port_1a0.json').read_text())['hunks']
+    return json.loads((ROOT/'tests/rpc_lockstep_port_1a0.json').read_text(encoding='utf-8'))['hunks']
 
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('build',type=Path);p.add_argument('runner');p.add_argument('core');p.add_argument('fixtures',type=Path)
     p.add_argument('--only',default='');p.add_argument('--matrix',type=Path);a=p.parse_args();build=a.build.resolve()
-    cache=(build/'CMakeCache.txt').read_text()
+    cache=(build/'CMakeCache.txt').read_text(encoding='utf-8')
     ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
-    commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
-    manifest=json.loads((a.fixtures/'manifest.json').read_text());matrix=[];survivors=[]
+    commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True, encoding='utf-8'))]
+    manifest=json.loads((a.fixtures/'manifest.json').read_text(encoding='utf-8'));matrix=[];survivors=[]
     hunks=port_anchors()
     for label,relative,old,new,prefixes in RECIPES:
         if a.only and a.only not in label:continue
-        text=(ROOT/relative).read_text()
+        text=(ROOT/relative).read_text(encoding='utf-8')
         if text.count(old)!=1:raise RuntimeError((label,'anchor not unique',text.count(old)))
         compile,link=rebuild_commands(commands,ROOT/relative,'arcdroid_rpcplan_libretro_rpc',build,os.name=='nt')
         with tempfile.TemporaryDirectory(prefix='arcdroid-m2a-variant-', dir=build.parent) as temp:
@@ -99,7 +101,7 @@ def main():
             link=[str(obj) if x==original_obj else x for x in link];link[link.index('-o')+1]=str(library)
             link=['-Wl,--out-implib,'+str(folder/'mutant.dll.a') if x.startswith('-Wl,--out-implib,') else x for x in link]
             for command in (compile,link):
-                result=subprocess.run(command,cwd=build,capture_output=True,text=True,timeout=180)
+                result=subprocess.run(command,cwd=build,capture_output=True,text=True,timeout=180, encoding='utf-8')
                 if result.returncode:raise RuntimeError((label,'build error (not a kill)',result.stderr[-1800:]))
             killed=[];independent=[]
             if prefixes==('@G-1-limit',):
@@ -107,9 +109,9 @@ def main():
                 write_item(folder,'limit',0,[0xea00003e]+[0xeafffffe]*64)
                 for model in range(4):
                     args=[str(folder/'limit.rom'),str(model),str(RATES[model]),'limit','0']
-                    base=subprocess.run([str(harness),a.core,*args],capture_output=True,text=True,timeout=30)
+                    base=subprocess.run([str(harness),a.core,*args],capture_output=True,text=True,timeout=30, encoding='utf-8')
                     if base.returncode:raise RuntimeError((label,'baseline boundary failure',base.stderr))
-                    variant=subprocess.run([str(harness),str(library),*args],capture_output=True,text=True,timeout=30)
+                    variant=subprocess.run([str(harness),str(library),*args],capture_output=True,text=True,timeout=30, encoding='utf-8')
                     if 'missing API' in variant.stderr:raise RuntimeError((label,'infrastructure failure',variant.stderr))
                     if variant.returncode!=base.returncode or variant.stdout!=base.stdout:
                         killed.append('G-1-NULL-'+str(model))
@@ -127,7 +129,7 @@ def main():
                     independent.append(dict(row=item['name'],oracle='terminal fault exit' if mutant.returncode and 'fault=1' in mutant.stdout else 'independent RAM/register expectation',exit=mutant.returncode,fault='fault=1' in mutant.stdout,reason=str(error)))
             if label=='ROMCR-after-drain':
                 harness=build/('rpc_lockstep_interval.exe' if os.name=='nt' else 'rpc_lockstep_interval')
-                interval=subprocess.run([sys.executable,'-B',str(ROOT/'tests/rpc_lockstep_timing_test.py'),str(harness),str(library)],capture_output=True,text=True,timeout=90)
+                interval=subprocess.run([sys.executable,'-B',str(ROOT/'tests/rpc_lockstep_timing_test.py'),str(harness),str(library)],capture_output=True,text=True,timeout=90, encoding='utf-8')
                 if interval.returncode==0 or 'AC-M2-burst-0' not in interval.stderr or 'independent interval disagreement' not in interval.stderr:
                     raise RuntimeError(('ROMCR independent interval control failed',interval.returncode,interval.stderr))
                 independent.append(dict(row='AC-M2-burst-0',oracle='independent interval disagreement',reason=interval.stderr.split('RuntimeError:')[-1].strip()))

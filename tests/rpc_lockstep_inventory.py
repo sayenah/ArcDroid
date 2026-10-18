@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Classify live object symbols; export reviewable inventory. GPL-2.0-only."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -42,7 +43,7 @@ def parse_symbols(text, apple=False):
 
 
 def data_symbols(nm, obj, apple=False):
-    return parse_symbols(subprocess.check_output([nm,'-m' if apple else '-P',str(obj)],text=True),apple)
+    return parse_symbols(subprocess.check_output([nm,'-m' if apple else '-P',str(obj)],text=True, encoding='utf-8'),apple)
 
 
 def symbol_entry(schema,source,name):
@@ -140,7 +141,7 @@ def object_control(schema,build,compiler,nm,apple):
             'volatile unsigned lockstep_unclassified_static;\n'
             'volatile unsigned ltmp3;\n'
             'unsigned arc_rpc_observers_test_horizon(unsigned x) {\n'
-            'static volatile unsigned shortened; shortened += x; return shortened; }\n')
+            'static volatile unsigned shortened; shortened += x; return shortened; }\n', encoding='utf-8')
         subprocess.run([compiler,'-O2','-c',str(source),'-o',str(obj)],check=True,capture_output=True)
         symbols=data_symbols(nm,obj,apple)
         unknown={'lockstep_unclassified_static','ltmp3'}
@@ -160,12 +161,19 @@ def main():
     p.add_argument('build',type=Path);p.add_argument('--nm',default='nm');p.add_argument('--apple',action='store_true')
     p.add_argument('--write-inventory',type=Path,help='export current classified object symbols; never auto-approve unknown symbols')
     p.add_argument('--probe-compiler',help='compile real unknown-symbol/local-static controls outside the clone')
-    a=p.parse_args();schema=json.loads((ROOT/'tests/rpc_lockstep_schema.json').read_text())
+    a=p.parse_args();schema=json.loads((ROOT/'tests/rpc_lockstep_schema.json').read_text(encoding='utf-8'))
+    policy=json.loads((ROOT/'tests/rpc_lockstep_reviewed_policy.json').read_text(encoding='utf-8'))
+    inventory={k:hashlib.sha256(json.dumps(schema[k],sort_keys=True,separators=(',',':')).encode('utf-8')).hexdigest()
+        for k in ('inventory','object_symbols','local_static_symbols')}
+    require(inventory==schema['reviewed_inventory']==policy['reviewed_inventory'],
+            'inventory metadata changed without independent review')
     for entry in schema['inventory']:
         require(entry['classification'] in CLASSES and entry.get('citation') and entry.get('ruling'),'incomplete inventory entry')
     self_test(schema)
     if a.probe_compiler:object_control(schema,a.build,a.probe_compiler,a.nm,a.apple)
-    base=a.build/'CMakeFiles/arcdroid_rpcplan_libretro_rpc.dir'
+    base=a.build/('CMakeFiles/arcdroid_rpclockstep_libretro_rpc.dir' if
+        (a.build/'CMakeFiles/arcdroid_rpclockstep_libretro_rpc.dir').is_dir() else
+        'CMakeFiles/arcdroid_rpcplan_libretro_rpc.dir')
     objects=sorted([*base.rglob('*.c.o'),*base.rglob('*.c.obj')])
     require(objects,('no built inventory objects',base))
     rows=[];sources=set()
@@ -177,7 +185,7 @@ def main():
             rows.append(dict(object=obj.relative_to(a.build).as_posix(),**row))
     require({'engine/rpc/rpc_session.c','engine/rpcemu/src/arm.c','engine/rpcemu/src/mem.c'}<=sources,'incomplete plan-core object build')
     if a.write_inventory:
-        a.write_inventory.write_bytes((json.dumps(dict(license='GPL-2.0-only',objects=len(objects),symbols=rows),indent=2,sort_keys=True)+'\n').encode())
+        a.write_inventory.write_bytes((json.dumps(dict(license='GPL-2.0-only',objects=len(objects),symbols=rows),indent=2,sort_keys=True)+'\n').encode('utf-8'))
     for category in ('static-root','reachable-storage','live-control-local'):
         print(category,sum(r['category']==category for r in schema['inventory']))
     print('built objects:',len(objects),'; nm mapped symbols:',len(rows),'; source hashes: none')
