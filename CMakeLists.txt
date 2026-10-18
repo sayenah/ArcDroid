@@ -443,6 +443,18 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32 OR ANDROID))
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_mutant.c" "${lock_probe_mutant}")
     arcdroid_lock_probe(arcdroid_lockprobe_mutant "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_mutant.c")
     set(lock_probe_mutants $<TARGET_FILE:arcdroid_lockprobe_mutant>)
+    # Diagnostic control fixture: keep reporting held after a real mutation,
+    # so host tests exercise the full window and native identity changes.
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_probe_core.c" probe_original)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tests/rpc_lock_probe_core.c)
+    string(REPLACE "arc_lock_verify(&probe.holder); /* W9 observation verify */"
+      "ARC_LOCK_HELD; /* W9 held-window control fixture */" probe_window "${probe_original}")
+    if(probe_window STREQUAL probe_original)
+      message(FATAL_ERROR "W9 observation fixture anchor missing")
+    endif()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_window.c" "${probe_window}")
+    arcdroid_lock_probe(arcdroid_lockprobe_window libretro/arc_lock.c
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/lock_probe_window.c")
     if(NOT WIN32)
       # QA F-2: the child drops the inherited lock after its own contended try.
       file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_probe_core.c" probe_original)
@@ -460,7 +472,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32 OR ANDROID))
     add_test(NAME rpc-lock-probe-core COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_probe_test.py"
       $<TARGET_FILE:rpc_lock_probe_loader> $<TARGET_FILE:arcdroid_lockprobe_libretro>
-      $<TARGET_FILE:rpc_lock_process> ${lock_probe_mutants})
+      $<TARGET_FILE:rpc_lock_process> ${lock_probe_mutants}
+      --held-window-core $<TARGET_FILE:arcdroid_lockprobe_window>)
     set_tests_properties(rpc-lock-probe-core PROPERTIES TIMEOUT 30)
   endif()
   if(NOT CMAKE_CROSSCOMPILING OR WIN32)

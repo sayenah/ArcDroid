@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <windows.h>
 #include <direct.h>
@@ -26,11 +27,22 @@
 
 #define CAP 4096
 #define MAX_LEGS 16
+#define MAX_OBSERVE_FRAMES 36000
 static const char key[] = "0123456789abcdef0123456789abcdef01234567";
 typedef enum { INFO, TRY, SAME, FORK, REPLACE_LEG, DELETE_LEG, HOLD } Leg;
 static const char *const leg_names[] = {"info", "try", "same-process", "fork-contend", "replace", "delete", "hold"};
 static const char *const outcomes[] = {"held", "contended", "transient", "unsupported",
     "root-refused", "create-error", "lock-error", "identity-lost"};
+typedef struct {
+    uint64_t device, inode, links;
+    unsigned error;
+    bool called;
+} Identity;
+typedef struct {
+    Identity descriptor, path;
+    ArcLockResult result;
+    bool held;
+} Observation;
 static struct {
     char root[CAP], output[CAP];
     Leg legs[MAX_LEGS];
@@ -42,6 +54,11 @@ static struct {
     unsigned mutation_frame;
     Leg mutation_leg;
     bool mutation_succeeded;
+    unsigned observe_frames;
+    uint64_t operation_ns;
+    unsigned clock_error;
+    bool observed, first_lost;
+    Observation observation;
     ArcLockResult last;
 } probe;
 static retro_video_refresh_t video;
@@ -371,19 +388,41 @@ static void info(void)
     arc_lock_release(&named);
     line("done leg=info");
 }
-typedef struct { int result; unsigned error; } ChildResult;
+/* The child timestamps completion before writing its result or exiting. */
+static uint64_t clock_ns(unsigned *error)
+{
+    *error = 0;
+#if defined(_WIN32)
+    LARGE_INTEGER count, frequency;
+    if (!QueryPerformanceCounter(&count) || !QueryPerformanceFrequency(&frequency)) {
+        *error = GetLastError(); return 0;
+    }
+    return (uint64_t)(count.QuadPart / frequency.QuadPart) * UINT64_C(1000000000) +
+        (uint64_t)(count.QuadPart % frequency.QuadPart) * UINT64_C(1000000000) / frequency.QuadPart;
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) { *error = (unsigned)errno; return 0; }
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+#endif
+}
+typedef struct { int result; unsigned error; uint64_t completed_ns; unsigned clock_error; } ChildResult;
 static ChildResult mutate(Leg leg, const char *sentinel, const char *replacement)
 {
+    ChildResult reply = {0};
 #if defined(_WIN32)
     WCHAR target[CAP], source[CAP];
     if (!wide_path(sentinel, target) || (leg == REPLACE_LEG && !wide_path(replacement, source)))
-        return (ChildResult){-1, ERROR_NO_UNICODE_TRANSLATION};
-    BOOL ok = leg == REPLACE_LEG ? MoveFileExW(source, target, MOVEFILE_REPLACE_EXISTING) : DeleteFileW(target);
-    return (ChildResult){ok ? 0 : -1, ok ? 0 : GetLastError()};
+        reply = (ChildResult){.result = -1, .error = ERROR_NO_UNICODE_TRANSLATION};
+    else {
+        BOOL ok = leg == REPLACE_LEG ? MoveFileExW(source, target, MOVEFILE_REPLACE_EXISTING) : DeleteFileW(target);
+        reply.result = ok ? 0 : -1; reply.error = ok ? 0 : GetLastError();
+    }
 #else
-    int result = leg == REPLACE_LEG ? rename(replacement, sentinel) : unlink(sentinel);
-    return (ChildResult){result, result ? (unsigned)errno : 0};
+    reply.result = leg == REPLACE_LEG ? rename(replacement, sentinel) : unlink(sentinel);
+    reply.error = reply.result ? (unsigned)errno : 0;
 #endif
+    reply.completed_ns = clock_ns(&reply.clock_error);
+    return reply;
 }
 #if !defined(_WIN32)
 static bool result_pipe(int channel[2])
@@ -419,7 +458,7 @@ static bool fork_result(Leg leg, ArcLock *parent, ArcLock *second,
         close(channel[0]);
         ChildResult reply;
         if (leg == FORK) {
-            reply = (ChildResult){(int)arc_lock_acquire(second), 0};
+            reply = (ChildResult){.result = (int)arc_lock_acquire(second)};
             arc_lock_release(second);
             /* W9: never unlock the inherited parent description. */
         } else reply = mutate(leg, parent->path, replacement);
@@ -482,6 +521,9 @@ static void contention(Leg leg)
     arc_lock_release(&first);
     line("done leg=%s", leg_names[leg]);
 }
+static Observation native_observation(void);
+static bool log_observation(const char *kind, Leg leg, Observation sample,
+                            unsigned number, uint64_t elapsed, unsigned clock_error);
 static void mutation_begin(Leg leg)
 {
     unsigned attempts;
@@ -490,6 +532,9 @@ static void mutation_begin(Leg leg)
         arc_lock_release(&probe.holder); return;
     }
     if (result != ARC_LOCK_HELD) { arc_lock_release(&probe.holder); line("done leg=%s", leg_names[leg]); return; }
+    Observation baseline = native_observation();
+    baseline.result = result; baseline.held = arc_lock_held(&probe.holder);
+    if (!log_observation("identity-baseline", leg, baseline, 0, 0, 0)) return;
     char replacement[CAP]; root_path(replacement, "p10b-replace.probe");
     if (leg == REPLACE_LEG) {
 #if defined(_WIN32)
@@ -510,7 +555,7 @@ static void mutation_begin(Leg leg)
             arc_lock_release(&probe.holder); line("done leg=replace"); return;
         }
     }
-    ChildResult operation = {-1, 0};
+    ChildResult operation = {.result = -1};
 #if defined(_WIN32)
     operation = mutate(leg, probe.holder.path, replacement);
     line("operation leg=%s role=in-process result=%d error=%u", leg_names[leg], operation.result, operation.error);
@@ -530,15 +575,104 @@ static void mutation_begin(Leg leg)
     }
     probe.mutation_leg = leg; probe.mutation_frame = 1;
     probe.mutation_succeeded = completed && operation.result == 0;
+    probe.operation_ns = operation.completed_ns;
+    probe.clock_error = completed ? operation.clock_error : (unsigned)EIO;
+    probe.observed = probe.first_lost = false;
+}
+/* Sample the actual token descriptor BEFORE verify can close it on loss. These
+ * are separate native observations, not an atomic snapshot of verify's calls.
+ * POSIX order/quantities match native_identity: fstat, stat, nlink, dev, ino.
+ * Still stat the path if fstat fails, to preserve both errors diagnostically. */
+static Observation native_observation(void)
+{
+    Observation sample = {0};
+    sample.descriptor.called = probe.holder.opened;
+    sample.path.called = true;
+#if defined(_WIN32)
+    BY_HANDLE_FILE_INFORMATION info;
+    if (sample.descriptor.called) {
+        if (GetFileInformationByHandle((HANDLE)probe.holder.handle, &info))
+            sample.descriptor = (Identity){info.dwVolumeSerialNumber,
+                ((uint64_t)info.nFileIndexHigh << 32) | info.nFileIndexLow, info.nNumberOfLinks, 0, true};
+        else sample.descriptor.error = GetLastError();
+    }
+    WCHAR wide[CAP];
+    HANDLE named = wide_path(probe.holder.path, wide) ? CreateFileW(wide, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL) : INVALID_HANDLE_VALUE;
+    if (named == INVALID_HANDLE_VALUE) sample.path.error = GetLastError();
+    else {
+        if (GetFileInformationByHandle(named, &info))
+            sample.path = (Identity){info.dwVolumeSerialNumber,
+                ((uint64_t)info.nFileIndexHigh << 32) | info.nFileIndexLow, info.nNumberOfLinks, 0, true};
+        else sample.path.error = GetLastError();
+        CloseHandle(named);
+    }
+#else
+    struct stat info;
+    if (sample.descriptor.called) {
+        if (!fstat((int)probe.holder.handle, &info))
+            sample.descriptor = (Identity){(uint64_t)info.st_dev, (uint64_t)info.st_ino, (uint64_t)info.st_nlink, 0, true};
+        else sample.descriptor.error = (unsigned)errno;
+    }
+    if (!stat(probe.holder.path, &info))
+        sample.path = (Identity){(uint64_t)info.st_dev, (uint64_t)info.st_ino, (uint64_t)info.st_nlink, 0, true};
+    else sample.path.error = (unsigned)errno;
+#endif
+    return sample;
+}
+static bool identity_equal(Identity a, Identity b)
+{
+    return a.called == b.called && a.error == b.error && a.device == b.device &&
+        a.inode == b.inode && a.links == b.links;
+}
+static bool log_observation(const char *kind, Leg leg, Observation sample,
+                            unsigned number, uint64_t elapsed, unsigned clock_error)
+{
+    return line("%s leg=%s frame=%llu sample=%u elapsed-ns=%llu clock-error=%u "
+        "fd-source=held-token fd-sampled=%d fd-device=%llu fd-inode=%llu fd-nlink=%llu "
+#if defined(_WIN32)
+        "fd-winerror=%u path-device=%llu path-inode=%llu path-nlink=%llu path-winerror=%u "
+#else
+        "fstat-errno=%u path-device=%llu path-inode=%llu path-nlink=%llu stat-errno=%u "
+#endif
+        "outcome=%s held=%d", kind, leg_names[leg], (unsigned long long)probe.frame, number,
+        (unsigned long long)elapsed, clock_error, (int)sample.descriptor.called,
+        (unsigned long long)sample.descriptor.device, (unsigned long long)sample.descriptor.inode,
+        (unsigned long long)sample.descriptor.links, sample.descriptor.error,
+        (unsigned long long)sample.path.device, (unsigned long long)sample.path.inode,
+        (unsigned long long)sample.path.links, sample.path.error, outcomes[sample.result], (int)sample.held);
 }
 static void mutation_verify(void)
 {
     Leg leg = probe.mutation_leg;
-    ArcLockResult result = arc_lock_verify(&probe.holder);
-    line("verify leg=%s phase=%s frame=%llu outcome=%s held=%d", leg_names[leg],
-        probe.mutation_frame == 1 ? "next" : "sticky", (unsigned long long)probe.frame,
-        outcomes[result], (int)arc_lock_held(&probe.holder));
-    if (++probe.mutation_frame == 3) {
+    Observation sample = native_observation();
+    ArcLockResult result = arc_lock_verify(&probe.holder); /* W9 observation verify */
+    sample.result = result; sample.held = arc_lock_held(&probe.holder);
+    unsigned clock_error;
+    uint64_t now = clock_ns(&clock_error);
+    if (!clock_error) clock_error = probe.clock_error;
+    uint64_t elapsed = !clock_error && now >= probe.operation_ns ? now - probe.operation_ns : 0;
+    bool changed = !probe.observed || !identity_equal(sample.descriptor, probe.observation.descriptor) ||
+        !identity_equal(sample.path, probe.observation.path) || sample.result != probe.observation.result ||
+        sample.held != probe.observation.held;
+    /* Omitted field preserves exactly next + sticky, including after loss. */
+    if (!probe.observe_frames || changed)
+        line("verify leg=%s phase=%s frame=%llu outcome=%s held=%d", leg_names[leg],
+            probe.observe_frames ? "observe" : probe.mutation_frame == 1 ? "next" : "sticky",
+            (unsigned long long)probe.frame, outcomes[result], (int)sample.held);
+    if (changed) log_observation("observation", leg, sample, probe.mutation_frame, elapsed, clock_error);
+    probe.observed = true; probe.observation = sample;
+    if (result == ARC_LOCK_IDENTITY_LOST && !probe.first_lost) {
+        probe.first_lost = true;
+        line("identity-lost leg=%s first-frame=%llu sample=%u elapsed-ns=%llu clock-error=%u",
+            leg_names[leg], (unsigned long long)probe.frame, probe.mutation_frame,
+            (unsigned long long)elapsed, clock_error);
+    }
+    unsigned limit = probe.observe_frames ? probe.observe_frames : 2;
+    if (probe.mutation_frame == limit || (probe.observe_frames && probe.first_lost)) {
+        if (!probe.first_lost)
+            line("identity-lost leg=%s never-within-frames=%u last-frame=%llu elapsed-ns=%llu clock-error=%u",
+                leg_names[leg], limit, (unsigned long long)probe.frame, (unsigned long long)elapsed, clock_error);
         if (!probe.mutation_succeeded) {
             ArcLock contender = {0}; unsigned attempts;
             ArcLockResult exclusion = acquire(&contender, &attempts);
@@ -547,7 +681,7 @@ static void mutation_verify(void)
         }
         arc_lock_release(&probe.holder); probe.mutation_frame = 0;
         line("done leg=%s", leg_names[leg]);
-    }
+    } else ++probe.mutation_frame;
 }
 static void finish(const char *reason)
 {
@@ -578,6 +712,16 @@ static bool read_plan(const char *path)
             strcpy(probe.root, text + 5); have_root = true;
         } else if (!strncmp(text, "output=", 7) && !have_output && n - 7 < CAP) {
             strcpy(probe.output, text + 7); have_output = true;
+        } else if (!strncmp(text, "observe_frames=", 15) && !probe.observe_frames) {
+            unsigned value = 0;
+            if (!text[15]) return false;
+            for (size_t i = 15; text[i]; ++i) {
+                if (text[i] < '0' || text[i] > '9') return false;
+                value = value * 10 + (unsigned)(text[i] - '0');
+                if (value > MAX_OBSERVE_FRAMES) return false;
+            }
+            if (!value) return false;
+            probe.observe_frames = value;
         }
         else if (!strncmp(text, "leg=", 4) && probe.count < MAX_LEGS) {
             unsigned leg = 0; while (leg <= HOLD && strcmp(text + 4, leg_names[leg])) ++leg;

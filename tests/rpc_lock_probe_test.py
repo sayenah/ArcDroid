@@ -10,6 +10,11 @@ import sys
 import tempfile
 
 loader, core, process, *mutants = sys.argv[1:]
+window_core = None
+if '--held-window-core' in mutants:
+    index = mutants.index('--held-window-core')
+    window_core = mutants[index + 1]
+    del mutants[index:index + 2]
 KEY = '0123456789abcdef0123456789abcdef01234567'
 
 
@@ -47,9 +52,10 @@ def write_plan(path, text):
     path.write_bytes(text.encode('utf-8'))
 
 
-def plan_file(base, name, root, legs):
+def plan_file(base, name, root, legs, observe_frames=None):
     plan, output = base / (name + '.arcprobe'), base / (name + '.log')
     write_plan(plan, 'arc-lock-probe-v1\nroot=' + str(root) + '\noutput=' + str(output) +
+               ('' if observe_frames is None else '\nobserve_frames=' + str(observe_frames)) +
                ''.join('\nleg=' + leg for leg in legs) + '\n')
     return plan, output
 
@@ -287,11 +293,106 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
             if os.name == 'nt':
                 require('result leg=' + operation + ' role=retained-proof outcome=contended attempts=1\n' in text, 'Windows mutation retained lock')
             require(text.endswith('done leg=' + operation + '\n'), 'mutation done')
+            require(len([line for line in text.splitlines() if line.startswith('verify leg=' + operation)]) == 2,
+                    'default must keep exactly two verifications')
+            samples = [line for line in text.splitlines() if line.startswith('observation leg=' + operation)]
+            require(samples and 'fd-source=held-token fd-sampled=1' in samples[0], 'actual held descriptor observation')
+            baseline = [line for line in text.splitlines() if line.startswith('identity-baseline ')]
+            require(len(baseline) == 1, 'before-operation baseline')
+            before = dict(item.split('=', 1) for item in baseline[0].split()[1:])
+            require(before['fd-inode'] == before['path-inode'] and int(before['fd-inode']) > 0,
+                    'baseline native identities')
+            if os.name != 'nt':
+                require('fd-sampled=0' in samples[-1], 'sticky diagnostic must not stat a closed descriptor')
+                first = dict(item.split('=', 1) for item in samples[0].split()[1:])
+                require(first['fstat-errno'] == '0' and int(first['fd-inode']) > 0, 'held descriptor fstat')
+                require(before['fd-inode'] == first['fd-inode'], 'diagnostics must follow original descriptor')
+                if operation == 'replace':
+                    require(first['stat-errno'] == '0' and first['fd-inode'] != first['path-inode'], 'rename identity mismatch')
+                else:
+                    require(int(first['stat-errno']) > 0, 'deleted path stat error')
             session.command('f')
             require(output.read_text() == text, 'mutation ran again after completion')
             attempt(mutation_root, 'held')
             session.command('q', 'quit')
             require(session.child.wait(timeout=5) == 0, 'mutation quit')
+        finally:
+            session.close()
+
+    # Explicit windows stop at first loss, or consume precisely N checks.
+    for operation in ('replace', 'delete'):
+        for limit in (1, 2, 36000):
+            name = f'window-{operation}-{limit}'
+            window_root = base / name
+            window_root.mkdir()
+            plan, output = plan_file(base, name, window_root, [operation], limit)
+            session = Session(core, plan)
+            try:
+                if os.name == 'nt' and limit == 36000:
+                    # Parse upper bound without spending 10 device minutes.
+                    session.command('q', 'quit')
+                    require(session.child.wait(timeout=5) == 0, 'upper-bound quit')
+                    continue
+                session.command('f')
+                checks = limit if os.name == 'nt' else 1
+                for number in range(checks):
+                    session.command('f')
+                    text = output.read_text()
+                    require(('done leg=' + operation in text) == (number + 1 == checks), 'window completion bound')
+                observations = [line for line in text.splitlines() if line.startswith('observation ')]
+                require(len(observations) == 1, 'unchanged identity logged repeatedly')
+                require('clock-error=0' in observations[0] and 'sample=1 ' in observations[0], 'window clock/sample')
+                if os.name != 'nt':
+                    require(re.search(r'identity-lost leg=' + operation + r' first-frame=2 sample=1 elapsed-ns=[0-9]+ clock-error=0\n', text), 'first loss frame/time')
+                    require('never-within-frames=' not in text, 'early loss marked absent')
+                else:
+                    require(f'never-within-frames={limit} last-frame={limit + 1} ' in text, 'window exhausted')
+                session.command('f')
+                require(output.read_text() == text, 'window continued after stop')
+                attempt(window_root, 'held')
+                session.command('q', 'quit')
+                require(session.child.wait(timeout=5) == 0, 'window quit')
+            finally:
+                session.close()
+
+    if window_core:
+        # This generated control fixture changes only the probe's mutation
+        # verdict, never the production module. Native metadata remains real.
+        name = 'held-window-control'
+        window_root = base / name
+        window_root.mkdir()
+        plan, output = plan_file(base, name, window_root, ['replace'], 4)
+        session = Session(window_core, plan)
+        try:
+            session.command('f')
+            session.command('f')
+            first = output.read_text()
+            session.command('f')
+            require(output.read_text() == first, 'stable sample should be silent')
+            if os.name != 'nt':
+                named = window_root / 'arcdroid' / 'locks-riscpc' / ('c-' + KEY + '.lock')
+                replacement = window_root / 'independent-replacement'
+                replacement.touch()
+                replacement.replace(named)
+            session.command('f')
+            require('done leg=replace' not in output.read_text(), 'window ended before N')
+            session.command('f')
+            text = output.read_text()
+            samples = [dict(item.split('=', 1) for item in line.split()[1:])
+                       for line in text.splitlines() if line.startswith('observation ')]
+            require([int(sample['frame']) for sample in samples] == ([2] if os.name == 'nt' else [2, 4]),
+                    'each native identity change must be logged')
+            require(all(sample['outcome'] == 'held' and sample['clock-error'] == '0' for sample in samples), 'control fixture verdict')
+            if os.name != 'nt':
+                require(samples[0]['path-inode'] != samples[1]['path-inode'], 'path identity change missing')
+                require(samples[0]['fd-inode'] == samples[1]['fd-inode'], 'actual held descriptor changed')
+                require(int(samples[1]['elapsed-ns']) >= int(samples[0]['elapsed-ns']), 'monotonic elapsed time')
+            require('never-within-frames=4 last-frame=5 ' in text and 'first-frame=' not in text, 'no-loss summary')
+            require(text.endswith('done leg=replace\n'), 'exhausted window done')
+            session.command('f')
+            require(output.read_text() == text, 'exhausted window continued')
+            session.command('q', 'quit')
+            require(session.child.wait(timeout=5) == 0, 'control quit')
         finally:
             session.close()
 
@@ -333,6 +434,9 @@ with tempfile.TemporaryDirectory(prefix='arc-p10b-core-') as directory:
     malformed = [valid + b'unknown=value\n', valid + b'root=\n', valid + b'output=\n',
                  valid + b'\0', valid.replace(b'v1', b'v2'), b'x' * 16385,
                  valid + b'leg=try\n' * 16, valid.replace(b'\n', b'\r\r\n')]
+    malformed += [valid + b'observe_frames=' + value + b'\n' for value in
+                  (b'', b'0', b'-1', b'+2', b' 2', b'2 ', b'1.5', b'36001', b'4294967297', b'9' * 100)]
+    malformed.append(valid + b'observe_frames=2\nobserve_frames=3\n')
     for data in malformed:
         plan.write_bytes(data)
         reply = subprocess.run([loader, core, str(plan)], capture_output=True, text=True, timeout=5)
