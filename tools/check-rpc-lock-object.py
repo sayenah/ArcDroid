@@ -45,6 +45,20 @@ def compile_arguments(entry,build,windows=None):
         raise ValueError('compile command does not name the recorded CMake compiler')
     return [compiler,*args[at+1:]]
 
+def without_compile_outputs(args):
+    """Retain compilation semantics without writing the build's object/deps."""
+    result=[args[0]];at=1
+    operands=('-o','-MF','-MT','-MQ','-MJ')
+    switches={'-M','-MM','-MD','-MMD','-MP','-MG'}
+    while at<len(args):
+        arg=args[at];at+=1
+        if arg in operands:
+            if at==len(args):raise ValueError('missing compiler output operand: '+arg)
+            at+=1
+        elif arg in switches or any(arg.startswith(flag) for flag in operands):continue
+        else:result.append(arg)
+    return result
+
 def flag_value(expression):
     expression=re.sub(r'(?<=[0-9a-fA-F])[uUlL]+\b','',expression)
     def value(node):
@@ -85,12 +99,7 @@ def check(build,platform,nm=None,toolchain=None):
         output=entry.get('output') or args[args.index('-o')+1]
         obj=Path(entry['directory'])/output
         if not obj.exists():continue
-        pp=[];skip=False
-        for arg in args:
-            if skip:skip=False;continue
-            if arg=='-o':skip=True;continue
-            if arg=='-c':continue
-            pp.append(arg)
+        pp=[arg for arg in without_compile_outputs(args) if arg!='-c']
         expanded=subprocess.check_output([*pp,'-E'],cwd=entry['directory'],text=True)
         origin='';body=[]
         for line in expanded.splitlines():
