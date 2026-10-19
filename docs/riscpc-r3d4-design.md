@@ -216,7 +216,7 @@ Notice corrections for Fable's text check (all class A, existing N-9 unchanged):
 
 | ID | Cause | Text |
 |---|---|---|
-| N-6 | Proven absent boot archive(s) | First use of a RiscPC title needs {missing names} in <system>/arcdroid/riscpc/boot/. |
+| N-6 | Proven absent boot archive(s) | First use of a RiscPC title needs {missing names} in <system>/arcdroid/riscpc/boot/. Add the missing files, then close and reload this content. |
 | N-19 | Save preflight UNKNOWN | The RiscPC save folder could not be checked. Check that it is readable and choose a native save folder. |
 | N-20 | Boot archive metadata/presence UNKNOWN or wrong type | The RiscPC boot archives could not be checked. Use readable HardDisc4.zip and PlingSystem.zip files. |
 | N-21 | Invalid local clock | The local clock could not be used for RiscPC settings. Check the system clock, then close and reload this content. |

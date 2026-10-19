@@ -3530,6 +3530,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   # W4: initial bound 240 s; verify >= twice the observed maximum in Run A.
   set_tests_properties(rpc-production-host-frontend PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
   if(NOT ARCDROID_RPC_ORDINARY_LOAD)
+    add_test(NAME rpc-closed-replacement-cmos COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_closed_replace_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+      $<TARGET_FILE:rpc_host_frontend_test> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}")
+    set_tests_properties(rpc-closed-replacement-cmos PROPERTIES TIMEOUT 150)
+    if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT CMAKE_CROSSCOMPILING AND NOT ARCDROID_SANITIZERS)
+      add_test(NAME rpc-closed-replacement-cmos-mutant COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_closed_replace_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+        $<TARGET_FILE:rpc_host_frontend_test> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" --mutant)
+      set_tests_properties(rpc-closed-replacement-cmos-mutant PROPERTIES TIMEOUT 240 LABELS slow)
+    endif()
     foreach(kind closed plan)
       if(kind STREQUAL "plan")
         set(primary_core arcdroid_rpcplan_libretro)

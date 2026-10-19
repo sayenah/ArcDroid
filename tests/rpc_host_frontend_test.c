@@ -113,6 +113,14 @@ int main(int argc,char **argv)
     if(reordered)assert(load(&game));
     set_video(host_video);set_audio(host_audio);set_poll(host_poll);set_input(input);
     if(!reordered)assert(load(&game));
+    if(!strcmp(argv[5],"shipping-replace")){
+        /* No run/reset/unload can persist the outgoing session first. The
+         * distinct replacement has a different CMOS key, including at deinit. */
+        char replacement[4096];snprintf(replacement,sizeof(replacement),"%s/replacement.adf",system_directory);
+        struct retro_game_info next={.path=replacement};assert(load(&next));
+        unload();deinit();vfs_assert_no_open_handles();
+        puts("closed shipping: live session replaced before its first frame");return 0;
+    }
     if(reordered){
         if(!shipping){
             struct retro_disk_control_ext_callback registered=disks;unsigned summaries=summary_lines;

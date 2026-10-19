@@ -193,7 +193,9 @@ int main(int argc,char **argv)
     }
     if(system_unavailable || !strcmp(argv[5],"missing") || !strncmp(argv[5],"refuse:",7)){
         assert(!load(&game));assert(*last_notice);
-        assert(!running && !arculator_writes);if(system_unavailable)assert(strstr(failure_id,"N-5:"));if(!strncmp(argv[5],"refuse:",7))assert(strstr(failure_id,argv[5]+7));deinit();vfs_assert_no_open_handles();puts("rpc-route: shipping refusal and secondary isolation pass");return 0;
+        assert(!running && !arculator_writes);if(system_unavailable)assert(strstr(failure_id,"N-5:"));if(!strncmp(argv[5],"refuse:",7))assert(strstr(failure_id,argv[5]+7));
+        if(!strcmp(argv[5],"refuse:N-6"))printf("N-6 text: %s\n",last_notice);
+        deinit();vfs_assert_no_open_handles();puts("rpc-route: shipping refusal and secondary isolation pass");return 0;
     }
     assert(load(&game));assert(state_size()==0);unsigned char pending[8]={0};assert(!serialize(pending,sizeof(pending)) && !unserialize(pending,sizeof(pending)));
     /* R-1a: an active library is never a fresh primary. Also replay Android's

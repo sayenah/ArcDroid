@@ -90,7 +90,11 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-route-') as temporary:
                 raw=work/'raw.adf';shutil.copy2(Path(legacy_fixtures)/'arcdroid-test.adf',raw)
                 lines=selected.read_text() if selected.suffix=='.m3u' else str(selected)+'\n'
                 selected=work/'mixed.m3u';selected.write_text(str(raw)+'\n'+lines)
-            subprocess.run([exe,test,str(system),str(save),str(selected),('system-unavailable' if case=='system-unavailable' else 'refuse:'+reason),str(secondary)],check=True,timeout=360)
+            result=subprocess.run([exe,test,str(system),str(save),str(selected),('system-unavailable' if case=='system-unavailable' else 'refuse:'+reason),str(secondary)],check=True,capture_output=True,text=True,timeout=360)
+            if reason=='N-6':
+                missing='HardDisc4.zip' if case=='archive-hd' else 'PlingSystem.zip'
+                expected=f'N-6 text: First use of a RiscPC title needs {missing} in <system>/arcdroid/riscpc/boot/. Add the missing files, then close and reload this content.'
+                assert result.stdout.splitlines().count(expected)==1,result.stdout+result.stderr
             assert not (save/'arcdroid/hd-riscpc').exists() and not (save/'arcdroid/cmos-riscpc').exists()
     if only_case:
         print('rpc-route: targeted ordinary refusal carriers complete');sys.exit(0)

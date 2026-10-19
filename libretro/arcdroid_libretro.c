@@ -7548,7 +7548,7 @@ static int arc_rpc_check_selection(const char *firmware_dir,bool ordinary,const 
                if(archive==ARC_RPC_STORE_ABSENT){if(*missing)strcat(missing," and ");strcat(missing,archives[i]);}
                else if(archive!=ARC_RPC_STORE_EXISTS)unknown=true;}
             if(unknown){id="N-20";cause="The RiscPC boot archives could not be checked. Use readable HardDisc4.zip and PlingSystem.zip files.";}
-            else if(*missing){snprintf(error,sizeof(error),"First use of a RiscPC title needs %s in <system>/arcdroid/riscpc/boot/.",missing);cause=error;}
+            else if(*missing){snprintf(error,sizeof(error),"First use of a RiscPC title needs %s in <system>/arcdroid/riscpc/boot/. Add the missing files, then close and reload this content.",missing);cause=error;}
          }
          if(cause){free(firmware);char text[512];snprintf(text,sizeof(text),"%s",cause);arc_release_session();arc_riscpc_host_load_failure(&ops,id,text);return -1;}
       }
