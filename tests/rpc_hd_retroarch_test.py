@@ -13,6 +13,20 @@ import re
 sys.dont_write_bytecode = True
 from rpc_hd_retroarch_rom import CONTENT, COLOURS
 
+class TestBudget:
+    """One CTest budget shared by every phase, with 5% reserved for cleanup."""
+    def __init__(self, seconds):
+        self.deadline = time.monotonic() + seconds
+        self.cleanup_seconds = seconds / 20
+
+    def remaining(self, cleanup=False):
+        seconds = self.deadline - time.monotonic()
+        if not cleanup:
+            seconds -= self.cleanup_seconds
+        if seconds <= 0:
+            raise TimeoutError('rpc-hd-retroarch-guest exhausted its test budget')
+        return seconds
+
 def store_check(save, minimum):
     root=Path(save)/'arcdroid/hd-riscpc'/CONTENT
     names={p.name for p in root.iterdir()}
@@ -53,9 +67,11 @@ def pixels(path,status):
 
 def main():
     runner,core,fixture=map(lambda p:Path(p).resolve(),sys.argv[1:4])
-    if len(sys.argv)>4:
-        from rpc_host_runner_ownership_test import runner_clients
-        runner_clients(runner.parent,Path(__file__).resolve().parents[1],runner,Path(sys.argv[4]).resolve(),fixture)
+    # CMake passes the same budget to this driver and CTest, including the
+    # ownership checks. Slow sanitizer phases can borrow unused phase time.
+    budget=TestBudget(float(sys.argv[5]))
+    from rpc_host_runner_ownership_test import runner_clients
+    runner_clients(runner.parent,Path(__file__).resolve().parents[1],runner,Path(sys.argv[4]).resolve(),fixture)
     with tempfile.TemporaryDirectory(prefix='arc-rpc-hd-native-') as temp:
         d=Path(temp);save=d/'save';shutil.copytree(fixture/'save',save)
         plan=fixture/'hd.arcplan'
@@ -66,7 +82,7 @@ def main():
         def clean(name,frames,status):
             shot=d/f'{name}.ppm'
             t=time.monotonic()
-            r=subprocess.run(args(frames,shot,frames-1),capture_output=True,text=True,timeout=120)
+            r=subprocess.run(args(frames,shot,frames-1),capture_output=True,text=True,timeout=budget.remaining())
             assert r.returncode==0,r.stdout[-3000:]+r.stderr
             assert r.stdout.splitlines()[-1]==f'ram={status:08x}'
             assert not re.search(r'(?i)damaged|no longer be saved|refused|RPC default generation',r.stderr),r.stderr
@@ -75,15 +91,15 @@ def main():
         with (d/'terminated.log').open('wb') as log:
             p=subprocess.Popen(args(1000000,shot,699),stdout=log,stderr=log)
             try:
-                deadline=time.monotonic()+120
+                deadline=budget.deadline-budget.cleanup_seconds
                 while not shot.exists() or shot.stat().st_size<245775:
                     assert p.poll() is None,'runner exited before termination point'
                     assert time.monotonic()<deadline,'termination screenshot timeout'
                     time.sleep(.01)
                 pixels(shot,1);assert p.poll() is None
-                p.kill();p.wait(timeout=30);assert p.returncode!=0
+                p.kill();p.wait(timeout=min(budget.cleanup_seconds,budget.remaining(cleanup=True)));assert p.returncode!=0
             finally:
-                if p.poll() is None:p.kill();p.wait(timeout=30)
+                if p.poll() is None:p.kill();p.wait(timeout=min(budget.cleanup_seconds,budget.remaining(cleanup=True)))
         assert not re.search(r'(?i)damaged|no longer be saved|refused|RPC default generation',(d/'terminated.log').read_text()),'termination log had a notice'
         print(f'force termination: written generation 1 elapsed={time.monotonic()-t:.2f}s')
         first=store_check(save,1)
