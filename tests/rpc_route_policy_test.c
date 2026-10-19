@@ -41,6 +41,13 @@ int main(int argc,char **argv)
     char entry[4096];snprintf(entry,sizeof(entry),"%s/entry",save_directory);assert(arc_io_write_all(entry,"",0));
     endless=true;calls=0;assert(arc_riscpc_store_presence(save_directory,content)==ARC_RPC_STORE_UNKNOWN);assert(calls<=4096);endless=false;
     endless=bad_stat=true;assert(arc_riscpc_store_presence(save_directory,content)==ARC_RPC_STORE_UNKNOWN);endless=bad_stat=false;
+    assert(arc_riscpc_boot_archive_presence(save_directory,"HardDisc4.zip")==ARC_RPC_STORE_ABSENT);
+    char boot[4096];snprintf(boot,sizeof(boot),"%s/arcdroid/riscpc/boot/HardDisc4.zip",save_directory);
+    assert(arc_io_make_path(boot)); /* A directory is not a readable archive. */
+    assert(arc_riscpc_boot_archive_presence(save_directory,"HardDisc4.zip")==ARC_RPC_STORE_UNKNOWN);
+    snprintf(boot,sizeof(boot),"%s/arcdroid/riscpc/boot/PlingSystem.zip",save_directory);
+    assert(arc_io_write_all(boot,"authored",8));
+    assert(arc_riscpc_boot_archive_presence(save_directory,"PlingSystem.zip")==ARC_RPC_STORE_EXISTS);
     char notice[512];ArcRpcSelection selection={.reason=ARC_RPC_SELECTION_MISSING_FIRMWARE,.needed=ARC_RPC_OS_BIT(ARC_RPC_OS_350)|ARC_RPC_OS_BIT(ARC_RPC_OS_371)};
     ArcRpcFirmwareInventory inventory={0};assert(!strcmp(arc_riscpc_route_notice(&selection,&inventory,notice,sizeof(notice)),"N-1"));
     assert(!strcmp(notice,"Needs RiscPC RISC OS 3.50,3.71 in <system>/arcdroid/firmware/. Or try an Archimedes in core options.") && strlen(notice)<=120);

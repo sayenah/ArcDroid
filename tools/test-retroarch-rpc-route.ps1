@@ -65,6 +65,7 @@ function Wait-OrdinaryLog($Run, [string]$Pattern) {
         if (Test-Path $Run.RetroLog) {
             $text = [string](Get-Content -Raw $Run.RetroLog)
             if ($text -match $Pattern) { return $text }
+            if ($text -match 'Failed to load content') { throw 'Real RetroArch primary ordinary load failed before the expected event' }
         }
         if ($Run.Process.HasExited) { throw 'Ordinary-route process exited before its expected event' }
         Start-Sleep -Milliseconds 100
@@ -137,6 +138,8 @@ foreach ($leg in @(1, 2)) {
             $pendingOwner = $null
         }
         $text = Wait-OrdinaryLog $run 'summary: phase=pending .*state=10 '
+        if ($text -notmatch 'ArcDroid build:.*gate=open' -or
+            $text -match 'Failed to load content') { throw 'Gate-open primary was refused or the wrong core was loaded' }
         $summary = [regex]::Match($text, 'summary: phase=pending .*state=10 [^\r\n]*').Value
         if ($summary.Length -gt 3900 -or $summary -notmatch 'first_pending_ms=[0-9]+' -or $summary -notmatch 'running_ms=[0-9]+' -or $summary -notmatch 'desktop=unavailable') { throw 'Ordinary-route summary lacks bounded phase evidence' }
         if ($text -notmatch 'catalogue=authored' -or $text -notmatch 'production-observer-cells=0') { throw 'Authored/production qualification identity mismatch' }

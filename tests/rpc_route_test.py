@@ -14,10 +14,13 @@ only_case=sys.argv[8] if len(sys.argv)>8 else None
 fixtures=Path(fixtures)
 with tempfile.TemporaryDirectory(prefix='arcdroid-route-') as temporary:
     root=Path(temporary)
-    secondary=root/('secondary'+Path(test).suffix);shutil.copy2(test,secondary)
+    # RetroArch keeps the core basename inside retroarch_temp. Distinct paths
+    # with equal basenames must still identify distinct loaded modules.
+    (root/'retroarch_temp').mkdir()
+    secondary=root/'retroarch_temp'/Path(test).name;shutil.copy2(test,secondary)
     identity=subprocess.run([exe,fault_test,str(fixtures/'system'),str(root),str(fixtures/'route.jfd'),'metadata-fault',str(secondary)],capture_output=True,text=True,timeout=30)
     assert identity.returncode==0,identity.stdout+identity.stderr
-    for mode in ([] if only_case else ['extended','legacy','cycles','changed-packages','namespace-file','empty-after-probe','chooser-cycles']+(['missing'] if gate_open=='1' else [])):
+    for mode in ([] if only_case else ['extended','legacy','primary-menu','primary-cli','primary-arc','cycles','changed-packages','namespace-file','empty-after-probe','chooser-cycles']+(['missing'] if gate_open=='1' else [])):
         work=root/mode;work.mkdir();save=work/'save';save.mkdir()
         system=work/'system';shutil.copytree(fixtures/'system',system)
         library=shipping if mode=='missing' else fault_test if mode=='chooser-cycles' else test
@@ -26,8 +29,15 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-route-') as temporary:
             shutil.copy2(Path(legacy_fixtures)/'arcdroid-test.rom',system/'arc-control.rom')
             shutil.copy2(Path(legacy_fixtures)/'arcdroid-test.adf',system/'arc-control.adf')
             shutil.copy2(Path(legacy_fixtures)/'arcdroid-chooser-l.adl',system/'arc-chooser.adl')
+        disc=fixtures/'route.jfd'
+        if mode=='primary-arc':
+            shutil.copy2(Path(legacy_fixtures)/'arcdroid-test.rom',system/'arcdroid/firmware/control.rom')
+            shutil.copy2(Path(legacy_fixtures)/'arcdroid-test.adf',system/'arc-control.adf')
+            disc=system/'arc-control.adf'
         if mode=='missing':shutil.rmtree(system/'arcdroid/firmware')
-        subprocess.run([exe,library,str(system),str(save),str(fixtures/'route.jfd'),mode,str(secondary)],check=True,timeout=360)
+        # The full 200-cycle ASan run measured 387 s under the PR-tier load.
+        # Keep every cycle/assertion; its watchdog is not a frame-cost limit.
+        subprocess.run([exe,library,str(system),str(save),str(disc),mode,str(secondary)],check=True,timeout=720 if mode=='cycles' else 360)
         if mode=='namespace-file':assert (save/'arcdroid/hd-riscpc').read_text()=='authored namespace change'
     shutil.copy2(test,secondary)
     # A late flag is never used to relabel a failure that occurred earlier.
@@ -44,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-route-') as temporary:
             playlist=work/'failure.m3u';playlist.write_text(str(selected)+'\n'+str(work/'missing.jfd')+'\n'+str(fixtures/'route.jfd')+'\n');selected=playlist
         subprocess.run([exe,test,str(system),str(save),str(selected),mode,str(secondary)],check=True,timeout=360)
     # Structured class-A failures through loose, ZIP, playlist and mixed sets.
-    for case,reason in [('empty','N-1'),('missing-folder','N-5'),('unsupported','N-3'),('unqualified','N-2'),('conflict','N-4'),('bounded','N-5 incomplete-scan'),('archive-hd','N-6'),('archive-system','N-6'),('malformed','N-1'),('unreadable-unrelated','N-1'),('unreadable-candidate','N-5'),('locator-change','N-B firmware'),('system-unavailable','N-5')]:
+    for case,reason in [('empty','N-1'),('missing-folder','N-5'),('unsupported','N-3'),('unqualified','N-2'),('conflict','N-4'),('bounded','N-5 incomplete-scan'),('archive-hd','N-6'),('archive-system','N-6'),('archive-unreadable','N-20'),('preflight-unavailable','N-19'),('malformed','N-1'),('unreadable-unrelated','N-1'),('unreadable-candidate','N-5'),('locator-change','N-B firmware'),('system-unavailable','N-5')]:
         if only_case and case!=only_case:continue
         for container in ['loose','zip','playlist','mixed']:
             work=root/(case+'-'+container);work.mkdir();save=work/'save';save.mkdir();system=work/'system';shutil.copytree(fixtures/'system',system)

@@ -21,6 +21,12 @@ static retro_environment_t arc_environment=environment;
 static void clear(void){assert(arc_log==log_capture && !arc_rpc_staging.active && !arc_rpc_staging.overflowed);logs=notices=private_lines=0;}
 int main(void)
 {
+    arc_rpc_staging.bytes[ARC_RPC_STAGE_BYTES-1]='z';
+    arc_rpc_staging_begin();assert(arc_rpc_staging.bytes[ARC_RPC_STAGE_BYTES-1]=='z');
+    arc_rpc_staging_capture("used bytes",RETRO_LOG_INFO,false);
+    size_t extent=arc_rpc_staging.used;arc_rpc_staging_finish(false);
+    for(size_t i=0;i<extent;++i)assert(!arc_rpc_staging.bytes[i]);
+    assert(arc_rpc_staging.bytes[ARC_RPC_STAGE_BYTES-1]=='z');clear();
     char path[8192];memset(path,'x',sizeof(path)-1);path[sizeof(path)-1]=0;memcpy(path,"STAGING-SENTINEL",16);
     arc_rpc_staging_begin();arc_log(RETRO_LOG_INFO,"%s",path);memset(path,'y',sizeof(path)-1);
     arc_rpc_staging_capture("final STAGING-SENTINEL error",RETRO_LOG_ERROR,true);

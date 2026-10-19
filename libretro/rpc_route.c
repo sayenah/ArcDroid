@@ -6,13 +6,11 @@
 #include <string.h>
 #include <time.h>
 
-ArcRpcStorePresence arc_riscpc_store_presence(const char *save,const char *content)
+static ArcRpcStorePresence path_presence(char path[4096],bool file)
 {
-    char path[4096];
-    int n=snprintf(path,sizeof(path),"%s/arcdroid/hd-riscpc/%s",save?save:"",content?content:"");
-    if(!save || !*save || !content || strlen(content)!=40 || n<0 || (size_t)n>=sizeof(path))return ARC_RPC_STORE_UNKNOWN;
     ArcIoMetadata metadata=arc_io_metadata(path,NULL);
-    if(metadata==ARC_IO_METADATA_DIRECTORY)return ARC_RPC_STORE_EXISTS;
+    if(metadata==(file?ARC_IO_METADATA_FILE:ARC_IO_METADATA_DIRECTORY))return ARC_RPC_STORE_EXISTS;
+    if(file && metadata!=ARC_IO_METADATA_UNKNOWN)return ARC_RPC_STORE_UNKNOWN;
     /* Climb to a stat-confirmed ancestor, then resolve missing components.
      * Every VFS operation is charged, including EOF and directory close. */
     size_t ends[64];unsigned depth=0,entries=0,ops=1;
@@ -46,10 +44,25 @@ ArcRpcStorePresence arc_riscpc_store_presence(const char *save,const char *conte
         if(!found)return ARC_RPC_STORE_ABSENT;
         if(ops>=16384)return ARC_RPC_STORE_UNKNOWN;
         path[split]='/';
-        if(arc_io_metadata(path,NULL)!=ARC_IO_METADATA_DIRECTORY)return ARC_RPC_STORE_UNKNOWN;
+        if(arc_io_metadata(path,NULL)!=(file && !depth?ARC_IO_METADATA_FILE:ARC_IO_METADATA_DIRECTORY))return ARC_RPC_STORE_UNKNOWN;
         ++ops;
     }
     return ARC_RPC_STORE_EXISTS;
+}
+
+ArcRpcStorePresence arc_riscpc_store_presence(const char *save,const char *content)
+{
+    char path[4096];
+    int n=snprintf(path,sizeof(path),"%s/arcdroid/hd-riscpc/%s",save?save:"",content?content:"");
+    if(!save || !*save || !content || strlen(content)!=40 || n<0 || (size_t)n>=sizeof(path))return ARC_RPC_STORE_UNKNOWN;
+    return path_presence(path,false);
+}
+
+ArcRpcStorePresence arc_riscpc_boot_archive_presence(const char *system,const char *name)
+{
+    char path[4096];int n=snprintf(path,sizeof(path),"%s/arcdroid/riscpc/boot/%s",system,name);
+    if(n<0 || (size_t)n>=sizeof(path))return ARC_RPC_STORE_UNKNOWN;
+    return path_presence(path,true);
 }
 
 bool arc_riscpc_route_epoch_with_clock(time_t (*clock)(time_t *),uint64_t *out)

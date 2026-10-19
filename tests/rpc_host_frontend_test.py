@@ -10,6 +10,8 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
     root=Path(temporary);system=root/'system';roms=generate(system)
     firmware=system/'arcdroid/firmware';firmware.mkdir(parents=True)
     shutil.copyfile(Path(fixtures)/'arcdroid-test.rom',firmware/'authored.data')
+    if mode=='shipping-override-os':
+        shutil.copyfile(Path(fixtures)/'arcdroid-unsupported-launch-test.rom',firmware/'authored.data')
     content=root/'authored.jfd';image=bytearray(build_extended_jfd(bytes(256),b'Authored host fixture'))
     struct.pack_into('<I',image,304,0 if mode=='shipping-legacy' else (20<<8)|(12<<16));content.write_bytes(image)
     seed=system/'seed';seed.write_bytes(bytes(256))
@@ -46,9 +48,15 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
         run=subprocess.run([exe,library,str(content if mode.startswith('shipping') else plan),str(system),str(save),mode],capture_output=True,text=True,timeout=120)
         assert run.returncode==0,run.stdout+run.stderr
         output=run.stdout
-        if mode=='shipping-override':
+        if mode.startswith('shipping-override'):
             old='This title is flagged for RiscPC-class machines (StrongARM/RISC OS 3.5+), which ArcDroid does not emulate; booting anyway.'
             new='This title is flagged for RiscPC-class machines; starting on A3000 because it is selected in core options.'
+            if not extra or i:
+                lines=output.splitlines()
+                assert sum(line==f'log:1:N-9: {new}' for line in lines)==1,output
+                assert sum(line.startswith('message:') and line.endswith(':'+new) for line in lines)==1,output
+                assert old not in output,output
+            else:assert 'N-9:' not in output and old in output,output
             output='\n'.join(line for line in output.split('\n') if 'N-9:' not in line and new not in line and old not in line)
         outputs.append(output.replace(str(save),'<save>').replace(str(root),'<case>'))
         stores.append(save_snapshot(save))
@@ -56,5 +64,6 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
         assert outputs[0]==outputs[1], '\n'.join(__import__('difflib').unified_diff(outputs[0].splitlines(),outputs[1].splitlines()))
         assert stores[0]==stores[1] and stores[0]
         assert not any('riscpc' in name for name in stores[0])
-        print(f'shipping ordinary RPC-flagged content: complete log/message/AV/media/audio projection and {len(stores[0])} persisted/staged files byte-identical; G-3 excluded')
+        label='unflagged' if mode=='shipping-legacy' else 'RPC-flagged'
+        print(f'shipping ordinary {label} content: complete log/message/AV/media/audio projection and {len(stores[0])} persisted/staged files byte-identical; G-3 excluded')
     else:print(outputs[0],end='')

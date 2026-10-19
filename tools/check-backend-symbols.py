@@ -273,6 +273,11 @@ CENSUS_SERVICES = {
     "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoull",
     "clock_gettime", "sysctlbyname",
     "getauxval",  # Linux/Android hash HWCAP query; no allocation.
+    # R3d-4 module identity: RTLD_NOLOAD reference balanced by dlclose;
+    # dladdr/dlsym return borrowed module metadata, no application allocation.
+    "dlopen", "dlclose", "dladdr", "dlsym",
+    # FROM_ADDRESS | UNCHANGED_REFCOUNT and borrowed primary module handle.
+    "GetModuleHandleExW", "GetModuleHandleW",
     # Existing dormant native lock module: handles/fds, never heap ownership.
     "close", "flock", "fstat", "open", "stat", "fcntl",
     # MinGW runtime and existing test-only exception locator. The locator's

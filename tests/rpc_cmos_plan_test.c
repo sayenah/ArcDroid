@@ -151,7 +151,8 @@ int main(int argc,char **argv)
         struct retro_game_info arc_game={arc_path,NULL,0,NULL};bool (*arc_write)(unsigned,uint8_t);bool (*arc_image)(uint8_t *);
         LOAD(arc_write,"arc_engine_test_cmos_write");LOAD(arc_image,"arc_engine_test_cmos_image");
         audit_mode=2;assert(load(&arc_game));assert(arc_write(100,0x22));run();
-        audit_mode=0;assert(load(&game));settle(run);assert(phase()==2); /* existing Arc eager persistence survives the switch */
+        unload(); /* R-1a requires the old session to end before content replacement. */
+        audit_mode=0;assert(load(&game));settle(run);assert(phase()==2); /* existing Arc persistence survives the switch */
         audit_mode=1;run();unload();assert(rpc_accesses);
         audit_mode=2;assert(load(&arc_game));uint8_t live[256];assert(arc_image(live));assert(live[100]==0x22);
         run();unload();assert(arc_accesses);deinit();vfs_assert_no_open_handles();puts("Arculator/RPC/Arculator persistence and audited path isolation passed");return 0;

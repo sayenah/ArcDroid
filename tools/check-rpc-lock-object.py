@@ -8,6 +8,15 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import ast
+
+def flag_value(expression):
+    expression=re.sub(r'(?<=[0-9a-fA-F])[uUlL]+\b','',expression)
+    def value(node):
+        if isinstance(node,ast.Constant) and type(node.value) is int:return node.value
+        if isinstance(node,ast.BinOp) and isinstance(node.op,ast.BitOr):return value(node.left)|value(node.right)
+        raise ValueError('unreviewed native lock flag expression')
+    return value(ast.parse(expression,mode='eval').body)
 
 def expanded_calls(body):
     spec=importlib.util.spec_from_file_location('sentinel_source_guard',Path(__file__).with_name('check-shipping-lock-io.py'))
@@ -75,6 +84,13 @@ def check(build,platform,nm):
                          {'open':1,'close':1,'stat':1,'fstat':1,'flock':2} if platform=='apple' else
                          {'CreateFileW':1,'CloseHandle':1,'GetLastError':3,'LockFileEx':1,'UnlockFileEx':1,'MultiByteToWideChar':1})
         if +actual!=expected:raise ValueError('real preprocessor native call census differs')
+        # Resolve operands independently from clean platform headers, so a
+        # source/header override of LOCK_NB or FAIL_IMMEDIATELY cannot pass.
+        probe=[args[0]];take=False
+        for arg in args[1:]:
+            if take:probe.append(arg);take=False;continue
+            if arg in ('--sysroot','-isysroot','-target','--target'):probe.append(arg);take=True
+            elif arg.startswith(('--sysroot=','--target=','-march=','-mabi=','-mmacosx-version-min=')):probe.append(arg)
         # Instrumentation imports never confer file access.
         unexpected={name for name in imports-common-native if not name.startswith(('__asan_report_','__asan_stack_malloc_','__asan_set_shadow_','__asan_version_mismatch_check_apple_clang_','__ubsan_handle_','__asan_mem'))}
         if unexpected:raise ValueError('unreviewed compiled sentinel imports: '+', '.join(sorted(unexpected)))
@@ -103,8 +119,23 @@ def check(build,platform,nm):
             if '__APPLE__' in source_macros or 'flock(' in source:raise ValueError('OFD platform redirected to Apple')
         elif platform=='apple':
             if source.count('flock((int)handle,')!=2 or not re.search(r'\b_flock\b',symbols) or re.search(r'\b_fcntl\b',symbols):raise ValueError('Apple compiled lock backend differs')
+            macros=subprocess.check_output([*probe,'-E','-dM','-x','c','-'],input='#include <sys/file.h>\n',text=True)
+            def constant(name):
+                match=re.search(r'^#define '+name+r'\s+(.+)$',macros,re.M)
+                if not match:raise ValueError('missing real lock constant '+name)
+                return flag_value(match[1])
+            operands=re.findall(r'flock\(\(int\)handle,([^;]*?)\)',source)
+            if [flag_value(x) for x in operands]!=[constant('LOCK_EX')|constant('LOCK_NB'),constant('LOCK_UN')]:raise ValueError('Apple lock operands are not exclusive/nonblocking and unlock')
         else:
             if source.count('LockFileEx(')!=1 or source.count('UnlockFileEx(')!=1 or 'LockFileEx' not in symbols:raise ValueError('Windows compiled lock backend differs')
+            macros=subprocess.check_output([*probe,'-E','-dM','-x','c','-'],input='#include <windows.h>\n',text=True)
+            def constant(name):
+                match=re.search(r'^#define '+name+r'\s+(.+)$',macros,re.M)
+                if not match:raise ValueError('missing real lock constant '+name)
+                return flag_value(match[1])
+            operand=re.search(r'LockFileEx\(\(HANDLE\)handle,(.*?),0,1,0,&overlap\)',source)
+            if not operand or flag_value(operand[1])!=constant('LOCKFILE_EXCLUSIVE_LOCK')|constant('LOCKFILE_FAIL_IMMEDIATELY'):raise ValueError('Windows lock operands are not exclusive/fail-immediately')
+            if 'UnlockFileEx((HANDLE)handle,0,1,0,&overlap)' not in source:raise ValueError('Windows unlock range differs')
         forbidden=r'\b(?:read|write|pread|pwrite|ftruncate|ReadFile|WriteFile|mmap)\s*\('
         if re.search(forbidden,'\n'.join(body)):raise ValueError('expanded sentinel body contains data I/O')
         seen+=1

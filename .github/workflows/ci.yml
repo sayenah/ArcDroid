@@ -383,7 +383,7 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
           }
-      - name: RetroArch 1.22.2 native load, power-on Shift, screenshot, reloads, and RPC notice privacy
+      - name: RetroArch 1.22.2 real gate-open ordinary load, reloads, and RPC notice privacy
         shell: pwsh
         run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native -OrdinaryRouteBuild build/ordinary-open
       - name: Slice 28 guarded old-map JFD persistence and refusal

@@ -65,7 +65,10 @@ static void arc_rpc_staging_capture_log(enum retro_log_level level,const char *f
 }
 static void arc_rpc_staging_begin(void)
 {
-    memset(&arc_rpc_staging,0,sizeof(arc_rpc_staging));
+    memset(arc_rpc_staging.bytes,0,arc_rpc_staging.used);
+    memset(arc_rpc_staging.event,0,arc_rpc_staging.count*sizeof(arc_rpc_staging.event[0]));
+    arc_rpc_staging.used=arc_rpc_staging.count=0;
+    arc_rpc_staging.flagged=arc_rpc_staging.overflowed=arc_rpc_staging.safe_after_overflow=false;
     arc_rpc_staging.log=arc_log;arc_rpc_staging.active=true;
     if(arc_log)arc_log=arc_rpc_staging_capture_log;
 }

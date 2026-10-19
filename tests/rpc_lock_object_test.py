@@ -18,6 +18,10 @@ variants={
 if platform=='ofd':
     variants['header-apple']='#include <sys/file.h>\n#define __APPLE__ 1\n'
     variants['classic-lock']='#undef F_OFD_SETLK\n#define F_OFD_SETLK F_SETLK\n'
+elif platform=='apple':
+    variants['blocking-flock']='#undef LOCK_NB\n#define LOCK_NB 0\n'
+else:
+    variants['blocking-lockfile']='#undef LOCKFILE_FAIL_IMMEDIATELY\n#define LOCKFILE_FAIL_IMMEDIATELY 0\n'
 with tempfile.TemporaryDirectory(prefix='rpc-lock-object-') as temporary:
     work=Path(temporary);(work/'libretro').mkdir();mutant=work/'libretro/arc_lock.c';header=work/'poison.h';obj=work/'lock.o'
     for label,payload in [('control',''),*variants.items()]:

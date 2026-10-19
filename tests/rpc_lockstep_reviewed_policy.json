@@ -6394,6 +6394,12 @@
         "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
         "classification": "host-only/excluded",
         "reason": "R-4: monotonic load-entry performance timestamp, unrelated to the separately captured guest RTC epoch."
+      },
+      "::arc_rpc_alias_lifecycle": {
+        "declaration": "static bool arc_rpc_alias_lifecycle",
+        "citation": "docs/riscpc-r3d4-design.md:§10; R-1a",
+        "classification": "host-only/excluded",
+        "reason": "Nested RetroArch environment/init/unload/deinit suppression for an aliased secondary while the primary remains loaded; never guest state."
       }
     },
     "tests/arc_test_plan.c": {
