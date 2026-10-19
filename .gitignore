@@ -6,6 +6,9 @@ roms/private/
 # OS noise
 .DS_Store
 
+# Python imports at any source-tree depth
+__pycache__/
+
 # Local CMake/Ninja output
 build/
 out/
