@@ -1,12 +1,4 @@
 /* ArcDroid session, media and owned JFD graph codec. GPL-2.0-only. */
-static void arc_state_heap_bytes(ArcState *s,const char *name,void *slot,size_t bytes,size_t maximum)
-{
-   void *data=arc_state_heap(s,name,slot,bytes,maximum);
-   if(arc_state_pass(s)&&data) {
-      arc_state_object(s,name);
-      arc_state_value(s,data,arc_state_heap_size(s,name));
-   }
-}
 typedef struct {ArcJfdOverlay *previous;size_t sectors;bool all;} ArcStateJfdRetirement;
 static void arc_state_jfd_retire_commit(void *opaque)
 {
@@ -14,8 +6,8 @@ static void arc_state_jfd_retire_commit(void *opaque)
    if(old->data)for(size_t i=0;i<r->sectors;++i)free(old->data[i]);
    if(r->all) {
       free(old->data);free(old->eligible);free(old->store);
-      for(unsigned t=0;t<ARC_JFD_PDD5_TRACKS;++t)for(unsigned id=0;id<ARC_JFD_PDD5_IDS;++id)free(old->created[t][id]);
    }
+   for(unsigned t=0;t<ARC_JFD_PDD5_TRACKS;++t)for(unsigned id=0;id<ARC_JFD_PDD5_IDS;++id)free(old->created[t][id]);
    free(r);
 }
 static void arc_state_jfd_retire(ArcState *s,ArcJfdOverlay *old,size_t sectors,bool all)
@@ -24,13 +16,122 @@ static void arc_state_jfd_retire(ArcState *s,ArcJfdOverlay *old,size_t sectors,b
    if(!r){arc_state_fail(s,"allocation");return;}
    *r=(ArcStateJfdRetirement){old,sectors,all};arc_state_action(s,arc_state_jfd_retire_commit,arc_state_free,r);
 }
+/* Immutable sector metadata is derived from the validated source, independently
+ * of the current mutable overlay. Temporary parser ownership is charged too. */
+static void arc_state_jfd_base(ArcState *s,const uint8_t *decoded,size_t bytes,
+                               ArcJfdSector *sectors,size_t count,uint8_t *eligible,
+                               const ArcJfdImage *previous,ArcJfdOverlay *overlay)
+{
+   if(!arc_state_loading(s)||arc_state_pass(s)||!bytes||arc_state_error(s))return;
+   /* Immutable descriptors prepared for this same source are a warm cache,
+    * independent of overlay visibility, generation or saved mutable fields. */
+   if(previous->decoded&&previous->decoded_size==bytes&&previous->sector_count==count&&
+      (!count||previous->sectors)) {
+      if(count)memcpy(sectors,previous->sectors,count*sizeof(*sectors));
+      if(eligible) {
+         if(previous->overlay&&previous->overlay->eligible)
+            memcpy(eligible,previous->overlay->eligible,count);
+         else if(!arc_state_scratch_reserve(s,2u*count*sizeof(*sectors))||
+                 !arc_jfd_state_eligibility(previous,eligible))arc_state_fail(s,"JFD source eligibility");
+      }
+      if(overlay) {
+         memset(overlay->creation_mask,0,sizeof(overlay->creation_mask));
+         if(previous->overlay)memcpy(overlay->creation_mask,previous->overlay->creation_mask,sizeof(overlay->creation_mask));
+         else if(eligible&&arc_jfd_write_authorized(previous,arc_core_options.jfd_write_policy)) {
+            ArcJfdOverlay plan={0};plan.eligible=eligible;
+            (void)arc_jfd_plan_creation(previous,&plan,arc_core_options.jfd_write_policy);
+            memcpy(overlay->creation_mask,plan.creation_mask,sizeof(overlay->creation_mask));
+         }
+      }
+      return;
+   }
+   if(!arc_state_scratch_reserve(s,bytes+3u*count*sizeof(*sectors)))return;
+   ArcJfdImage parsed={0};char error[128];
+   if(!arc_jfd_parse(decoded,bytes,&parsed,error,sizeof(error))||parsed.sector_count!=count)
+      arc_state_fail(s,"JFD source descriptors");
+   else {
+      if(count)memcpy(sectors,parsed.sectors,count*sizeof(*sectors));
+      if(eligible&&!arc_jfd_state_eligibility(&parsed,eligible))arc_state_fail(s,"JFD source eligibility");
+      if(overlay) {
+         ArcJfdOverlay plan={0};plan.eligible=eligible;
+         if(eligible&&!arc_state_error(s)&&arc_jfd_write_authorized(&parsed,arc_core_options.jfd_write_policy))
+            (void)arc_jfd_plan_creation(&parsed,&plan,arc_core_options.jfd_write_policy);
+         memcpy(overlay->creation_mask,plan.creation_mask,sizeof(overlay->creation_mask));
+      }
+   }
+   arc_jfd_free(&parsed);
+}
+typedef struct {ArcJfdOverlay *overlay;size_t count;} ArcStateJfdPayloads;
+static void arc_state_jfd_payload_rollback(void *opaque)
+{
+   ArcStateJfdPayloads *r=opaque;
+   if(r->overlay->data)for(size_t i=0;i<r->count;++i)free(r->overlay->data[i]);
+   for(unsigned t=0;t<ARC_JFD_PDD5_TRACKS;++t)for(unsigned id=0;id<ARC_JFD_PDD5_IDS;++id)free(r->overlay->created[t][id]);
+}
+static void arc_state_jfd_payloads(ArcState *s,const char *prefix,ArcJfdOverlay *overlay,
+                                  uint8_t **data,const ArcJfdSector *sectors,size_t count)
+{
+   char name[160];snprintf(name,sizeof(name),"%s.payloads",prefix);
+   size_t slots=count+ARC_JFD_PDD5_SLOTS,mask_bytes=(slots+7u)/8u;
+   size_t maximum=16u+mask_bytes+ARC_JFD_MAX_DECODED+ARC_JFD_PDD5_SLOTS*1024u;
+   uint8_t *wire=NULL;size_t bytes=16u+mask_bytes;
+   if(!arc_state_pass(s)&&!arc_state_loading(s)) {
+      for(size_t i=0;i<slots;++i) {
+         const uint8_t *p=i<count?(data?data[i]:NULL):overlay->created[(i-count)/5u][(i-count)%5u];
+         if(p)bytes+=i<count?sectors[i].size:1024u;
+      }
+      if(bytes>maximum){arc_state_fail(s,"JFD payload size");return;}
+      wire=arc_state_scratch(s,bytes);if(!wire)return;memset(wire,0,16u+mask_bytes);
+      for(unsigned i=0;i<8u;++i)wire[i]=(uint8_t)((uint64_t)count>>(i*8u));
+      size_t at=16u+mask_bytes;
+      for(size_t i=0;i<slots;++i) {
+         const uint8_t *p=i<count?(data?data[i]:NULL):overlay->created[(i-count)/5u][(i-count)%5u];
+         if(!p)continue;
+         wire[16u+i/8u]|=(uint8_t)(1u<<(i%8u));size_t n=i<count?sectors[i].size:1024u;
+         memcpy(wire+at,p,n);at+=n;
+      }
+   }
+   size_t loaded=0;const uint8_t *saved=arc_state_blob(s,name,wire,bytes,maximum,&loaded);
+   if(arc_state_error(s))return;
+   if(arc_state_loading(s)&&!arc_state_pass(s)) {
+      if(loaded<16u+mask_bytes){arc_state_fail(s,"JFD payload header");return;}
+      uint64_t incoming=0;for(unsigned i=0;i<8u;++i)incoming|=(uint64_t)saved[i]<<(8u*i);
+      if(incoming!=count){arc_state_fail(s,"JFD payload count");return;}
+      for(unsigned i=8u;i<16u;++i)if(saved[i]){arc_state_fail(s,"JFD payload reserved");return;}
+      if(slots%8u&&(saved[16u+mask_bytes-1u]>>(slots%8u))){arc_state_fail(s,"JFD payload padding");return;}
+      if(data)memset(data,0,count*sizeof(*data));
+      memset(overlay->created,0,sizeof(overlay->created));overlay->data=data;
+      ArcStateJfdPayloads *r=arc_state_scratch(s,sizeof(*r));if(!r)return;
+      *r=(ArcStateJfdPayloads){overlay,count};arc_state_action(s,NULL,arc_state_jfd_payload_rollback,r);
+      size_t at=16u+mask_bytes;
+      for(size_t i=0;i<slots;++i)if(saved[16u+i/8u]&(1u<<(i%8u))) {
+         bool allowed=i<count?(data&&overlay->eligible&&overlay->eligible[i]):
+            ((overlay->creation_mask[(i-count)/5u]&(1u<<((i-count)%5u)))!=0);
+         size_t n=i<count?sectors[i].size:1024u;
+         if(!allowed||!n||n>1024u||n>loaded-at){arc_state_fail(s,"JFD payload eligibility");return;}
+         if(!arc_state_ownership_resize(s,0,n))return;
+         uint8_t *p=malloc(n);if(!p){arc_state_fail(s,"allocation");return;}
+         memcpy(p,saved+at,n);at+=n;
+         if(i<count)data[i]=p;else overlay->created[(i-count)/5u][(i-count)%5u]=p;
+      }
+      if(at!=loaded){arc_state_fail(s,"JFD payload trailing bytes");return;}
+   }
+   for(size_t i=0;i<slots;++i) {
+      uint8_t *p=i<count?(data?data[i]:NULL):overlay->created[(i-count)/5u][(i-count)%5u];
+      if(!p)continue;
+      if(i<count)snprintf(name,sizeof(name),"%s.replacement.%zu",prefix,i);
+      else snprintf(name,sizeof(name),"%s.created.%zu.%zu",prefix,(i-count)/5u,(i-count)%5u);
+      size_t n=i<count?sectors[i].size:1024u;
+      arc_state_region(s,name,p,n);arc_state_target_range(s,p,n,ARC_STATE_REFERENCE_JFD_DATA);
+   }
+}
 static void arc_state_jfd(ArcState *s,unsigned index)
 {
    ArcJfdImage *image=&arc_media[index].jfd;
    char name[160],prefix[80];
    snprintf(prefix,sizeof(prefix),"media.%u.jfd",index);
    snprintf(name,sizeof(name),"%s.decoded",prefix);
-   uint8_t *decoded=arc_state_heap(s,name,&image->decoded,image->decoded_size,ARC_JFD_MAX_DECODED);
+   uint8_t *decoded=arc_state_heap_derived(s,name,&image->decoded,image->decoded_size,ARC_JFD_MAX_DECODED);
    size_t decoded_size=arc_state_heap_size(s,name);
    if(decoded)arc_state_target_range(s,decoded,decoded_size,ARC_STATE_REFERENCE_JFD_DATA);
    arc_state_target(s,image,ARC_STATE_REFERENCE_JFD_IMAGE);
@@ -41,14 +142,13 @@ static void arc_state_jfd(ArcState *s,unsigned index)
       if(arc_state_loading(s)&&!arc_state_pass(s)&&base&&base_size==decoded_size)memcpy(decoded,base,decoded_size);
    }
    snprintf(name,sizeof(name),"%s.sectors",prefix);
-   ArcJfdSector *sectors=arc_state_heap(s,name,&image->sectors,image->sector_count*sizeof(*sectors),
+   ArcJfdSector *sectors=arc_state_heap_derived(s,name,&image->sectors,image->sector_count*sizeof(*sectors),
       ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK*sizeof(*sectors));
    size_t sector_bytes=arc_state_heap_size(s,name),sector_count=sector_bytes/sizeof(*sectors);
    if(sector_bytes%sizeof(*sectors))arc_state_fail(s,"JFD descriptors");
    if(arc_state_pass(s)&&decoded_size) {
       arc_state_object(s,name);
-      for(size_t i=0;i<sector_count;++i)
-         arc_state_value(s,&sectors[i],offsetof(ArcJfdSector,flags)+sizeof(sectors[i].flags));
+      /* Source descriptors are rebuilt before field/reference traversal. */
       arc_state_object(s,"libretro/arcdroid_libretro.c:arc_media");
       arc_state_jfd_image_values(s,image);
       size_t incoming_size,incoming_count;
@@ -76,39 +176,35 @@ static void arc_state_jfd(ArcState *s,unsigned index)
    ArcJfdOverlay *old=image->overlay;
    ArcJfdOverlay *overlay=arc_state_heap(s,name,&image->overlay,old?sizeof(*old):0,sizeof(*old));
    if(!overlay) {
+      arc_state_jfd_base(s,decoded,decoded_size,sectors,sector_count,NULL,image,NULL);
       if(arc_state_loading(s)&&!arc_state_pass(s)&&old)arc_state_jfd_retire(s,old,image->sector_count,true);
       return;
    }
-   if(arc_state_pass(s)) {arc_state_object(s,name);arc_state_jfd_overlay_values(s,overlay);}
+   if(arc_state_pass(s)) {
+      arc_state_object(s,name);arc_state_jfd_overlay_values(s,overlay);
+      if(arc_state_loading(s)) {
+         uint8_t incoming[ARC_JFD_PDD5_TRACKS];
+         arc_state_project(s,incoming,overlay->creation_mask,sizeof(incoming));
+         if(memcmp(incoming,overlay->creation_mask,sizeof(incoming)))arc_state_fail(s,"JFD source creation mask");
+      }
+   }
    snprintf(name,sizeof(name),"%s.eligible",prefix);
-   arc_state_heap_bytes(s,name,&overlay->eligible,old&&old->eligible?image->sector_count:0,
+   uint8_t *eligible=arc_state_heap_derived(s,name,&overlay->eligible,old&&old->eligible?image->sector_count:0,
       ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK);
+   if(eligible&&arc_state_heap_size(s,name)!=sector_count)arc_state_fail(s,"JFD eligibility extent");
+   arc_state_jfd_base(s,decoded,decoded_size,sectors,sector_count,eligible,image,overlay);
+   if(arc_state_loading(s)&&!arc_state_pass(s))overlay->eligible=eligible;
    snprintf(name,sizeof(name),"%s.replacements",prefix);
    uint8_t **replacements=arc_state_heap(s,name,&overlay->data,
       old&&old->data?image->sector_count*sizeof(uint8_t*):0,
       ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK*sizeof(uint8_t*));
    size_t replacement_count=arc_state_heap_size(s,name)/sizeof(uint8_t*);
-   if(arc_state_loading(s)&&!arc_state_pass(s)&&!replacements&&old&&old->data)
-      arc_state_jfd_retire(s,old,image->sector_count,false);
    if(replacements&&replacement_count!=sector_count)arc_state_fail(s,"JFD replacements");
-   for(size_t i=0;i<replacement_count;++i) {
-      snprintf(name,sizeof(name),"%s.replacement.%zu",prefix,i);
-      size_t old_size=old&&old->data&&i<image->sector_count&&old->data[i]?image->sectors[i].size:0;
-      arc_state_heap_bytes(s,name,&replacements[i],old_size,65536u);
-      size_t n=arc_state_heap_size(s,name);
-      if(n)arc_state_target_range(s,replacements[i],n,ARC_STATE_REFERENCE_JFD_DATA);
-      if(arc_state_pass(s)&&n&&n!=sectors[i].size)arc_state_fail(s,"JFD sector extent");
-   }
-   for(unsigned t=0;t<ARC_JFD_PDD5_TRACKS;++t)for(unsigned id=0;id<ARC_JFD_PDD5_IDS;++id) {
-      snprintf(name,sizeof(name),"%s.created.%u.%u",prefix,t,id);
-      arc_state_heap_bytes(s,name,&overlay->created[t][id],
-         old&&old->created[t][id]?1024u:0,1024u);
-      size_t n=arc_state_heap_size(s,name);
-      if(n)arc_state_target_range(s,overlay->created[t][id],n,ARC_STATE_REFERENCE_JFD_DATA);
-      if(n&&n!=1024u)arc_state_fail(s,"JFD creation extent");
-   }
+   if(arc_state_loading(s)&&!arc_state_pass(s)&&old)arc_state_jfd_retire(s,old,image->sector_count,false);
+   arc_state_jfd_payloads(s,prefix,overlay,replacements,sectors,sector_count);
    snprintf(name,sizeof(name),"%s.store",prefix);
-   arc_jfd_state_binding(s,name,overlay,decoded,decoded_size,arc_save_path,index+1u);
+   arc_jfd_state_binding(s,name,overlay,arc_media[index].digest.sha1,
+      arc_media[index].jfd_sha256,arc_save_path,index+1u);
    if(arc_state_loading(s)) {
       overlay->log_refusal=arc_jfd_log_refusal;
       overlay->log_map_unavailable=arc_jfd_log_map_unavailable;
@@ -132,12 +228,12 @@ static void arc_state_frontend_extra(ArcState *s)
    arc_io_state_binding(64,":arcdroid-memory-0:",false);
    arc_io_state_binding(65,":arcdroid-memory-1:",false);
    arc_io_state_binding(66,arc_helper_path,false);arc_io_state_base_path(66,arc_helper_path);
-   arc_state_io_snapshot(s);
+   arc_state_io_snapshot_bounded(s,65536u);
    arc_state_io_frontiers(s);
    arc_state_region(s,"media.carrier",arc_adffs_carrier,arc_adffs_carrier?ARC_ADFFS_DISC_SIZE:0);
    arc_state_region(s,"media.support",arc_adffs_support,arc_adffs_support?ARC_ADFFS_DISC_SIZE:0);
-   (void)arc_state_heap(s,"video.osk.pixels",&arc_osk_surface,arc_osk_surface_pixels*sizeof(*arc_osk_surface),4096u*2048u*4u);
-   arc_state_raster(s,"libretro/arcdroid_libretro.c:arc_present_frame",arc_present_frame,4096u,arc_present_rows);
+   (void)arc_state_heap_derived(s,"video.osk.pixels",&arc_osk_surface,arc_osk_surface_pixels*sizeof(*arc_osk_surface),4096u*2048u*4u);
+   /* D-215: presentation pixels are derived; geometry and OSK stay exact. */
    if(arc_adffs_carrier)arc_state_target_range(s,arc_adffs_carrier,ARC_ADFFS_DISC_SIZE,ARC_STATE_REFERENCE_MEDIA_DATA);
    if(arc_adffs_support)arc_state_target_range(s,arc_adffs_support,ARC_ADFFS_DISC_SIZE,ARC_STATE_REFERENCE_MEDIA_DATA);
    unsigned decoded_images=0;
@@ -251,3 +347,15 @@ static void arc_state_frontend_extra(ArcState *s)
    }
 
 }
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* Exercise created payload ownership independently of guest FDC commands. */
+RETRO_API bool arc_libretro_test_ss1_jfd_create(unsigned image,unsigned track,unsigned id,uint8_t value)
+{
+   if(image>=arc_media_count||track>=ARC_JFD_PDD5_TRACKS||id>=ARC_JFD_PDD5_IDS)return false;
+   ArcJfdImage *jfd=&arc_media[image].jfd;
+   if(!jfd->overlay||!jfd->overlay->writable||!jfd->overlay->commit_created)return false;
+   uint8_t bytes[1024];memset(bytes,value,sizeof(bytes));
+   return jfd->overlay->commit_created(jfd,track,id,bytes);
+}
+#endif

@@ -566,7 +566,8 @@ void clearbitmap()
 
 #if defined(ARCDROID_TEST_FAULTS)
 /* ArcDroid (2026-10-07): observe raster reset without changing VIDC registers. */
-void arc_arculator_test_vidc_state(ArcArculatorVidcResetState *out)
+/* ArcDroid (2026-10-19): return actual save-field parity to the video oracle. */
+unsigned arc_arculator_test_vidc_state(ArcArculatorVidcResetState *out)
 {
 	out->phase = vidc.state;
 	out->line = vidc.line;
@@ -575,6 +576,7 @@ void arc_arculator_test_vidc_state(ArcArculatorVidcResetState *out)
 	out->displayon_latch = vidc_displayon;
 	out->video_address = vidc.addr;
 	out->cursor_address = vidc.caddr;
+	return (unsigned)vidc.oddeven;
 }
 #endif
 
@@ -848,8 +850,9 @@ static void vidc_poll(void *__p)
 				xoffset=200-(xoffset>>1);
 				if (vidc.hdstart<vidc.hbstart) xoffset2=xoffset+(vidc.hdstart-vidc.hbstart);
 				else                           xoffset2=xoffset;
-				xoffset<<=1;
-				xoffset2<<=1;
+				/* Border offsets can be negative; signed left shift is undefined. */
+				xoffset*=2;
+				xoffset2*=2;
 
 				xstart = vidc.hdstart*2;
 				if (xstart > (vidc.htot+1)*4)
@@ -885,7 +888,8 @@ static void vidc_poll(void *__p)
 						temp = ram[vidc.addr++];
 						if (x < 4096)
 						{
-							for (xx = 0; xx < 64; xx += 2)
+							/* ArcDroid (2026-10-19): bound shifts; retain existing 32-pixel scanout. */
+							for (xx = 0; xx < 32; xx += 2)
 								((uint32_t *)bp)[x+xx] = ((uint32_t *)bp)[x+xx+1] = vidc.pal[(temp>>xx)&1];
 						}
 						if (vidc.addr == vend + 4)
@@ -1535,11 +1539,111 @@ void vidc_debug_print(char *s)
 		   stereo_images[stereoimages[6]], stereo_images[stereoimages[7]]);
 }
 
+/* ArcDroid (2026-10-19), D-215: load-only present-day scanout.
+ * All addresses/counters are local. No vidc_poll, timer, DMA, IRQ, callback
+ * or palette update runs. Historical pixels may differ; guest state is exact. */
+void arc_vidc_rebuild_picture(uint32_t *output,unsigned width,unsigned height,size_t pitch)
+{
+   if(!buffer||!buffer->dat||!output||!ram||memsize<=0)return;
+#if defined(ARCDROID_SAVE_STATES)
+   for(unsigned y=0;y<2048u;++y)if(arc_raster_rows[y][1])
+      memset(buffer->line[y]+arc_raster_rows[y][0]*4u,0,
+         (arc_raster_rows[y][1]-arc_raster_rows[y][0])*4u);
+   memset(arc_raster_rows,0,sizeof(arc_raster_rows));
+#else
+   clear(buffer);
+#endif
+   unsigned depth=1u<<((vidcr[VIDC_CR]>>2u)&3u);
+   unsigned repeat=(vidcr[VIDC_CR]&2u)?1u:2u;
+   unsigned words=(unsigned)memsize*256u;
+   unsigned total=vidc.vtot>1024u?1024u:vidc.vtot;
+   uint64_t address=vinit,cursor=cinit;
+   int left=vidc.hdstart*(int)repeat,right=vidc.hdend*(int)repeat;
+   int border_left=vidc.hbstart*(int)repeat,border_right=vidc.hbend*(int)repeat;
+   for(unsigned y=0;y<total;++y) {
+      uint32_t *line=(uint32_t*)buffer->line[vidc.interlace_enable?y*2u:y];
+      int a=border_left<0?0:border_left,b=border_right>4096?4096:border_right;
+      int first=4096,last=0;
+      if(y>=(unsigned)vidc.vbstart&&y<(unsigned)vidc.vbend&&a<b) {
+         first=a;last=b;
+         for(int x=a;x<b;++x)line[x]=vidc.pal[16];
+      }
+      if(memc_videodma_enable&&y>=(unsigned)vidc.vdstart&&y<(unsigned)vidc.vdend&&right>left) {
+         uint32_t value=0;unsigned shift=32u;
+         int end=right>4096?4096:right,start=left<0?0:left;
+         if(start<end){if(start<first)first=start;if(end>last)last=end;}
+         for(int x=left;x<end;x+=(int)repeat) {
+            if(shift==32u) {
+               value=ram[address%words];++address;shift=0;
+               if(address==(uint64_t)vend+4u)address=vstart;
+            }
+            unsigned index=(value>>shift)&((1u<<depth)-1u);shift+=depth;
+            uint32_t colour=depth==8u?vidc.pal8[index]:vidc.pal[index];
+            for(unsigned r=0;r<repeat;++r)if(x+(int)r>=0&&x+(int)r<4096)line[x+r]=colour;
+         }
+         if(y>=(unsigned)((vidc.cys>>14)+2)&&y<(unsigned)((vidc.cye>>14)+2)) {
+            int cursor_left=vidc.cx*(int)repeat,cursor_right=cursor_left+32*(int)repeat;
+            if(cursor_right>4096)cursor_right=4096;
+            if(cursor_left<cursor_right){if(cursor_left<first)first=cursor_left;if(cursor_right>last)last=cursor_right;}
+            for(unsigned word=0;word<2u;++word) {
+               uint32_t bits=ram[cursor++%words];
+               for(unsigned pixel=0;pixel<16u;++pixel) {
+                  unsigned index=(bits>>(pixel*2u))&3u;
+                  int x=vidc.cx*(int)repeat+(int)((word*16u+pixel)*repeat);
+                  if(index)for(unsigned r=0;r<repeat;++r)
+                     if(x+(int)r>=0&&x+(int)r<4096)line[x+r]=vidc.pal[16u+index];
+               }
+            }
+         }
+      }
+      if(vidc.interlace_enable&&last>first)memcpy(buffer->line[y*2u+1u]+first*4u,line+first,(last-first)*4u);
+#if defined(ARCDROID_SAVE_STATES)
+      if(last>first) {
+         arc_state_raster_mark(arc_raster_rows,vidc.interlace_enable?y*2u:y,first,last-first);
+         if(vidc.interlace_enable)arc_state_raster_mark(arc_raster_rows,y*2u+1u,first,last-first);
+      }
+#endif
+   }
+   int source_x=left,source_y=vidc.vdstart*(vidc.interlace_enable?2:1);
+   int doubled=!vidc.interlace_enable&&!vidc.scanrate&&dblscan;
+   for(unsigned y=0;y<height&&y<2048u;++y) {
+      int row=source_y+(int)(doubled?y/2u:y);
+      if(row<0||row>=2048)continue;
+      int first=source_x<0?-source_x:0,last=width>4096u?4096:(int)width;
+      if(last>4096-source_x)last=4096-source_x;
+      if(first<last)memcpy(output+(size_t)y*pitch+first,
+         (uint32_t*)buffer->line[row]+source_x+first,(last-first)*4u);
+   }
+}
+
 #if defined(ARCDROID_SAVE_STATES)
 /* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
 #include "../../state-generated/vidc_state.inc"
 #include "../../state-generated/video_extra.inc"
 void arc_state_visit_engine_arculator_src_vidc_extra(ArcState *s) { arc_state_video_extra(s); }
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid (2026-10-19): authored phase/mode transitions for D-215. */
+void arc_engine_test_video_scenario(unsigned scenario)
+{
+   writevidc(0xe0000000u|(scenario&15u)|((scenario&16u)?64u:0u));
+   vidc.oddeven=(scenario>>5u)&1u;
+   writevidc(0x40000000u|((scenario*127u)&0xfffu));
+   writevidc(0x44000000u|((scenario*79u)&0xfffu));
+   writevidc(0x98000000u|((scenario*19u&0x3ffu)<<13u));
+   if(scenario&128u) {
+      /* Load-only known-pixel fixture; the harness restores the original
+       * machine before executing another guest instruction. */
+      vinit=vstart=0;vend=3;cinit=16;memc_videodma_enable=1;
+      vidc.vtot=4;vidc.vdstart=vidc.vbstart=1;vidc.vdend=vidc.vbend=3;
+      vidc.hdstart=vidc.hbstart=8;vidc.hdend=vidc.hbend=40;
+      vidc.cx=80;vidc.scanrate=1;
+      for(unsigned i=0;i<20u;++i)vidc.pal[i]=0x00112200u+i;
+      for(unsigned i=0;i<256u;++i)vidc.pal8[i]=0x00334400u+i;
+      for(unsigned i=0;i<32u;++i)ram[i]=0xe4e4e4e4u;
+   }
+}
 #endif
 
 #if defined(ARCDROID_TEST_FAULTS) && defined(ARCDROID_SAVE_STATES)

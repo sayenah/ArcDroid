@@ -2,7 +2,7 @@
   "license": "GPL-2.0-only",
   "version": 1,
   "grounding_commit": "0aa4c93eaec4",
-  "status": "SS-1 run H continuation: reviewed packed-colour/backward-row raster recipes, session pending-wire budget and numeric refusals. The 16 MiB/minimum-bound proof and R-SS3g integration remain open.",
+  "status": "SS-1 Run K: D-215 derived pictures/scratch, exact guest state, explicit speculative provenance and independent wire/ownership/scratch budgets.",
   "cmake_source_commands": [
     "add_library ( arcdroid_sanitizer_compile INTERFACE )",
     "add_library ( arcdroid_sanitizer_link INTERFACE )",
@@ -9176,6 +9176,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -14990,6 +15002,36 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# include \"../../state-generated/vidc_state.inc\"",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -14997,6 +15039,18 @@
       {
         "kind": "preprocessor",
         "declaration": "# include \"../../state-generated/video_extra.inc\"",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
@@ -15403,6 +15457,12 @@
         "declaration": "void clear ( BITMAP * b ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "void arc_vidc_rebuild_picture ( uint32_t * output , unsigned width , unsigned height , size_t pitch ) ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
       }
     ],
     "engine/arculator/src/video.h": [
@@ -17793,6 +17853,18 @@
         "declaration": "# include \"arc_state.h\"",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
+        "classification": "host-only",
+        "reason": "Run K test-only exhaustive pure lookup-table verification; no retained state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Run K test-only exhaustive pure lookup-table verification; no retained state."
       }
     ],
     "engine/state-generated/boundary.inc": [],
@@ -17903,6 +17975,18 @@
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
       {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
+        "classification": "host-only",
+        "reason": "Test-only created-sector cold-release regression hook; no persistent storage or shipping export."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Test-only created-sector cold-release regression hook; no persistent storage or shipping export."
+      },
+      {
         "kind": "layout",
         "declaration": "typedef struct { ArcJfdOverlay * previous ; size_t sectors ; bool all ; } ArcStateJfdRetirement ;",
         "classification": "derived-on-load",
@@ -17913,6 +17997,18 @@
         "declaration": "malloc ( sizeof ( * r ) )",
         "classification": "derived-on-load",
         "reason": "Prepared path change, JFD ownership retirement or bounded codec workspace; commit transfers current bindings and guest bytes, rollback releases only newly prepared resources."
+      },
+      {
+        "kind": "layout",
+        "declaration": "typedef struct { ArcJfdOverlay * overlay ; size_t count ; } ArcStateJfdPayloads ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "allocation:arc_state_jfd_payloads",
+        "declaration": "malloc ( n )",
+        "classification": "serialized",
+        "reason": "Run K JFD replacement/created payload ownership; bounded before allocation, freed on rollback, installed only at commit."
       }
     ],
     "engine/state-generated/ide_state.inc": [
@@ -19433,9 +19529,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "struct ArcState { struct StateRaster * rasters ; StateView * views ; size_t view_count , view_capacity ; StateTarget * targets ; size_t target_count , target_capacity ; StateAction * actions ; StateScratch * scratch ; StateText * texts ; bool loading , committed , registering , measuring ; uint64_t drop_owner ; bool drop_done ; unsigned pass ; const char * error ; char error_text [ 128 ] ; StateItem * items ; uint32_t * item_table ; size_t item_table_size ; size_t count , capacity ; StateRegion * regions ; size_t region_count , region_capacity ; StateWrite * writes ; uint32_t * write_table ; size_t write_table_size ; size_t write_count , write_capacity ; uint32_t * region_table ; size_t region_table_size ; StateRegion * * addresses ; size_t address_count ; StateRegion * object ; size_t output_size , heap_bytes , decoded_limit ; } ;",
+        "declaration": "struct ArcState { struct StateRaster * rasters ; StateView * views ; size_t view_count , view_capacity ; StateTarget * targets ; size_t target_count , target_capacity ; StateAction * actions ; StateScratch * scratch ; StateText * texts ; bool loading , committed , registering , measuring ; uint64_t drop_owner ; bool drop_done ; unsigned pass ; const char * error ; char error_text [ 128 ] ; StateItem * items ; uint32_t * item_table ; size_t item_table_size ; size_t count , capacity ; StateRegion * regions ; size_t region_count , region_capacity ; StateWrite * writes ; uint32_t * write_table ; size_t write_table_size ; size_t write_count , write_capacity ; uint32_t * region_table ; size_t region_table_size ; StateRegion * * addresses ; size_t address_count ; StateRegion * object ; size_t output_size , heap_bytes , decoded_limit , ownership_limit , scratch_limit , scratch_bytes ; } ;",
         "classification": "host-only",
-        "reason": "The new rasters link indexes transaction-owned validated row recipes; scratch lifetime ends with the codec. Existing graph, writes, identities and decoded bounds unchanged."
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
       },
       {
         "kind": "allocation:compress_words",
@@ -19474,13 +19570,13 @@
         "reason": "Prepared path change, JFD ownership retirement or bounded codec workspace; commit transfers current bindings and guest bytes, rollback releases only newly prepared resources."
       },
       {
-        "kind": "allocation:arc_state_begin_limited",
+        "kind": "allocation:arc_state_begin_bounded",
         "declaration": "calloc ( 1 , sizeof ( * s ) )",
         "classification": "host-only",
         "reason": "Transactional codec owns parse records, validated decoded-limit accounting and visitor-bounded deferred blob storage. All allocations retire with arc_state_end; no live guest state changes before commit."
       },
       {
-        "kind": "allocation:arc_state_begin_limited",
+        "kind": "allocation:arc_state_begin_bounded",
         "declaration": "calloc ( capacity , sizeof ( * s - > item_table ) )",
         "classification": "host-only",
         "reason": "Transactional codec owns parse records, validated decoded-limit accounting and visitor-bounded deferred blob storage. All allocations retire with arc_state_end; no live guest state changes before commit."
@@ -19498,13 +19594,13 @@
         "reason": "Prepared path change, JFD ownership retirement or bounded codec workspace; commit transfers current bindings and guest bytes, rollback releases only newly prepared resources."
       },
       {
-        "kind": "allocation:arc_state_string",
+        "kind": "allocation:arc_state_string_bounded",
         "declaration": "malloc ( sizeof ( * t ) + r - > bytes )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
       },
       {
-        "kind": "allocation:arc_state_heap",
+        "kind": "allocation:arc_state_heap_data",
         "declaration": "calloc ( count , 1 )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
@@ -19639,6 +19735,30 @@
       },
       {
         "kind": "declaration",
+        "declaration": "ArcState * arc_state_begin_bounded ( const void * input , size_t length , size_t wire , size_t decoded , size_t ownership , size_t scratch ) ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "size_t arc_state_ownership_limit ( const ArcState * state ) ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "size_t arc_state_ownership_remaining ( const ArcState * state ) ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_state_ownership_resize ( ArcState * state , size_t previous , size_t next ) ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "declaration",
         "declaration": "void arc_state_end ( ArcState * state ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -19672,6 +19792,18 @@
         "declaration": "const void * arc_state_delta ( ArcState * state , const char * name , const void * current , const void * base , size_t bytes ) ;",
         "classification": "host-only",
         "reason": "Reviewed build/API or aggregate layout contract for compact state codec; actual storage ownership is classified by named roots, reachable members and allocation sites. Macro/include arms are guarded before optimization."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "void arc_state_delta_stage ( ArcState * state , const char * name , void * current , const void * base , size_t bytes ) ;",
+        "classification": "host-only",
+        "reason": "Transactional sparse application of the existing sector-delta wire format; stages changed sectors and restores absent live deltas from immutable base. No retained guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "void arc_state_delta_stage_indexed ( ArcState * state , const char * name , void * current , const void * base , size_t bytes , uint8_t * dirty ) ;",
+        "classification": "host-only",
+        "reason": "Transactional sector-delta application with an owner-maintained conservative dirty bitmap. Unmarked bytes equal validated immutable base; the derived index is staged on restore and does not enter the wire."
       },
       {
         "kind": "declaration",
@@ -19807,9 +19939,27 @@
       },
       {
         "kind": "declaration",
+        "declaration": "void arc_state_string_bounded ( ArcState * state , const char * * slot , size_t maximum ) ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_state_scratch_reserve ( ArcState * state , size_t bytes ) ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "declaration",
         "declaration": "void * arc_state_heap ( ArcState * state , const char * name , void * slot , size_t bytes , size_t maximum ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "void * arc_state_heap_derived ( ArcState * state , const char * name , void * slot , size_t bytes , size_t maximum ) ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
       },
       {
         "kind": "declaration",
@@ -20039,6 +20189,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# include \"arc_state_frontier.inc\"",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -20146,7 +20308,7 @@
         "reason": "Bounded codec transaction/index/decompression scratch or current durable-publication authority; these native structures are reconstructed and never copied into a blob."
       },
       {
-        "kind": "allocation:state_read_native",
+        "kind": "allocation:state_read_native_limit",
         "declaration": "malloc ( n ? ( size_t ) n : 1u )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
@@ -20201,9 +20363,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { StateFile files [ STATE_IO_FILES ] ; unsigned count , operations ; StateOperation * head , * tail ; size_t operation_bytes ; size_t view_bytes , view_limit ; } StateIoReplacement ;",
-        "classification": "host-only",
-        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+        "declaration": "typedef struct { unsigned count , operations , capacity ; StateOperation * head , * tail ; size_t operation_bytes ; size_t view_bytes , view_limit ; ArcState * state ; StateFile files [ ] ; } StateIoReplacement ;",
+        "classification": "derived-on-load",
+        "reason": "Transaction namespace allocation uses the validated declared file count, at most 256, before allocation; capacity is enforced during reconstruction and exact count checked before commit. Ownership and aggregate view bytes are independently charged; rollback frees every populated view."
       },
       {
         "kind": "allocation:replacement_views",
@@ -20218,13 +20380,13 @@
         "reason": "Reconstruct speculative file namespace from current native committed files and serialized ordered operation log. Replacement owns views until atomic queue installation or rollback."
       },
       {
-        "kind": "allocation:arc_state_io_snapshot",
-        "declaration": "calloc ( 1 , sizeof ( * r ) )",
+        "kind": "allocation:arc_state_io_snapshot_bounded",
+        "declaration": "calloc ( 1 , owned )",
         "classification": "derived-on-load",
-        "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
+        "reason": "Transaction namespace allocation uses the validated declared file count, at most 256, before allocation; capacity is enforced during reconstruction and exact count checked before commit. Ownership and aggregate view bytes are independently charged; rollback frees every populated view."
       },
       {
-        "kind": "allocation:arc_state_io_snapshot",
+        "kind": "allocation:arc_state_io_snapshot_bounded",
         "declaration": "calloc ( 1 , sizeof ( * op ) + ( size_t ) n )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
@@ -20311,6 +20473,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "void arc_state_io_snapshot_bounded ( ArcState * state , size_t maximum ) ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
+      },
+      {
+        "kind": "declaration",
         "declaration": "void arc_state_io_root ( const char * save_directory ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -20350,6 +20518,12 @@
         "declaration": "bool arc_state_io_pending ( void ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_state_io_preflight ( size_t maximum ) ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
       },
       {
         "kind": "declaration",
@@ -20945,6 +21119,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( _WIN32 )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -20952,6 +21138,18 @@
       {
         "kind": "preprocessor",
         "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
@@ -22691,9 +22889,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { bool populated ; bool high_density ; bool created_this_preparation ; char source [ ARC_MEDIA_PATH_CAPACITY ] ; char staged [ ARC_MEDIA_PATH_CAPACITY ] ; char label [ ARC_MEDIA_LABEL_CAPACITY ] ; ArcMediaInfo info ; size_t effective_extent ; bool zero_tail_presentation ; ArcDigest digest ; char jfd_sha256 [ 65 ] ; ArcJfdImage jfd ; bool jfd_damage_notice_shown ; bool jfd_off_notice_shown ; bool jfd_native_notice_shown ; bool jfd_map_unavailable_shown ; uint8_t jfd_refusal_seen [ ARC_JFD_MAX_TRACK_SIDES ] [ 32 ] ; ArcRpcCompatibility compatibility ; uint32_t jfd_game_id ; uint16_t jfd_disc_number ; uint16_t jfd_disc_count ; char zip_member [ 256 ] ; uint32_t zip_crc32 ; uint32_t zip_packed_size ; uint32_t zip_size ; } ArcMediaEntry ;",
-        "classification": "derived-on-load",
-        "reason": "Current prepared-media path binding and immutable base identity; logical IDs and expected digests validate the state while native paths, allocation addresses and callbacks are reconstructed."
+        "declaration": "typedef struct { bool populated ; bool high_density ; bool created_this_preparation ; char source [ ARC_MEDIA_PATH_CAPACITY ] ; char staged [ ARC_MEDIA_PATH_CAPACITY ] ; char label [ ARC_MEDIA_LABEL_CAPACITY ] ; ArcMediaInfo info ; size_t effective_extent ; bool zero_tail_presentation ; ArcDigest digest ; char jfd_sha256 [ 65 ] ; size_t jfd_state_budget ; ArcJfdImage jfd ; bool jfd_damage_notice_shown ; bool jfd_off_notice_shown ; bool jfd_native_notice_shown ; bool jfd_map_unavailable_shown ; uint8_t jfd_refusal_seen [ ARC_JFD_MAX_TRACK_SIDES ] [ 32 ] ; ArcRpcCompatibility compatibility ; uint32_t jfd_game_id ; uint16_t jfd_disc_number ; uint16_t jfd_disc_count ; char zip_member [ 256 ] ; uint32_t zip_crc32 ; uint32_t zip_packed_size ; uint32_t zip_size ; } ArcMediaEntry ;",
+        "classification": "serialized",
+        "reason": "Reviewed media layout: guest-visible prepared-medium state remains serialized. Run K jfd_state_budget is an immutable source/policy-derived capacity envelope, retained across lazy release and never rewound."
       },
       {
         "kind": "declaration",
@@ -22760,6 +22958,12 @@
         "declaration": "static bool arc_state_boundary_armed ;",
         "classification": "host-only",
         "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static bool arc_state_speculation , arc_state_rollback_failed ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
       },
       {
         "kind": "declaration",
@@ -27117,6 +27321,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# include \"arc_state.h\"",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -27147,9 +27363,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "struct ArcInstallStore { char directory [ 4096 ] ; char id [ 41 ] ; char base_hash [ 65 ] ; char base_leaf [ 64 ] ; char journal_leaf [ 64 ] ; uint8_t * image ; uint8_t * snapshot_base ; char snapshot_base_hash [ 65 ] ; uint64_t generation , sequence ; size_t journal_length ; unsigned selected_slot ; ArcInstallStoreState state ; bool writable , failed , incomplete_tail , image_loaded , created , wrote ; ArcInstallStoreLog log ; void * log_opaque ; } ;",
+        "declaration": "struct ArcInstallStore { char directory [ 4096 ] ; char id [ 41 ] ; char base_hash [ 65 ] ; char base_leaf [ 64 ] ; char journal_leaf [ 64 ] ; uint8_t * image ; uint8_t * snapshot_base ; char snapshot_base_hash [ 65 ] ; uint8_t snapshot_dirty [ ( ARC_INSTALL_HD_SECTORS + 7u ) / 8u ] ; uint64_t generation , sequence ; size_t journal_length ; unsigned selected_slot ; ArcInstallStoreState state ; bool writable , failed , incomplete_tail , image_loaded , created , wrote ; ArcInstallStoreLog log ; void * log_opaque ; } ;",
         "classification": "host-only",
-        "reason": "Reviewed build/API or aggregate layout contract for compact state codec; actual storage ownership is classified by named roots, reachable members and allocation sites. Macro/include arms are guarded before optimization."
+        "reason": "Reviewed build/API or aggregate layout contract for compact state codec; actual storage ownership is classified by named roots, reachable members and allocation sites. Macro/include arms are guarded before optimization. The fixed snapshot_dirty bitmap is a host capture index, derived against the validated immutable base, updated on every post-open image write and staged at restore; it is not guest state or wire payload."
       },
       {
         "kind": "declaration",
@@ -27672,6 +27888,12 @@
         "reason": "Prepared path change, JFD ownership retirement or bounded codec workspace; commit transfers current bindings and guest bytes, rollback releases only newly prepared resources."
       },
       {
+        "kind": "allocation:arc_jfd_state_bound",
+        "declaration": "calloc ( image - > sector_count ? image - > sector_count : 1u , 1u )",
+        "classification": "host-only",
+        "reason": "Run K: immutable JFD capacity envelope derived at source preparation from actual eligible sectors and creation slots; retained across lazy release, never serialized or rewound. Temporary eligibility plan is freed before return."
+      },
+      {
         "kind": "allocation:arc_jfd_store_frontier",
         "declaration": "arc_io_read_all_limit ( store - > slot [ i ] , ( void * * ) & bytes , & size , STORE_CAP , NULL )",
         "classification": "derived-on-load",
@@ -27753,6 +27975,18 @@
       },
       {
         "kind": "declaration",
+        "declaration": "bool arc_jfd_state_eligibility ( const ArcJfdImage * image , uint8_t * eligible ) ;",
+        "classification": "host-only",
+        "reason": "Run K transactional codec API/layout or test-only probe; no persistent guest state is omitted."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_jfd_state_bound ( const ArcJfdImage * image , ArcJfdWritePolicy policy , size_t * bytes ) ;",
+        "classification": "host-only",
+        "reason": "Run K: immutable JFD capacity envelope derived at source preparation from actual eligible sectors and creation slots; retained across lazy release, never serialized or rewound. Temporary eligibility plan is freed before return."
+      },
+      {
+        "kind": "declaration",
         "declaration": "bool arc_jfd_store_frontier_base ( const char * save_directory , const ArcDigest * base , const char sha256 [ 65 ] , uint64_t * generation ) ;",
         "classification": "derived-on-load",
         "reason": "Current prepared-media path binding and immutable base identity; logical IDs and expected digests validate the state while native paths, allocation addresses and callbacks are reconstructed."
@@ -27765,9 +27999,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "void arc_jfd_state_binding ( struct ArcState * state , const char * name , ArcJfdOverlay * overlay , const void * decoded , size_t bytes , const char * save_directory , unsigned image_number ) ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+        "declaration": "void arc_jfd_state_binding ( struct ArcState * state , const char * name , ArcJfdOverlay * overlay , const char sha1 [ 41 ] , const char sha256 [ 65 ] , const char * save_directory , unsigned image_number ) ;",
+        "classification": "derived-on-load",
+        "reason": "Run K: reconstruct native JFD store paths and callback bindings from validated immutable preparation SHA-1/SHA-256 identities, independently of incoming mutable fields."
       }
     ],
     "libretro/rpc_boot.c": [
@@ -30611,6 +30845,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "void arc_platform_video_rebuild ( void ) ;",
+        "classification": "host-only",
+        "reason": "Run K reviewed: codec budget/provenance authority or declaration-only renderer service; not guest state. Preprocessor arms retain both configurations."
+      },
+      {
+        "kind": "declaration",
         "declaration": "const uint32_t * arc_platform_video_frame ( unsigned * width , unsigned * height , size_t * pitch , uint64_t * sequence ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -31758,7 +31998,7 @@
       "symbol": "rotatelookup",
       "type": "uint32_t[4096]",
       "classification": "derived-on-load",
-      "reason": "Deterministic lookup generated at machine initialization from the validated CPU/keyboard/sound configuration."
+      "reason": "Run K: resetarm constructs an immutable instruction table; pure commit callback reconstructs exact values without resetting or advancing CPU state. A test checks every table entry independently."
     },
     {
       "source": "engine/arculator/src/arm.c",
@@ -31842,7 +32082,7 @@
       "symbol": "countbitstable",
       "type": "int[65536]",
       "classification": "derived-on-load",
-      "reason": "Deterministic lookup generated at machine initialization from the validated CPU/keyboard/sound configuration."
+      "reason": "Run K: resetarm constructs an immutable instruction table; pure commit callback reconstructs exact values without resetting or advancing CPU state. A test checks every table entry independently."
     },
     {
       "source": "engine/arculator/src/arm.c",
@@ -32843,7 +33083,7 @@
       "symbol": "mem_speed",
       "type": "uint64_t[16384][2]",
       "classification": "serialized",
-      "reason": "Memory permissions, bus timings, refresh/bank/density state and ROM timing latches affect bus reads and execution."
+      "reason": "Run K: serialize the six actual timing values of the three uniform banks, validate bank uniformity at capture, and expand the exact table at commit. Historical I/O timing remains exact."
     },
     {
       "source": "engine/arculator/src/mem.c",
@@ -33585,7 +33825,7 @@
       "symbol": "arc_raster_rows",
       "type": "uint16_t[2048][2]",
       "classification": "derived-on-load",
-      "reason": "Per-row written spans bound retained raster encoding; reconstruct from validated sparse pixel spans on load. Zero pixels outside spans are derived."
+      "reason": "D-215/Run K: picture or delivery scratch and written-span metadata rebuilt after successful load; all guest timing, input, OSK and historical geometry remain serialized."
     },
     {
       "source": "engine/arculator/src/vidc.c",
@@ -34578,8 +34818,8 @@
       "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_frame",
       "type": "uint32_t[307200]",
-      "classification": "serialized",
-      "reason": "Frontend session value can affect launch, disk exchange, input reconciliation, OSK, notices or A/V continuation; capture conservatively, with nested pointer ownership listed separately."
+      "classification": "derived-on-load",
+      "reason": "D-215/Run K: picture or delivery scratch and written-span metadata rebuilt after successful load; all guest timing, input, OSK and historical geometry remain serialized."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -34592,22 +34832,22 @@
       "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_present_frame",
       "type": "uint32_t[8388608]",
-      "classification": "serialized",
-      "reason": "Retained presentation history is serialized only for used pixel spans; untouched zeros are derived. Later dupe/OSK frames may read retained history before redraw."
+      "classification": "derived-on-load",
+      "reason": "D-215/Run K: picture or delivery scratch and written-span metadata rebuilt after successful load; all guest timing, input, OSK and historical geometry remain serialized."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_present_rows",
       "type": "uint16_t[2048][2]",
       "classification": "derived-on-load",
-      "reason": "Presentation spans follow actual copied pixels, including compact-pitch OSK copies; reconstruct from validated sparse spans."
+      "reason": "D-215/Run K: picture or delivery scratch and written-span metadata rebuilt after successful load; all guest timing, input, OSK and historical geometry remain serialized."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_audio_frame",
       "type": "int16_t[4096]",
-      "classification": "serialized",
-      "reason": "Frontend session value can affect launch, disk exchange, input reconciliation, OSK, notices or A/V continuation; capture conservatively, with nested pointer ownership listed separately."
+      "classification": "derived-on-load",
+      "reason": "D-215/Run K: picture or delivery scratch and written-span metadata rebuilt after successful load; all guest timing, input, OSK and historical geometry remain serialized."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -36364,7 +36604,7 @@
       "symbol": "arc_video_rows",
       "type": "uint16_t[2048][2]",
       "classification": "derived-on-load",
-      "reason": "Per-row written spans bound the platform framebuffer encoding; rebuild from restored sparse spans, leaving unwritten zero pixels derived."
+      "reason": "D-215/Run K: picture or delivery scratch and written-span metadata rebuilt after successful load; all guest timing, input, OSK and historical geometry remain serialized."
     },
     {
       "source": "platform/arcdroid_video.c",
@@ -36393,6 +36633,20 @@
       "type": "int",
       "classification": "host-only",
       "reason": "Software renderer selection is fixed by the headless integration; validated build/configuration owns it."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_state_speculation",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "Run K publication provenance/failure latch, cleared only by successful rollback or reset/reload; never rewound from a blob."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_state_rollback_failed",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "Run K publication provenance/failure latch, cleared only by successful rollback or reset/reload; never rewound from a blob."
     }
   ],
   "reachable_storage": [
@@ -36657,8 +36911,8 @@
       "path": "buffer->dat[]",
       "type": "uint32_t pixels",
       "extent": "4096 * 2048",
-      "classification": "serialized",
-      "reason": "Retained pixels can be read before a complete repaint; encode nonzero used spans per row and derive never-written/trimmed zero pixels. Trackers are rebuilt from validated spans."
+      "classification": "derived-on-load",
+      "reason": "D-215/Run K: host picture content rebuilt from serialized RAM/VIDC or restored OSK inputs after commit; geometry, input and all guest timing stay exact."
     },
     {
       "source": "engine/arculator/src/vidc.c",
@@ -36769,16 +37023,16 @@
       "path": "arc_osk_surface[]",
       "type": "uint32_t pixels",
       "extent": "arc_osk_surface_pixels",
-      "classification": "serialized",
-      "reason": "Derived presentation scratch: every render copies the full active framebuffer into the surface before drawing or reading it; dupe paths do not use the surface. Validate and reconstruct capacity, never persist pixel bytes."
+      "classification": "derived-on-load",
+      "reason": "D-215/Run K: host picture content rebuilt from serialized RAM/VIDC or restored OSK inputs after commit; geometry, input and all guest timing stay exact."
     },
     {
       "source": "platform/arcdroid_video.c",
       "path": "arc_video_frame[]",
       "type": "uint32_t pixels",
       "extent": "4096 * 2048",
-      "classification": "serialized",
-      "reason": "Retained pixels can be read before a complete repaint; encode nonzero used spans per row and derive never-written/trimmed zero pixels. Trackers are rebuilt from validated spans."
+      "classification": "derived-on-load",
+      "reason": "D-215/Run K: host picture content rebuilt from serialized RAM/VIDC or restored OSK inputs after commit; geometry, input and all guest timing stay exact."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -36793,8 +37047,8 @@
       "path": "arc_media[i].jfd.sectors[]",
       "type": "ArcJfdSector",
       "extent": "sector_count",
-      "classification": "serialized",
-      "reason": "Conservative descriptor/track metadata capture for initialized prepared JFD images; validate offsets/counts against immutable decoded base. Empty image capacity is zero-derived and initialized on next preparation."
+      "classification": "derived-on-load",
+      "reason": "Run K: reparse validated immutable source transactionally; require the exact saved extent/count before restoring typed controller references."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -36817,8 +37071,8 @@
       "path": "arc_media[i].jfd.overlay->eligible[]",
       "type": "uint8_t",
       "extent": "sector_count",
-      "classification": "serialized",
-      "reason": "Capture the exact prepared presentation and immutable base conservatively; validate counts, decoded payload extents and descriptor/track bounds before commit. Native addresses are reconstructed."
+      "classification": "derived-on-load",
+      "reason": "Run K: recompute source-sector eligibility from immutable parsed descriptors, quarantine and overlap rules; mutable replacement/creation bytes remain serialized."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -37059,6 +37313,14 @@
       "extent": "ARC_INSTALL_HD_BYTES",
       "classification": "host-only",
       "reason": "Validated committed native base and SHA-256; rebuild from the current manifest if needed, never restore native generation authority."
+    },
+    {
+      "source": "libretro/install_store.c",
+      "path": "ArcInstallStore.snapshot_dirty[]",
+      "type": "conservative sector bitmap",
+      "extent": "(ARC_INSTALL_HD_SECTORS+7)/8 bytes",
+      "classification": "derived-on-load",
+      "reason": "Capture acceleration only: rebuilt against the validated immutable base, updated on every successful post-open HD image write, and transactionally replaced from restored sector deltas. An unmarked sector equals base; no guest-visible byte or native frontier is omitted."
     },
     {
       "source": "libretro/arc_state.c",
@@ -37376,6 +37638,13 @@
       "reason": "Bounded transaction allocation for prepared bindings, ownership retirement or codec indexes; released on rollback/end, or transferred only after complete validation."
     },
     {
+      "source": "engine/state-generated/frontend_extra.inc",
+      "owner": "arc_state_jfd_payloads",
+      "call": "malloc ( n )",
+      "classification": "serialized",
+      "reason": "Run K JFD replacement/created payload ownership; bounded before allocation, freed on rollback, installed only at commit."
+    },
+    {
       "source": "libretro/arc_io.c",
       "owner": "arc_io_read_all_limit",
       "call": "malloc ( arc_memory [ memory_slot ] . size ? arc_memory [ memory_slot ] . size : 1u )",
@@ -37517,14 +37786,14 @@
     },
     {
       "source": "libretro/arc_state.c",
-      "owner": "arc_state_begin_limited",
+      "owner": "arc_state_begin_bounded",
       "call": "calloc ( 1 , sizeof ( * s ) )",
       "classification": "host-only",
       "reason": "One transaction and bounded parse index, released by arc_state_end."
     },
     {
       "source": "libretro/arc_state.c",
-      "owner": "arc_state_begin_limited",
+      "owner": "arc_state_begin_bounded",
       "call": "calloc ( capacity , sizeof ( * s - > item_table ) )",
       "classification": "host-only",
       "reason": "One transaction and bounded parse index, released by arc_state_end."
@@ -37545,14 +37814,14 @@
     },
     {
       "source": "libretro/arc_state.c",
-      "owner": "arc_state_string",
+      "owner": "arc_state_string_bounded",
       "call": "malloc ( sizeof ( * t ) + r - > bytes )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
     },
     {
       "source": "libretro/arc_state.c",
-      "owner": "arc_state_heap",
+      "owner": "arc_state_heap_data",
       "call": "calloc ( count , 1 )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
@@ -37629,7 +37898,7 @@
     },
     {
       "source": "libretro/arc_state_io.c",
-      "owner": "state_read_native",
+      "owner": "state_read_native_limit",
       "call": "malloc ( n ? ( size_t ) n : 1u )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
@@ -37692,14 +37961,14 @@
     },
     {
       "source": "libretro/arc_state_io.c",
-      "owner": "arc_state_io_snapshot",
-      "call": "calloc ( 1 , sizeof ( * r ) )",
+      "owner": "arc_state_io_snapshot_bounded",
+      "call": "calloc ( 1 , owned )",
       "classification": "derived-on-load",
-      "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
+      "reason": "Transaction namespace allocation uses the validated declared file count, at most 256, before allocation; capacity is enforced during reconstruction and exact count checked before commit. Ownership and aggregate view bytes are independently charged; rollback frees every populated view."
     },
     {
       "source": "libretro/arc_state_io.c",
-      "owner": "arc_state_io_snapshot",
+      "owner": "arc_state_io_snapshot_bounded",
       "call": "calloc ( 1 , sizeof ( * op ) + ( size_t ) n )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
@@ -38172,6 +38441,13 @@
       "call": "arc_io_read_all_limit ( store . slot [ slot ] , ( void * * ) & bytes , & length , STORE_CAP , NULL )",
       "classification": "derived-on-load",
       "reason": "Bounded transaction allocation for prepared bindings, ownership retirement or codec indexes; released on rollback/end, or transferred only after complete validation."
+    },
+    {
+      "source": "libretro/jfd_store.c",
+      "owner": "arc_jfd_state_bound",
+      "call": "calloc ( image - > sector_count ? image - > sector_count : 1u , 1u )",
+      "classification": "host-only",
+      "reason": "Run K: immutable JFD capacity envelope derived at source preparation from actual eligible sectors and creation slots; retained across lazy release, never serialized or rewound. Temporary eligibility plan is freed before return."
     },
     {
       "source": "libretro/jfd_store.c",

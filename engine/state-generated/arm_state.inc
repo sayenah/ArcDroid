@@ -1,5 +1,38 @@
 /* Generated from the reviewed SS-1 inventory; GPL-2.0-only. */
 #include "arc_state.h"
+/* resetarm() constructs these immutable instruction lookup tables. Rebuild
+ * their exact values without invoking reset or changing CPU execution state. */
+static void arc_state_cpu_tables_rebuild(void *unused)
+{
+   (void)unused;
+   const unsigned char bits[16]={0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
+   for(unsigned i=0;i<65536u;++i)
+      countbitstable[i]=4*(bits[i&15u]+bits[(i>>4u)&15u]+bits[(i>>8u)&15u]+bits[i>>12u]);
+   for(unsigned i=0;i<4096u;++i) {
+      unsigned value=i&255u,rotate=((i>>8u)&15u)*2u;
+      rotatelookup[i]=rotate?(value>>rotate)|(value<<(32u-rotate)):value;
+   }
+}
+#if defined(ARCDROID_TEST_FAULTS)
+bool arc_engine_test_state_tables(void)
+{
+   for(unsigned i=0;i<65536u;++i) {
+      unsigned count=0;
+      for(unsigned bit=0;bit<16u;++bit)count+=(i>>bit)&1u;
+      if(countbitstable[i]!=(int)(count*4u))return false;
+   }
+   for(unsigned i=0;i<4096u;++i) {
+      uint32_t value=i&255u;
+      for(unsigned bit=0;bit<((i>>8u)&15u)*2u;++bit)value=(value>>1u)|(value<<31u);
+      if(rotatelookup[i]!=value)return false;
+   }
+   for(unsigned i=0;i<16384u;++i) {
+      unsigned start=i<0x3000u?0u:i<0x3800u?0x3000u:0x3800u;
+      if(memcmp(mem_speed[i],mem_speed[start],sizeof(mem_speed[0])))return false;
+   }
+   return true;
+}
+#endif
 void arc_state_visit_engine_arculator_src_arm(ArcState *s)
 {
    arc_state_region(s,"engine/arculator/src/arm.c:armregs",&armregs,sizeof(armregs));
@@ -118,8 +151,6 @@ void arc_state_visit_engine_arculator_src_arm(ArcState *s)
    arc_state_value(s,&(irq),sizeof(irq));
    arc_state_object(s,"engine/arculator/src/arm.c:flaglookup");
    arc_state_value(s,&(flaglookup),sizeof(flaglookup));
-   arc_state_object(s,"engine/arculator/src/arm.c:rotatelookup");
-   arc_state_value(s,&(rotatelookup),sizeof(rotatelookup));
    arc_state_object(s,"engine/arculator/src/arm.c:armirq");
    arc_state_value(s,&(armirq),sizeof(armirq));
    arc_state_object(s,"engine/arculator/src/arm.c:ins");
@@ -130,8 +161,7 @@ void arc_state_visit_engine_arculator_src_arm(ArcState *s)
    arc_state_value(s,&(mode),sizeof(mode));
    arc_state_object(s,"engine/arculator/src/arm.c:pccache");
    arc_state_value(s,&(pccache),sizeof(pccache));
-   arc_state_object(s,"engine/arculator/src/arm.c:countbitstable");
-   arc_state_value(s,&(countbitstable),sizeof(countbitstable));
+   if(arc_state_loading(s))arc_state_action(s,arc_state_cpu_tables_rebuild,NULL,NULL);
    arc_state_object(s,"engine/arculator/src/arm.c:total_cycles");
    arc_state_value(s,&(total_cycles),sizeof(total_cycles));
    if(arc_state_loading(s)) {

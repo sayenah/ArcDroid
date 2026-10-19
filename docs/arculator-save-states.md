@@ -2,6 +2,10 @@
 
 # SS-1: Arculator state and publication design
 
+The [Run K design as built](#run-k-design-as-built), R-SS4e and D-215, supersedes
+the earlier representation, picture and bound claims below. Run H and Run I
+remain as historical design/evidence under their original contract.
+
 Order: [SS-1](handoff.md), D-011, D-210, R-SS3a and run-H adjudication.
 Run H is not acceptance-complete: the 16 MiB/minimum-bound gate remains unmet.
 R-SS3g defers universal secondary isolation to integration with R3d-4's R-1a;
@@ -440,3 +444,363 @@ speculative-frame window. This still does not establish a minimum joint bound
 for all retained images. R-SS4d's remaining work is stronger platform/presentation
 derivation (including crop/overlay history) and a minimum-bound proof or a
 representation that meets 16 MiB. The target has not been declared impossible.
+
+## Run I: end-of-frame publication and native picture histories
+
+Design investigation only, against `d706d15` (checkpoint `7b7b528` plus `main`).
+**The pending-log reservation can be reduced, but this investigation has not
+proved a complete representation at or below 16 MiB.** Native pixels alone do
+not establish that bound. The missing joint-history proof is explicit below;
+the favourable single-picture calculation must not become an advertised
+capacity without it. D-214 remains binding. This section stops for architecture
+challenge; it does not authorize implementation or relax acceptance criteria.
+Local file:line references refer to that head; upstream links pin `v1.22.2`.
+
+### (a) Saved queue versus live speculative queue
+
+RetroArch's single-instance sequence runs real frame zero, saves it, runs the
+fake frames and finally restores frame zero
+([runahead.c:1104-1150](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L1104-L1150)).
+The fake-frame helper installs null polling and retained input, runs once, then
+restores callbacks before returning
+([runahead.c:1018-1035](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L1018-L1035)).
+There is no save between fake frames. The special save wrapper disables
+run-ahead on failure (`runahead.c:941-983`). Preemptive Frames installs null
+polling before its first save (`1356-1359`) and remains refused by ArcDroid.
+Secondary isolation remains the independent R-SS3g integration obligation.
+
+Rewind captures initial state and forward iterations at its granularity;
+reverse iterations load states
+([state_manager.c:547-569](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L547-L569),
+[615-733](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L615-L733)).
+Its check is before the iteration's core execution
+([runloop.c:5952](https://github.com/libretro/RetroArch/blob/v1.22.2/runloop.c#L5952),
+[6716](https://github.com/libretro/RetroArch/blob/v1.22.2/runloop.c#L6716),
+[6819-6829](https://github.com/libretro/RetroArch/blob/v1.22.2/runloop.c#L6819-L6829)).
+It therefore captures initial state or the preceding completed iteration,
+including the restored real state after successful single-instance run-ahead.
+
+**Inference:** every save in those successful sequences can have an empty
+operation log, independent of the number of fake frames. This is a saved-state
+bound, not a live-queue bound. Current real frames already use eager I/O
+(`engine/state-generated/boundary.inc:42-47`). Raw tracks flush before engine
+return (`engine/arculator_backend.c:1175`); CMOS persists before frontend return
+(`libretro/arcdroid_libretro.c:8990`). The smallest change retains eager real
+writes and enforces an empty-log postcondition at public frame return. If real
+effects are instead staged, replay them after **all** effects, before that
+return, including early exits, CMOS, boot records and helper/media changes.
+Use the common `retro_run` wrapper (`arcdroid_libretro.c:9034-9038`), not VIDC
+field completion: a call can return with an incomplete field. Do not make
+no-state sector writes allocate a new log or copy whole images.
+
+Normal snapshots need only the existing two-u64 empty header: **16 B**.
+However, an empty-only codec would break existing coverage: the differential
+harness deliberately stages CMOS, raw, HD and JFD effects before saving
+(`tests/arculator_state_harness.inc:280-304`); the pending-effects field-drop
+mutant depends on a nonempty saved log (`tests/arculator_state_mutants.py:41`).
+Preserve a bounded nonempty-log codec. Proposed fixed wire reservation:
+**65,536 B including its header, plus a 24-byte record = 65,560 B**. This is
+headroom for unusual out-of-run captures, not a claimed bound on fake-frame
+production. Validate the existing fixtures against it before accepting this
+choice; their continued success is required, not assumed. The successful
+RetroArch sequences above use just the empty header.
+
+Before capture work, frontier checkpoint work or caller-buffer writes, count
+the exact encoded log size; refuse if it exceeds that reservation or publication
+has failed. Count paths and operations with checked arithmetic, without first
+allocating an unbounded encoded blob. Load validates the wire and aggregate
+ownership/view limits before replacement allocations, then atomically replaces
+the live speculative queue. Current layout/restore:
+`libretro/arc_state_io.c:482-526`. The runtime queue keeps its 32 MiB ceiling
+and ordered failure latch; it can span arbitrarily many fake frames. Refusal
+preserves guest state, queue, native files and caller buffer. Never truncate
+the log or publish speculation to make it fit.
+
+**Normal polling alone does not prove finality.** The fake-frame helper
+restores it before the final load. A save in that gap can contain staged
+speculative effects: retain them exactly if within 64 KiB, otherwise refuse.
+If that load fails, normal polling must not cause those effects to
+publish at the next real call or unload. A revised boundary needs explicit
+real/speculative provenance and a failure transition; moving publication to
+frame end does not make a fake frame real. Challenge the existing entry/unload
+rule (`boundary.inc:30-47`) on this case. Failed publication keeps blocking
+later native mutations; no replay from the start after partial application
+(`arc_state_io.c:327-348`). The supported normal path must always meet the
+empty-queue invariant: rewind pushes its buffer without checking serialization
+success (`state_manager.c:729-733`), so safe refusal alone does not prove usable
+rewind. Never expose a partially written new blob on failure.
+
+### (b) Native picture data and producer limits
+
+The profiles fix normal-machine operation, no-borders presentation,
+`dblscan=1` and the descriptor's monitor
+(`engine/arculator_backend.c:932-940`). Guest depth, rate, palette, extents and
+interlace remain programmable. VIDC describes 1/2/4/8 bpp and four rates
+(`engine/arculator/src/vidc.c:47-56`); horizontal total is ten bits and vertical
+total ten bits plus one (`459-474`). Both interlace fields address the
+4,096 by 2,048 allocation (`588,779-786,1361-1369`). Neither ordinary screen
+geometry nor current registers bound historical rows.
+
+For a *new homogeneous display extent*, slow rates emit paired host pixels,
+fast rates independent ones. The nominal active-sample envelope is:
+
+| Depth | Slow 8/12 MHz paths in vidc.c | Fast 16/24 MHz paths | Bytes for 2,048 samples by 2,048 rows |
+| --- | --- | --- | ---: |
+| 1 bpp | control 0/1, lines 881-893 | 2/3, 895-922 | 524,288 |
+| 2 bpp | 4/5, 924-937 | 6/7, 938-951 | 1,048,576 |
+| 4 bpp | 8/9, 952-965 | 10/11, 966-978 | 2,097,152 |
+| 8 bpp | 12/13, 979-993 | 14/15, 994-1009 | 4,194,304 |
+
+This table is **not a maximum for retained histories**: it excludes fills,
+cursor, fetch overhang and old tails. Interlace needs both fields. Platform
+line doubling is a separate, derivable copy
+(`platform/arcdroid_video.c:85-108`). Dormant mono rendering forces mode 2 and
+uses monochrome lookup/cursor colours (`vidc.c:776-777,902-911,1087-1104`);
+it is not an admitted monitor in these profiles. LCD remains outside them.
+
+A native draw fragment would retain packed samples **when read by the
+producer**, historical palette, black-level selector, depth/rate, expansion
+rule and coordinates, border/blank fills, and cursor words/position/colours.
+Twenty RGB444 palette registers take 40 bytes; 8-bpp's 256-entry palette is
+derived from the historical low 16 registers (`vidc.c:391-410`). Reconstruct
+with the exact integer `vidc_make_colour` conversion, including Acorn black
+levels (`358-373`). Neither current RAM nor current palette recovers old pixels.
+Palette writes occur between whole-line producer invocations (`431-455,765-775`),
+so capture per invocation, not once per picture. Display indices cannot also
+encode all border/cursor colours in 256 slots (`1012-1184`); use fill/overlay
+records. Mono and word-boundary writes need their own exact treatment.
+
+For comparison, a proposed clean-row layout with 96 bytes of metadata (40
+palette, 8 cursor words, 48 coordinates/flags/fills) adds 196,608 bytes per
+2,048-row picture: **4,390,912 B (4.1875 MiB)** at 8 bpp. This does not
+establish the largest representation over all producer modes and sequences:
+
+* Partial writes preserve old tails. A fast row can overwrite the left half
+  of an old doubled slow row and leave its right half (`vidc.c:854-873,
+  979-1009,1044-1081`). Roughly 2,048 fresh indices plus 1,024 old paired
+  indices per row would mean **6,291,456 index bytes** at 2,048 rows, before
+  historical palettes. This is a counterexample to the layout's assumed
+  sample count, not an executed-guest reachability result from this run.
+* Fetch loops test x before emitting a full word; the slow 1-bpp path advances
+  x by 32 while emitting 64 positions (`vidc.c:883-889,897-916,981-1004`).
+  A codec must account for every emitted position and existing word/row
+  boundary behaviour, rather than assume disjoint, exactly clipped samples.
+  This note authorizes no engine correction.
+* Multiple palette/depth epochs can remain in one row. Historical fragments
+  preserve them, but fragment counts and palette bytes need their own bound.
+  Compression cannot guarantee small incompressible data. Literal-colour
+  escape is safe but restores the large reservation.
+
+### Joint histories and exact copy/overlay recipes
+
+The stronger candidate shares immutable native draw fragments between engine,
+platform and presentation spans, retaining source versions **at copy time**.
+Record actual clipped platform updates and in-place line-double copies in
+execution order (`arcdroid_video.c:63-108`); normalize recipe chains and collect
+unreferenced versions. Save traverses the live graph in canonical owner/row/span
+order, not allocation-ID order. This avoids independent converted copies and
+the current save-time search over pairs of rows.
+
+Last presentation additionally needs its historical dimensions/pitch and
+rendering inputs. OSK blends with integer rounding (`core/osk.c:642-665,
+687-734`); reconstruct over the same source with the OSK/layout/header state
+used **then**, not current input state. The OSK scratch pixels are fully copied
+before rendering (`arcdroid_libretro.c:8531-8546`), so need no independent
+payload. UI/chooser output requires exact rendering inputs or literal escape;
+RGB444 conversion would lose UI colours.
+
+The outstanding proof is the maximum **simultaneously live** source data.
+CPU quanta and incomplete fields let the engine precede the platform
+(`arculator_backend.c:1149-1182`); post-copy clears separate them again
+(`vidc.c:1352-1357`). Boot-prompt handling reuses the preceding presentation
+(`arcdroid_libretro.c:8895-8906`), possibly with an old OSK overlay. These
+versions cannot be deleted just because current RAM/registers changed.
+Omitting inactive tails requires a read-before-write proof for every crop,
+clipped update, pitch change, line-double and prompt path. Current spans do
+not supply it. No one-picture or bounded-fragment-count invariant is proved.
+
+Load must validate graph order, extents, palette selectors, padding, owner
+limits and aggregate allocation before rebuilding converted copies and
+committing them transactionally. Malformed graphs and allocation failures
+leave the running state and stores untouched. Shared storage must not make
+logical-owner field-drop mutants ineffective.
+
+### Component arithmetic and remaining proof obligation
+
+Run H's inspected completion report supplies the following Mac read-only ADF
+ledger; these are attributed measurements, not new results. The formula is at
+`libretro/arcdroid_libretro.c:9048-9094`.
+
+| Component | Current B | Proposed treatment |
+| --- | ---: | --- |
+| 4 MiB RAM and size | 4,194,320 | Preserve |
+| Other fields, references, identities, framing and admitted media | 5,296,888 | Preserve until independently derived |
+| Pending wire payload | 33,231,643 | 65,536 plus conservative 24-byte record allowance |
+| Three retained pictures | 50,429,952 | Joint native graph; maximum **unproved** |
+| Total | 93,152,803 | **9,556,768 + joint-picture bytes** |
+
+The full picture graph must fit **7,220,448 B** to meet 16,777,216 B with the
+remaining schema. Even the favourable clean-row comparison gives:
+
+| Independent clean 8-bpp pictures, including 96 B/row | Total state B | MiB |
+| --- | ---: | ---: |
+| One | 13,947,680 | 13.3015 |
+| Two | 18,338,592 | 17.4890 |
+| Three | 22,729,504 | 21.6765 |
+
+Only the first row meets 16 MiB; one picture is unproved, and mixed historical
+tails can enlarge it. These are candidate-layout sizes, not lower bounds on
+every possible representation. They neither authorize the first row nor
+establish that D-214 is impossible.
+
+Writable raw media shrink the budget further: L bytes reserve
+`L + 8*ceil(L/512) + 32` (`arcdroid_libretro.c:9050-9056`). L=819,200 adds
+832,000 bytes beyond the read-only case's 32-byte media allowance. Preserve
+dirty sectors and unfinished transfers. JFD also needs actual admitted
+descriptor/replacement/created-sector bounds. Its current formula charges an
+8 MiB decoded maximum plus maximum descriptors and created sectors
+(`core/jfd.h:10-16`, `arcdroid_libretro.c:9057-9059`). The immutable decoded
+base is already derived (`engine/state-generated/frontend_extra.inc:33-41`);
+re-derive that reservation while retaining every mutable replacement/creation
+(`83-108`). A read-only ADF number cannot prove the bound for writable ADL,
+JFD, ADFFS or every folder/playlist session.
+
+Another candidate saving is derived frontend scratch: `arc_frame` alone is
+640*480*4 = 1,228,800 bytes and is serialized (`arcdroid_libretro.c:53-54,98`,
+`arcdroid_libretro_state.inc:155-156`). Its uses require a separate proof before
+omission. Batching scalar records could save framing, but no such reduction is
+credited here without a measured maximum per target ABI.
+
+RetroArch adds 24 bytes, alignment and optional achievement data around the
+core block
+([task_save.c:319-440](https://github.com/libretro/RetroArch/blob/v1.22.2/tasks/task_save.c#L319-L440)).
+Its maximum rewind patch adds approximately four bytes per 131,070 bytes plus
+pointer/terminator overhead (`state_manager.c:159-168,364-366`). A 16 MiB core
+block fits the ordinary 20,000,000-byte configuration with overhead; actual
+initialization, repeated capture and reverse playback still need verification.
+A small exact payload inside the old advertised block cannot satisfy D-214.
+
+### Cost, risks and verification for a later authorized implementation
+
+The smaller queue reservation removes approximately 33.2 MB of capacity and canonical
+clearing. Retaining eager real writes avoids new no-state I/O. Staging those
+writes instead adds allocation/copy/replay cost and needs another sector-cost
+comparison. Runtime speculative memory remains independently bounded.
+Native fragments move packing/history retention to the producer; save becomes
+live-graph traversal, payload copies, CRC and canonical clearing. Load must
+expand samples and replay historical copies/UI. Three full converted surfaces
+alone contain **100,663,296 B**: writing them in 5 ms needs over **20.1 GB/s**
+before RAM restore, validation and decoding. Restore only proved live extents
+and derived copies where safe. Smaller wire size proves neither the 10 ms save
+nor 5 ms warm-load target. Run H's ordinary authored-frame cost table does not
+measure this proposed codec or extreme histories. Android cost remains owed.
+
+Required evidence, without weakening existing tests:
+
+1. Keep differential/save-load-save, field-drop and refusal coverage (58 pairs,
+   35 mutants and 38 public refusals in the inspected run-H report). Add all
+   16 depth/rate control nibbles, maximum extents, both field parities, depth,
+   palette and rate changes on retained rows, black levels, cursor/border,
+   blanking, word overhang, partial fields and post-copy clear. Compare
+   observable pixels with the existing producer, not a duplicate new codec.
+2. Model the tagged run-ahead/rewind sequence through `retro_*` with CMOS/media
+   effects in real and fake frames. Assert frontiers/native bytes and empty
+   queues at each normal save. Test mode changes, unload/deinit, the restored-
+   callback/before-load gap, failed final load, failed ordered publication and
+   reentrant/oversize-queue saves. Test exact 64 KiB and one-byte-over boundaries,
+   plus every existing nonempty-queue differential/mutant fixture unchanged.
+   Refusals preserve the caller buffer and
+   never publish speculation. Retain preemptive/secondary lifecycle checks.
+3. Cover clipped crop/doubling, compact/platform pitches, OSK transparency,
+   historical versus current OSK state, dupe/no-dupe, chooser and prompt reuse.
+   Stress version collection over long mode sequences; prove its ceiling.
+   Malformed graph/palette/length/padding and allocation failure must preserve
+   the session without large allocations from tiny blobs.
+4. Produce a maximum component ledger for every profile and floppy class,
+   including all-dirty media and maximal admitted JFD mutations. Measure Mac
+   Release save/first-load/warm-load and producer overhead, then perform the
+   owed Windows/Android/default-RetroArch evidence on the accepted final head.
+   Successful small fixtures alone do not bound the session.
+
+**Question for architecture challenge:** can shared native fragments plus
+exact copy/overlay recipes be proved to fit 7,220,448 B, less writable-media
+growth, or can separately proved schema derivations release enough space?
+This run has not supplied a complete all-mode 16 MiB representation and does
+not claim one impossible. D-214, R-SS3g and cost gates stay open. No production
+code or tests changed, and no behavioural suite was run for this design note.
+
+
+## Run K design as built
+
+D-215 keeps CPU, RAM, DMA/interrupt phase, audio, transfers, storage, input and
+historical mapping geometry exact. Host picture content is rebuilt, with no
+one-field convergence promise. Run I above remains the challenged investigation.
+The Run K section of `SOL-REPORT-SS1.md` records component/media ledgers, costs,
+per-case picture differences and completed verification.
+
+`boundary.inc` and the outer `retro_run()` finish real storage effects on every
+return. A speculative provenance latch survives callback restoration; successful
+rollback clears it, while failed rollback blocks execution/publication until
+reset or reload. Unload discards speculation. Capture refuses with that latch
+set. Checked operation-log preflight enforces 65,536 encoded bytes before capture
+changes frontiers or output; execution may stage more and then refuse capture.
+RetroArch 1.22.2 saves after its real run-ahead frame and before speculation;
+rewind captures the prior completed iteration (pinned upstream evidence in Run I).
+
+Engine, platform and frontend picture payloads are absent from the wire.
+`arc_vidc_rebuild_picture()` reads saved RAM and VIDC/MEMC inputs with local
+addresses, advancing no guest address, timer, DMA, interrupt or palette state.
+It rebuilds both parities. Platform sequence, historical width/height/pitch,
+OSK and input stay exact; load renders the restored OSK without update/layout
+calls. Frontend frame/audio scratch derives from retained inputs; audio queues,
+filters and sample fractions remain saved. An existing negative signed border
+offset shift found by the expanded sanitizer matrix uses bounded multiplication
+by two, preserving ordinary scanout arithmetic. Its low-rate 1-bpp loop also bounds
+shifts to the word, retaining the existing 32-pixel host scanout.
+
+Immutable CPU count-bit/rotate tables rebuild in a pure commit callback; an
+independent oracle checks every entry. Six actual 64-bit timings retain three
+uniform memory banks, including historical I/O timings; a nonuniform bank refuses
+capture. No CPU reset or device timing routine runs. Writable-ADL discovery lists
+stage saved candidate counts before traversing the saved candidates.
+
+JFD source, descriptors, eligibility and creation masks derive from validated
+immutable media, using prepared caches on warm loads and parsing on cold loads.
+All replacement/created bytes remain in an ordered bitmap payload. Each disc
+retains its actual eligible-byte/creation-slot envelope across lazy release;
+only one mutable image is active. Native bindings reuse validated source digests.
+Cold-created-sector tests release the graph, restore all bytes/canonical state,
+and publish once; a forged forbidden slot refuses without execution/publication.
+Serialized creation masks must agree with the source. Failed graph construction
+stops before field traversal; transactional rollback retires prepared ownership.
+
+The media-independent bound for each 4 MiB profile is **7,356,448 B**:
+2,767,128 static + 4,194,320 RAM + 262,848 references + 66,560 metadata +
+65,560 log + 32 framing. Metadata includes the remaining RAM record framing.
+Raw writable media adds `N + 8*ceil(N/512)`. JFD adds
+`65,536 + 16 + ceil((sector_count+800)/8) + eligible_bytes + 1024*creation_capacity`;
+48,695 B of maximal field/heap/base/store/payload metadata fits that envelope.
+Reserve the largest active raw/JFD graph plus 96 B per inactive JFD, rather
+than their sum. The parser/planner maxima (32 discs, 42,496 descriptors,
+8 MiB disjoint eligible payload and 800 creations) give **16,638,196 B**,
+below 16 MiB. A four-profile regression checks the conservative arithmetic.
+Hard-disc image/index reservations are additional and reported separately.
+
+Wire/decoded bytes use the session capacity; reconstructed ownership has
+`192 MiB + 2*capacity`, and transaction scratch `128 MiB + 4*capacity`.
+Geometry/media/log limits still apply; a 32 MiB derived OSK restores from a
+sub-16 MiB wire buffer. Empty logs clear transactionally; nonempty replacement
+tables allocate only the validated file count (at most 256), enforce it during
+construction, and require an exact count. Rollback precedes scratch destruction.
+HD deltas stage only saved/live dirty sectors against the validated immutable
+base, including restoring sectors absent from the saved delta. All post-open
+writes maintain a derived dirty bitmap; base replacement rebuilds it and load
+replaces it transactionally. The bitmap adds no wire bytes or frontier authority.
+
+The differential oracle compares full serialized guest state, CPU and PCM per
+frame and counts pictures separately. Coverage includes all depth/rate controls,
+both saved interlace parities, mode/cursor/border transitions, partial fields,
+repeated loads and one-frame run-ahead. Only `raster`, `platform-video` and
+`frontend-video` leave the field-drop set (35 → 32). Default-buffer tests model
+RetroArch's wrapper and worst-patch initialization at 20,000,000 bytes and
+exercise public state APIs with an independent reverse-patch test encoding.

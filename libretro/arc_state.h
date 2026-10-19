@@ -15,6 +15,13 @@ typedef void (*ArcStateVisit)(ArcState *);
  * region identities and bounded offsets, never as process addresses. */
 ArcState *arc_state_begin(const void *input, size_t length);
 ArcState *arc_state_begin_limited(const void *input, size_t length, size_t decoded_limit);
+/* Encoded input, decoded records, reconstructed heaps and transient work are
+ * independent budgets. Owner-specific bounds are checked before allocation. */
+ArcState *arc_state_begin_bounded(const void *input,size_t length,size_t wire,
+                                  size_t decoded,size_t ownership,size_t scratch);
+size_t arc_state_ownership_limit(const ArcState *state);
+size_t arc_state_ownership_remaining(const ArcState *state);
+bool arc_state_ownership_resize(ArcState *state,size_t previous,size_t next);
 void arc_state_end(ArcState *state);
 /* Callback form of free(p), preserving the census allocator interception. */
 void arc_state_free(void *pointer);
@@ -22,6 +29,11 @@ void arc_state_clear_cache(void);
 void *arc_state_scratch(ArcState *state,size_t bytes);
 void arc_state_stage(ArcState *state,void *destination,const void *source,size_t bytes);
 const void *arc_state_delta(ArcState *state,const char *name,const void *current,const void *base,size_t bytes);
+/* Same wire delta, with only changed sectors copied at commit. */
+void arc_state_delta_stage(ArcState *state,const char *name,void *current,const void *base,size_t bytes);
+/* Owner-maintained conservative bitmap: an unmarked sector equals base.
+ * The restored bitmap is staged with the image, never changed on refusal. */
+void arc_state_delta_stage_indexed(ArcState *state,const char *name,void *current,const void *base,size_t bytes,uint8_t *dirty);
 const void *arc_state_view(ArcState *state,const char *name,const void *data,size_t bytes,size_t *view_bytes);
 
 bool arc_state_loading(const ArcState *state);
@@ -76,8 +88,11 @@ void arc_state_reference(ArcState *state, void *slot, intptr_t bias,
 void arc_state_expect(ArcState *state, const char *name, const void *value, size_t bytes);
 void arc_state_buffer(ArcState *state, const char *name, void *value, size_t bytes);
 void arc_state_string(ArcState *state, const char **slot);
+void arc_state_string_bounded(ArcState *state,const char **slot,size_t maximum);
+bool arc_state_scratch_reserve(ArcState *state,size_t bytes);
 void *arc_state_heap(ArcState *state, const char *name, void *slot,
                      size_t bytes, size_t maximum);
+void *arc_state_heap_derived(ArcState *state,const char *name,void *slot,size_t bytes,size_t maximum);
 size_t arc_state_heap_size(ArcState *state, const char *name);
 void arc_state_project(ArcState *state, void *output, const void *value, size_t bytes);
 const void *arc_state_blob(ArcState *state, const char *name, const void *data,

@@ -804,6 +804,10 @@ void arc_io_state_file(ArcState *s,const char *name,ArcIoFile *file)
    if(arc_state_loading(s)) {
       next=NULL;
       if(meta[0]) {
+         /* Logical medium, cache indexes and reopened handle are ownership,
+          * independently bounded from the small delta on the wire. */
+         size_t ownership=2u*bytes+((bytes+511u)/512u)*8u+sizeof(ArcIoFile)+sizeof(ArcIoStateCache)+4096u;
+         if(!arc_state_ownership_resize(s,0,ownership))return;
          next=arc_io_file_open(arc_io_state_paths[meta[1]].path,meta[2]!=0,false,RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS,NULL);
          if(!next){arc_state_fail(s,"media reopen");return;}
          uint8_t *view=malloc(bytes?bytes:1u);

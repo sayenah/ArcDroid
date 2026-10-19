@@ -18,10 +18,12 @@ static bool restore_visit(ArcStateVisit visit,const uint8_t *p,size_t bytes)
 }
 static uint8_t *capture(size_t *bytes) {return capture_visit(state_visit,bytes);}
 static bool restore(const uint8_t *p,size_t bytes) {return restore_visit(state_visit,p,bytes);}
-static uint8_t codec_base[4096],codec_current[4096];
+static uint8_t codec_base[4099],codec_current[4099];
 static uint32_t *codec_pixels;
 static uint16_t codec_rows[2048][2];
 static unsigned codec_forge;
+static bool codec_sparse,codec_indexed;
+static uint8_t codec_dirty[2];
 static uint32_t *copy_pixels;
 static uint16_t copy_rows[2048][2];
 static void codec_u64(uint8_t *p,uint64_t n)
@@ -34,11 +36,15 @@ static void codec_visit(ArcState *s)
    if(codec_forge==1u||codec_forge==2u) {
       uint8_t bad[1056]={0};size_t bytes=codec_forge==1u?sizeof(bad):536u,n;
       codec_u64(bad,sizeof(codec_base));codec_u64(bad+8,codec_forge==1u?2u:1u);
-      codec_u64(bad+16,codec_forge==1u?2u:8u);codec_u64(bad+536,2u);
+      codec_u64(bad+16,codec_forge==1u?2u:99u);codec_u64(bad+536,2u);
       (void)arc_state_blob(s,"fixture.delta",bad,bytes,bytes,&n);
    } else {
-      const void *next=arc_state_delta(s,"fixture.delta",codec_current,codec_base,sizeof(codec_base));
-      if(arc_state_loading(s)&&next)arc_state_stage(s,codec_current,next,sizeof(codec_current));
+      if(codec_indexed)arc_state_delta_stage_indexed(s,"fixture.delta",codec_current,codec_base,sizeof(codec_base),codec_dirty);
+      else if(codec_sparse)arc_state_delta_stage(s,"fixture.delta",codec_current,codec_base,sizeof(codec_base));
+      else {
+         const void *next=arc_state_delta(s,"fixture.delta",codec_current,codec_base,sizeof(codec_base));
+         if(arc_state_loading(s)&&next)arc_state_stage(s,codec_current,next,sizeof(codec_current));
+      }
    }
    if(codec_forge>=3u) {
       uint8_t bad[20]={0};size_t n,bytes=sizeof(bad);
@@ -96,23 +102,63 @@ static void test_pending_view_limit(void)
    unsigned before=mutations;ArcState *s=arc_state_begin_limited(wire,bytes,16u*1024u*1024u);
    assert(!arc_state_run(s,arc_state_io_snapshot)&&before==mutations&&!arc_state_io_pending());
    arc_state_end(s);free(wire);
-   puts("pending derived views: aggregate resize allocation bounded by admitted session before allocation");
+   const unsigned declared[]={0,2,4,257,3};
+   for(unsigned test=0;test<5u;++test) {
+      forged_pending_bytes=0;forged_pending_u64(declared[test]);forged_pending_u64(3);
+      for(unsigned file=0;file<3u;++file) {
+         forged_pending_u64(1);forged_pending_u64(RETRO_VFS_FILE_ACCESS_WRITE);forged_pending_u64(0);
+         char path[]="Sbudget0";path[7]=(char)('0'+file);size_t n=sizeof(path);
+         forged_pending_u64(n);memcpy(forged_pending+forged_pending_bytes,path,n);forged_pending_bytes+=n;
+         forged_pending_u64(0);
+      }
+      wire=capture_visit(forged_pending_visit,&bytes);s=arc_state_begin_limited(wire,bytes,16u*1024u*1024u);
+      bool valid=arc_state_run(s,arc_state_io_snapshot);
+      assert(valid==(declared[test]==3u)&&mutations==before&&!arc_state_io_pending());
+      if(valid)assert(arc_state_commit(s)&&arc_state_io_pending());
+      arc_state_end(s);free(wire);arc_state_io_clear();
+   }
+   puts("pending derived views: aggregate resize bounds, exact file-count capacity and four malformed counts refuse without native effects");
+}
+static uint8_t *derived_owner;
+static void derived_visit(ArcState *s)
+{ (void)arc_state_heap_derived(s,"fixture.derived",&derived_owner,2u*1024u*1024u,2u*1024u*1024u); }
+static void test_independent_limits(void)
+{
+   derived_owner=calloc(2u*1024u*1024u,1u);assert(derived_owner);
+   size_t bytes;uint8_t *wire=capture_visit(derived_visit,&bytes);assert(bytes<4096u);
+   ArcState *s=arc_state_begin_bounded(wire,bytes,4096u,4096u,3u*1024u*1024u,65536u);
+   assert(arc_state_run(s,derived_visit)&&arc_state_commit(s));arc_state_end(s);
+   uint8_t *previous=derived_owner;
+   s=arc_state_begin_bounded(wire,bytes,4096u,4096u,1024u*1024u,65536u);
+   assert(!arc_state_run(s,derived_visit)&&derived_owner==previous);arc_state_end(s);
+   s=arc_state_begin_bounded(wire,bytes,4096u,4096u,3u*1024u*1024u,1u);
+   assert(!arc_state_run(s,derived_visit)&&derived_owner==previous);arc_state_end(s);
+   free(wire);free(derived_owner);derived_owner=NULL;
+   puts("independent budgets: small wire, large derived ownership, ownership/scratch refusals preserve live heap");
 }
 static void test_compact_codec(void)
 {
+   memset(codec_dirty,0xff,sizeof(codec_dirty));
    codec_pixels=calloc(4096u*2048u,sizeof(*codec_pixels));assert(codec_pixels);
    for(unsigned i=0;i<sizeof(codec_base);++i)codec_base[i]=(uint8_t)(i*13u+5u);
-   memcpy(codec_current,codec_base,sizeof(codec_base));codec_current[700]^=0x3au;
+   memcpy(codec_current,codec_base,sizeof(codec_base));codec_current[700]^=0x3au;codec_current[sizeof(codec_current)-1u]^=0x42u;
    codec_pixels[2u*4096u+7u]=0x12345678u;arc_state_raster_mark(codec_rows,2u,0,1024u);
    codec_pixels[4096u*2048u-1u]=0x23456789u;arc_state_raster_mark(codec_rows,2047u,4095u,1u);
    size_t bytes,n;uint8_t *saved=capture_visit(codec_visit,&bytes);assert(bytes<8192u);
-   codec_current[1900]^=0x6bu;codec_pixels[2u*4096u+7u]=0;
+   codec_current[1900]^=0x6bu;
+   if(codec_indexed)codec_dirty[(1900u/512u)/8u]|=(uint8_t)(1u<<((1900u/512u)%8u));codec_pixels[2u*4096u+7u]=0;
    codec_pixels[4u*4096u+8u]=0xabcdefu;arc_state_raster_mark(codec_rows,4u,8u,1u);
+   uint8_t mask_before[2];memcpy(mask_before,codec_dirty,sizeof(mask_before));
+   uint8_t pending[sizeof(codec_current)];memcpy(pending,codec_current,sizeof(pending));
+   ArcState *transaction=arc_state_begin(saved,bytes);assert(arc_state_run(transaction,codec_visit));
+   assert(!memcmp(pending,codec_current,sizeof(pending))&&!memcmp(mask_before,codec_dirty,sizeof(mask_before)));arc_state_end(transaction);
    assert(restore_visit(codec_visit,saved,bytes));
+   if(codec_indexed)assert(codec_dirty[0]==2u&&codec_dirty[1]==1u);
+   assert(codec_current[sizeof(codec_current)-1u]==(uint8_t)(codec_base[sizeof(codec_base)-1u]^0x42u));
    assert(codec_current[700]==(uint8_t)(codec_base[700]^0x3au)&&codec_current[1900]==codec_base[1900]);
    assert(codec_pixels[2u*4096u+7u]==0x12345678u&&!codec_pixels[4u*4096u+8u]&&codec_pixels[4096u*2048u-1u]==0x23456789u);
    uint8_t *again=capture_visit(codec_visit,&n);assert(n==bytes&&!memcmp(saved,again,n));free(again);
-   uint8_t before[4096];memcpy(before,codec_current,sizeof(before));
+   uint8_t before[sizeof(codec_current)];memcpy(before,codec_current,sizeof(before));
    for(codec_forge=1u;codec_forge<=6u;++codec_forge) {
       uint8_t *bad=capture_visit(codec_visit,&n);unsigned mode=codec_forge;codec_forge=0;
       assert(!restore_visit(codec_visit,bad,n)&&!memcmp(before,codec_current,sizeof(before)));
@@ -173,6 +219,39 @@ static void setup(void)
    for(unsigned i=0;i<4u;++i)if(!directory_exists(parents[i]))add_directory(parents[i]);
    io_proxy=arc_state_io_attach(&vfs);arc_io_set_vfs(io_proxy);arc_state_io_forget_stores();
    arc_state_io_root("save");arc_state_io_binding(0,"media/raw.adf");
+}
+static ArcInstallStore *indexed_hd;
+static void indexed_hd_visit(ArcState *s)
+{ state_visit(s);arc_install_store_snapshot(s,indexed_hd); }
+static void test_indexed_hd_restore(void)
+{
+   clear_files();setup();
+   indexed_hd=open_store("1234567890abcdef1234567890abcdef12345678",true,true,ARC_INSTALL_STORE_READY);
+   size_t n,m;uint8_t *clean=capture_visit(indexed_hd_visit,&n);
+   uint8_t before[512],extra[512],changed[512];
+   assert(arc_install_store_read(indexed_hd,100u,1u,before));
+   assert(arc_install_store_read(indexed_hd,2000u,1u,extra));
+   memcpy(changed,before,sizeof(changed));changed[17]^=0x5a;
+   unsigned native=mutations;arc_state_io_speculate(true);
+   assert(arc_install_store_write(indexed_hd,100u,1u,changed));
+   uint8_t *dirty=capture_visit(indexed_hd_visit,&m);
+   assert(arc_install_store_write(indexed_hd,100u,1u,before));
+   changed[23]^=0x63;assert(arc_install_store_write(indexed_hd,2000u,1u,changed));
+   assert(restore_visit(indexed_hd_visit,dirty,m));
+   const uint8_t *image=arc_install_store_image(indexed_hd);assert(image);
+   assert(image[100u*512u+17u]==(uint8_t)(before[17]^0x5a));
+   assert(!memcmp(image+2000u*512u,extra,sizeof(extra)));
+   size_t again_bytes;uint8_t *again=capture_visit(indexed_hd_visit,&again_bytes);
+   assert(again_bytes==m&&!memcmp(again,dirty,m));free(again);
+   /* A second post-load mutation must be indexed too. */
+   assert(arc_install_store_write(indexed_hd,2000u,1u,changed));
+   assert(restore_visit(indexed_hd_visit,clean,n));
+   image=arc_install_store_image(indexed_hd);
+   assert(!memcmp(image+100u*512u,before,sizeof(before))&&!memcmp(image+2000u*512u,extra,sizeof(extra)));
+   again=capture_visit(indexed_hd_visit,&again_bytes);
+   assert(again_bytes==n&&!memcmp(again,clean,n)&&mutations==native);free(again);
+   free(clean);free(dirty);arc_state_io_clear();arc_install_store_close(indexed_hd);indexed_hd=NULL;clear_files();
+   puts("HD capture index: speculative writes, return-to-base, absent live deltas, repeated loads and canonical bytes; no native mutations");
 }
 static void raw_write(uint8_t value)
 {
@@ -312,6 +391,10 @@ static void test_pending_wire_bound(void)
       assert(arc_io_write_file(f,sector,sizeof(sector))==sizeof(sector)&&arc_io_flush_file(f));
    }
    size_t n;uint8_t *saved=capture(&n);assert(n<=small&&mutations==before);
+   size_t low=16u,high=small;
+   while(low<high){size_t middle=low+(high-low)/2u;if(arc_state_io_preflight(middle))high=middle;else low=middle+1u;}
+   assert(arc_state_io_preflight(low)&&!arc_state_io_preflight(low-1u)&&!arc_state_io_preflight(65536u));
+   assert(mutations==before);
    assert(restore(saved,n)&&arc_state_io_pending_bound()==small&&mutations==before);
    arc_state_io_clear();assert(arc_state_io_pending_bound()==small);free(saved);
    assert(arc_io_close_file(f));arc_state_io_forget_stores();clear_files();
@@ -321,7 +404,9 @@ int main(void)
 {
    test_declared_decode_limit();
    test_raster_copies();
-   test_compact_codec();
+   test_compact_codec();codec_sparse=true;test_compact_codec();codec_sparse=false;
+   codec_indexed=true;test_compact_codec();codec_indexed=false;
+   test_independent_limits();test_indexed_hd_restore();
    test_pending_budget();
    test_pending_wire_bound();
    test_failed_publication_order();

@@ -11,6 +11,7 @@ void arc_state_io_speculate(bool speculative);
 bool arc_state_io_speculative(void);
 bool arc_state_io_publish(void);
 void arc_state_io_snapshot(ArcState *state);
+void arc_state_io_snapshot_bounded(ArcState *state,size_t maximum);
 void arc_state_io_root(const char *save_directory);
 void arc_state_io_binding(unsigned index, const char *path);
 bool arc_state_io_store(const char *path, const char *identity);
@@ -18,6 +19,8 @@ bool arc_state_io_store_lazy(const char *path,const char *identity);
 void arc_state_io_frontiers(ArcState *state);
 void arc_state_io_forget_stores(void);
 bool arc_state_io_pending(void);
+/* Checked wire count; never allocates, reads native files or publishes. */
+bool arc_state_io_preflight(size_t maximum);
 size_t arc_state_io_pending_bound(void);
 /* Configure a session's largest protocol write and logical store path.
  * Queue ownership and publication order retain their existing limits. */

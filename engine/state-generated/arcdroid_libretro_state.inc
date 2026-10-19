@@ -153,13 +153,13 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_kind");
    arc_state_value(s,&(arc_kind),sizeof(arc_kind));
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_frame");
-   arc_state_value(s,&(arc_frame),sizeof(arc_frame));
+   /* D-215: chooser/blank scratch is rebuilt after load. */
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_video_pitch");
    arc_state_value(s,&(arc_video_pitch),sizeof(arc_video_pitch));
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_present_frame");
    /* Retained used spans are encoded by the raster codec. */
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_audio_frame");
-   arc_state_value(s,&(arc_audio_frame),sizeof(arc_audio_frame));
+   /* Delivery scratch; audio queues and filters remain exact. */
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_cmos_record");
    arc_state_value(s,&(arc_cmos_record),sizeof(arc_cmos_record));
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_cmos_prepared");
@@ -304,7 +304,7 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    for (size_t ss_i0=0; ss_i0<sizeof((arc_osk).keys)/sizeof(((arc_osk).keys)[0]); ++ss_i0) {
       arc_state_value(s,&((((arc_osk).keys)[ss_i0]).action),sizeof((((arc_osk).keys)[ss_i0]).action));
       arc_state_value(s,&((((arc_osk).keys)[ss_i0]).key),sizeof((((arc_osk).keys)[ss_i0]).key));
-      arc_state_string(s,(const char **)&((((arc_osk).keys)[ss_i0]).label));
+      arc_state_string_bounded(s,(const char **)&((((arc_osk).keys)[ss_i0]).label),32u);
       arc_state_value(s,&((((arc_osk).keys)[ss_i0]).x),sizeof((((arc_osk).keys)[ss_i0]).x));
       arc_state_value(s,&((((arc_osk).keys)[ss_i0]).y),sizeof((((arc_osk).keys)[ss_i0]).y));
       arc_state_value(s,&((((arc_osk).keys)[ss_i0]).width),sizeof((((arc_osk).keys)[ss_i0]).width));
@@ -350,6 +350,7 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    arc_state_value(s,&(((arc_boot_discovery).disc_name).bytes),sizeof(((arc_boot_discovery).disc_name).bytes));
    arc_state_value(s,&(((arc_boot_discovery).disc_name).length),sizeof(((arc_boot_discovery).disc_name).length));
    arc_state_value(s,&((arc_boot_discovery).geometry),sizeof((arc_boot_discovery).geometry));
+   arc_state_value(s,&((arc_boot_discovery).candidate_count),sizeof((arc_boot_discovery).candidate_count));
    size_t arc_boot_discovery_count=0;
    unsigned arc_boot_discovery_incoming;arc_state_project(s,&arc_boot_discovery_incoming,&arc_boot_discovery.candidate_count,sizeof(arc_boot_discovery_incoming));
    if(arc_state_measuring(s))arc_boot_discovery_incoming=ARC_LAUNCH_MAX_CANDIDATES;
@@ -367,7 +368,6 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
       arc_state_value(s,&((((arc_boot_discovery).candidates)[ss_i0]).has_boot),sizeof((((arc_boot_discovery).candidates)[ss_i0]).has_boot));
       arc_state_value(s,&((((arc_boot_discovery).candidates)[ss_i0]).resource),sizeof((((arc_boot_discovery).candidates)[ss_i0]).resource));
    }
-   arc_state_value(s,&((arc_boot_discovery).candidate_count),sizeof((arc_boot_discovery).candidate_count));
    arc_state_value(s,&((arc_boot_discovery).application_count),sizeof((arc_boot_discovery).application_count));
    arc_state_value(s,&((arc_boot_discovery).unknown_count),sizeof((arc_boot_discovery).unknown_count));
    arc_state_value(s,&((arc_boot_discovery).root_boot),sizeof((arc_boot_discovery).root_boot));
@@ -426,6 +426,7 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    arc_state_value(s,&(((arc_chooser_discovery).disc_name).bytes),sizeof(((arc_chooser_discovery).disc_name).bytes));
    arc_state_value(s,&(((arc_chooser_discovery).disc_name).length),sizeof(((arc_chooser_discovery).disc_name).length));
    arc_state_value(s,&((arc_chooser_discovery).geometry),sizeof((arc_chooser_discovery).geometry));
+   arc_state_value(s,&((arc_chooser_discovery).candidate_count),sizeof((arc_chooser_discovery).candidate_count));
    size_t arc_chooser_discovery_count=0;
    unsigned arc_chooser_discovery_incoming;arc_state_project(s,&arc_chooser_discovery_incoming,&arc_chooser_discovery.candidate_count,sizeof(arc_chooser_discovery_incoming));
    if(arc_state_measuring(s))arc_chooser_discovery_incoming=ARC_LAUNCH_MAX_CANDIDATES;
@@ -443,7 +444,6 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
       arc_state_value(s,&((((arc_chooser_discovery).candidates)[ss_i0]).has_boot),sizeof((((arc_chooser_discovery).candidates)[ss_i0]).has_boot));
       arc_state_value(s,&((((arc_chooser_discovery).candidates)[ss_i0]).resource),sizeof((((arc_chooser_discovery).candidates)[ss_i0]).resource));
    }
-   arc_state_value(s,&((arc_chooser_discovery).candidate_count),sizeof((arc_chooser_discovery).candidate_count));
    arc_state_value(s,&((arc_chooser_discovery).application_count),sizeof((arc_chooser_discovery).application_count));
    arc_state_value(s,&((arc_chooser_discovery).unknown_count),sizeof((arc_chooser_discovery).unknown_count));
    arc_state_value(s,&((arc_chooser_discovery).root_boot),sizeof((arc_chooser_discovery).root_boot));
@@ -698,7 +698,7 @@ static void arc_state_jfd_image_values(ArcState *s, ArcJfdImage *value)
       arc_state_value(s,&(((((*value)).tracks)[ss_i0]).first_sector),sizeof(((((*value)).tracks)[ss_i0]).first_sector));
       arc_state_value(s,&(((((*value)).tracks)[ss_i0]).sector_count),sizeof(((((*value)).tracks)[ss_i0]).sector_count));
       arc_state_value(s,&(((((*value)).tracks)[ss_i0]).timed),sizeof(((((*value)).tracks)[ss_i0]).timed));
-      arc_state_string(s,(const char **)&(((((*value)).tracks)[ss_i0]).quarantine_reason));
+      arc_state_string_bounded(s,(const char **)&(((((*value)).tracks)[ss_i0]).quarantine_reason),128u);
    }
    arc_state_value(s,&(((*value)).track_count),sizeof(((*value)).track_count));
    arc_state_value(s,&(((*value)).title),sizeof(((*value)).title));
@@ -719,15 +719,15 @@ static void arc_state_jfd_image_values(ArcState *s, ArcJfdImage *value)
    arc_state_value(s,&((((*value)).file_data).valid_copies),sizeof((((*value)).file_data).valid_copies));
    arc_state_value(s,&((((*value)).file_data).agreeing_copies),sizeof((((*value)).file_data).agreeing_copies));
    arc_state_value(s,&((((*value)).file_data).format),sizeof((((*value)).file_data).format));
-   arc_state_string(s,(const char **)&((((*value)).file_data).reason));
+   arc_state_string_bounded(s,(const char **)&((((*value)).file_data).reason),128u);
    arc_state_value(s,&(((*value)).identification_mask),sizeof(((*value)).identification_mask));
    arc_state_value(s,&(((*value)).identification_time),sizeof(((*value)).identification_time));
    arc_state_value(s,&(((*value)).identification_schedule),sizeof(((*value)).identification_schedule));
    arc_state_value(s,&(((*value)).identification_maps),sizeof(((*value)).identification_maps));
    arc_state_value(s,&(((*value)).identification_format),sizeof(((*value)).identification_format));
    arc_state_value(s,&(((*value)).identification_timed),sizeof(((*value)).identification_timed));
-   arc_state_string(s,(const char **)&(((*value)).identification_basis));
-   arc_state_string(s,(const char **)&(((*value)).identification_reason));
+   arc_state_string_bounded(s,(const char **)&(((*value)).identification_basis),128u);
+   arc_state_string_bounded(s,(const char **)&(((*value)).identification_reason),128u);
 }
 static void arc_state_jfd_overlay_values(ArcState *s, ArcJfdOverlay *value)
 {
@@ -759,7 +759,7 @@ static void arc_state_jfd_overlay_values(ArcState *s, ArcJfdOverlay *value)
    arc_state_value(s,&(((*value)).map_unavailable_logged),sizeof(((*value)).map_unavailable_logged));
    arc_state_value(s,&(((*value)).damaged),sizeof(((*value)).damaged));
    arc_state_value(s,&(((*value)).failed),sizeof(((*value)).failed));
-   arc_state_string(s,(const char **)&(((*value)).reason));
+   arc_state_string_bounded(s,(const char **)&(((*value)).reason),128u);
 }
 static void arc_state_media_entry_values(ArcState *s, ArcMediaEntry *value)
 {

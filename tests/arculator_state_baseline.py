@@ -20,11 +20,12 @@ a.output.mkdir(parents=True,exist_ok=True)
 cases={
  'adf':'arcdroid-test.adf', 'adf-shadow':'arcdroid-test.adf',
  'adf-original':'arcdroid-test.adf', 'adl':'arcdroid-application-l.adl',
+ 'adl-shadow':'arcdroid-application-l.adl',
  'jfd':'arcdroid-test.jfd', 'jfd-shadow':'adffs/writable.jfd',
  'jfd-gzip':'adffs/writable-gzip.jfd', 'zip':'zip-content/stored.zip',
  'folder':'adffs/Writable-folder.jfd/Writable-folder.jfd',
  'playlist':'arcdroid-media.m3u', 'adffs':'adffs/eligible.jfd',
- 'hd-media':'hd-family/valid-f.adf', 'hd':'hd-family/valid-f.adf',
+ 'hd-media':'hd-family/valid-f.adf', 'hd-media-shadow':'hd-family/valid-f.adf', 'hd':'hd-family/valid-f.adf',
  'hd-jfd':'adffs/eligible-hd-rw.jfd'}
 count=0
 for machine in ('A3000','A3010','A3020','A4000'):

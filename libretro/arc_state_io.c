@@ -69,13 +69,13 @@ static bool state_record(unsigned kind,const char *path,const char *target,unsig
 static void (*state_io_commit_observer)(const char *,const void *,size_t);
 void arc_state_io_set_commit_observer(void (*observer)(const char *,const void *,size_t))
 { state_io_commit_observer=observer; }
-static bool state_read_native(const char *path,uint8_t **data,size_t *size)
+static bool state_read_native_limit(const char *path,uint8_t **data,size_t *size,size_t limit)
 {
    *data=NULL;*size=0;
    if(!state_io_native||!state_io_native->open||!state_io_native->size||!state_io_native->read||!state_io_native->close)return false;
    struct retro_vfs_file_handle *f=state_io_native->open(path,RETRO_VFS_FILE_ACCESS_READ,0);
    if(!f)return false;
-   int64_t n=state_io_native->size(f);bool okay=n>=0&&(uint64_t)n<=STATE_IO_BYTES;
+   int64_t n=state_io_native->size(f);bool okay=n>=0&&(uint64_t)n<=STATE_IO_BYTES&&(uint64_t)n<=limit;
    uint8_t *p=okay?malloc(n?(size_t)n:1u):NULL;
    if(!p)okay=false;
    if(okay&&n&&state_io_native->read(f,p,(uint64_t)n)!=n)okay=false;
@@ -83,6 +83,8 @@ static bool state_read_native(const char *path,uint8_t **data,size_t *size)
    if(!okay){free(p);return false;}
    *data=p;*size=(size_t)n;return true;
 }
+static bool state_read_native(const char *path,uint8_t **data,size_t *size)
+{ return state_read_native_limit(path,data,size,STATE_IO_BYTES); }
 static StateFile *state_materialize(const char *path,bool create,bool truncate)
 {
    StateFile *f=state_file(path);
@@ -301,7 +303,7 @@ static int state_closedir(struct retro_vfs_dir_handle *directory)
 void arc_state_io_clear(void)
 {
    for(unsigned i=0;i<state_io_file_count;++i)free(state_io_files[i].data);
-   memset(state_io_files,0,sizeof(state_io_files));state_io_file_count=0;state_io_operation_bytes=0;
+   memset(state_io_files,0,state_io_file_count*sizeof(state_io_files[0]));state_io_file_count=0;state_io_operation_bytes=0;
    while(state_io_head){StateOperation *op=state_io_head;state_io_head=op->next;free(op);}
    state_io_tail=NULL;state_io_operation_count=0;state_io_failed=false;state_io_speculating=false;
 }
@@ -412,9 +414,11 @@ static bool state_wire_read_path(StateIoWire *w,char path[4096])
    return true;
 }
 typedef struct {
-   StateFile files[STATE_IO_FILES];unsigned count,operations;
+   unsigned count,operations,capacity;
    StateOperation *head,*tail;size_t operation_bytes;
    size_t view_bytes,view_limit;
+   ArcState *state;
+   StateFile files[];
 } StateIoReplacement;
 static void state_io_replacement_free(StateIoReplacement *r)
 {
@@ -423,11 +427,16 @@ static void state_io_replacement_free(StateIoReplacement *r)
    free(r);
 }
 static void state_io_restore_rollback(void *opaque) { state_io_replacement_free(opaque); }
+static void state_io_restore_empty(void *unused)
+{
+   (void)unused;bool speculating=state_io_speculating;
+   arc_state_io_clear();state_io_speculating=speculating;
+}
 static void state_io_restore_commit(void *opaque)
 {
    StateIoReplacement *r=opaque;bool speculating=state_io_speculating;
    arc_state_io_clear();state_io_speculating=speculating;
-   memcpy(state_io_files,r->files,sizeof(state_io_files));state_io_file_count=r->count;
+   memcpy(state_io_files,r->files,r->count*sizeof(*r->files));state_io_file_count=r->count;
    state_io_head=r->head;state_io_tail=r->tail;state_io_operation_count=r->operations;state_io_operation_bytes=r->operation_bytes;free(r);
 }
 /* The operation log determines the staged namespace. Rebuild its file views
@@ -437,14 +446,21 @@ static StateFile *replacement_file(StateIoReplacement *r,const char *path,bool c
    StateFile *f=NULL;
    for(unsigned i=0;i<r->count;++i)if(!strcmp(path,r->files[i].path)){f=&r->files[i];break;}
    if(!f) {
-      if(r->count>=STATE_IO_FILES)return NULL;
+      if(r->count>=r->capacity)return NULL;
       f=&r->files[r->count];if(!state_path(f->path,path))return NULL;
-      if(!truncate&&!state_read_native(path,&f->data,&f->size)&&!create)return NULL;
+      if(!truncate) {
+         size_t remaining=r->view_limit-r->view_bytes;
+         if(remaining>arc_state_ownership_remaining(r->state))remaining=arc_state_ownership_remaining(r->state);
+         if(!state_read_native_limit(path,&f->data,&f->size,remaining)&&
+            (!create||!state_io_native->stat||
+             (state_io_native->stat(path,NULL)&RETRO_VFS_STAT_IS_VALID)))return NULL;
+      }
       if(f->size>r->view_limit-r->view_bytes){free(f->data);memset(f,0,sizeof(*f));return NULL;}
+      if(!arc_state_ownership_resize(r->state,0,f->size)){free(f->data);memset(f,0,sizeof(*f));return NULL;}
       r->view_bytes+=f->size;
       ++r->count;
    } else if(f->removed&&!create)return NULL;
-   if(truncate||f->removed){r->view_bytes-=f->size;free(f->data);f->data=NULL;f->size=0;f->removed=false;}
+   if(truncate||f->removed){(void)arc_state_ownership_resize(r->state,f->size,0);r->view_bytes-=f->size;free(f->data);f->data=NULL;f->size=0;f->removed=false;}
    return f;
 }
 static bool replacement_views(StateIoReplacement *r)
@@ -459,6 +475,7 @@ static bool replacement_views(StateIoReplacement *r)
             size_t size=op->kind==6?(size_t)op->offset:(size_t)op->offset+op->bytes;
             if(op->kind==2&&size<f->size)size=f->size;
             if(size>f->size&&size-f->size>r->view_limit-r->view_bytes)return false;
+            if(!arc_state_ownership_resize(r->state,f->size,size))return false;
             uint8_t *data=realloc(f->data,size?size:1u);if(!data)return false;
             if(size>f->size)memset(data+f->size,0,size-f->size);
             r->view_bytes=r->view_bytes-f->size+size;f->data=data;f->size=size;
@@ -470,6 +487,7 @@ static bool replacement_views(StateIoReplacement *r)
             f=replacement_file(r,op->path,false,false);if(!f||f->directory)return false;
             StateFile *target=replacement_file(r,op->target,true,true);if(!target)return false;
             if(f->size>r->view_limit-r->view_bytes)return false;
+            if(!arc_state_ownership_resize(r->state,0,f->size))return false;
             target->data=malloc(f->size?f->size:1u);if(!target->data)return false;
             r->view_bytes+=f->size;memcpy(target->data,f->data,f->size);target->size=f->size;f->removed=true;break;
          }
@@ -479,12 +497,35 @@ static bool replacement_views(StateIoReplacement *r)
    }
    return true;
 }
-void arc_state_io_snapshot(ArcState *s)
+bool arc_state_io_preflight(size_t maximum)
 {
+   if(state_io_failed||maximum<16u)return false;
+   size_t views=0;
+   for(unsigned i=0;i<state_io_file_count;++i) {
+      if(state_io_files[i].size>STATE_IO_BYTES-views)return false;
+      views+=state_io_files[i].size;
+   }
+   size_t bytes=16u;
+   for(StateOperation *op=state_io_head;op;op=op->next) {
+      char path[4096],target[4096];
+      if(!state_logical_path(op->path,path)||
+         (op->kind==5u&&!state_logical_path(op->target,target)))return false;
+      size_t overhead=41u+strlen(path);
+      if(op->kind==5u)overhead+=9u+strlen(target);
+      if(overhead>maximum-bytes||op->bytes>maximum-bytes-overhead)return false;
+      bytes+=overhead+op->bytes;
+   }
+   return true;
+}
+void arc_state_io_snapshot(ArcState *s)
+{ arc_state_io_snapshot_bounded(s,state_io_wire_limit); }
+void arc_state_io_snapshot_bounded(ArcState *s,size_t maximum)
+{
+   if(maximum>state_io_wire_limit)maximum=state_io_wire_limit;
    if(arc_state_pass(s)||arc_state_error(s))return;
    StateIoWire w={0};
    if(!arc_state_loading(s)) {
-      if(state_io_failed){arc_state_fail(s,"pending store failure");return;}
+      if(!arc_state_io_preflight(maximum)){arc_state_fail(s,"pending store bounds");return;}
       state_wire_u64(&w,state_io_file_count);state_wire_u64(&w,state_io_operation_count);
       for(StateOperation *op=state_io_head;op;op=op->next) {
          state_wire_u64(&w,op->kind);state_wire_u64(&w,op->mode);state_wire_u64(&w,(uint64_t)op->offset);
@@ -492,17 +533,28 @@ void arc_state_io_snapshot(ArcState *s)
          if(op->kind==5)state_wire_path(&w,op->target);
          state_wire_u64(&w,op->bytes);state_wire_write(&w,op->data,op->bytes);
       }
-      if(w.failed||w.size>state_io_wire_limit){free(w.data);arc_state_fail(s,"pending store bounds");return;}
+      if(w.failed||w.size>maximum){free(w.data);arc_state_fail(s,"pending store bounds");return;}
    }
    size_t bytes=0;
-   const void *payload=arc_state_blob(s,"stores.pending",w.data,w.size,state_io_wire_limit,&bytes);
+   const void *payload=arc_state_blob(s,"stores.pending",w.data,w.size,maximum,&bytes);
    free(w.data);
    if(!arc_state_loading(s)||arc_state_error(s))return;
    w=(StateIoWire){.data=(uint8_t*)payload,.size=bytes};
-   StateIoReplacement *r=calloc(1,sizeof(*r));if(!r){arc_state_fail(s,"allocation");return;}
-   r->view_limit=arc_state_decoded_limit(s);
    uint64_t count=state_wire_read_u64(&w),operations=state_wire_read_u64(&w);
-   if(count>STATE_IO_FILES||operations>STATE_IO_OPERATIONS)w.failed=true;
+   if(!count&&!operations) {
+      if(w.failed||w.at!=w.size){arc_state_fail(s,"pending store format");return;}
+#if defined(ARCDROID_TEST_FAULTS)
+      const char *drop=getenv("ARCDROID_SS1_DROP_OBJECT");
+      if(drop&&!strcmp(drop,"stores.pending"))return;
+#endif
+      arc_state_action(s,state_io_restore_empty,NULL,NULL);return;
+   }
+   if(w.failed||count>STATE_IO_FILES||operations>STATE_IO_OPERATIONS){arc_state_fail(s,"pending store format");return;}
+   size_t owned=sizeof(StateIoReplacement)+(size_t)count*sizeof(StateFile);
+   if(!arc_state_ownership_resize(s,0,owned))return;
+   StateIoReplacement *r=calloc(1,owned);if(!r){arc_state_fail(s,"allocation");return;}
+   r->capacity=(unsigned)count;r->state=s;r->view_limit=arc_state_ownership_limit(s);
+   if(r->view_limit>STATE_IO_BYTES)r->view_limit=STATE_IO_BYTES;
    for(uint64_t i=0;!w.failed&&i<operations;++i) {
       uint64_t kind=state_wire_read_u64(&w),mode=state_wire_read_u64(&w),offset=state_wire_read_u64(&w);
       char path[4096],target[4096]={0};state_wire_read_path(&w,path);
@@ -512,6 +564,7 @@ void arc_state_io_snapshot(ArcState *s)
          (kind!=2&&n)||(kind==2&&offset>STATE_IO_BYTES-n)){w.failed=true;break;}
       const uint8_t *p=state_wire_take(&w,(size_t)n);if(!p)break;
       if(sizeof(StateOperation)+(size_t)n+32u>STATE_IO_BYTES-16u-r->operation_bytes){w.failed=true;break;}
+      if(!arc_state_ownership_resize(s,0,sizeof(StateOperation)+(size_t)n+32u)){w.failed=true;break;}
       StateOperation *op=calloc(1,sizeof(*op)+(size_t)n);if(!op){w.failed=true;break;}
       r->operation_bytes+=sizeof(*op)+(size_t)n+32u;
       op->kind=(unsigned)kind;op->mode=(unsigned)mode;op->offset=(int64_t)offset;op->bytes=(size_t)n;

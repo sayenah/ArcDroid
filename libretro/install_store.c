@@ -28,6 +28,7 @@ struct ArcInstallStore {
 #if defined(ARCDROID_SAVE_STATES)
    uint8_t *snapshot_base;
    char snapshot_base_hash[65];
+   uint8_t snapshot_dirty[(ARC_INSTALL_HD_SECTORS+7u)/8u];
 #endif
    uint64_t generation, sequence;
    size_t journal_length;
@@ -852,6 +853,13 @@ bool arc_install_store_write(void *opaque, uint32_t lba, uint32_t count,
    } else return false;
    memcpy(s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
           data, payload_length);
+#if defined(ARCDROID_SAVE_STATES)
+   if(s->snapshot_base)for(size_t i=lba;i<(size_t)lba+count;++i) {
+      uint8_t bit=(uint8_t)(1u<<(i%8u));
+      if(memcmp(s->image+i*512u,s->snapshot_base+i*512u,512u))s->snapshot_dirty[i/8u]|=bit;
+      else s->snapshot_dirty[i/8u]&=(uint8_t)~bit;
+   }
+#endif
    s->wrote = true;
    return true;
 failed:
@@ -917,7 +925,11 @@ static bool snapshot_native_base(ArcInstallStore *s)
    bool okay=base&&full_path(s,m[newest].base_leaf,path)&&read_exact(path,base,ARC_INSTALL_HD_BYTES);
    if(okay){arc_sha256_hex(base,ARC_INSTALL_HD_BYTES,hash);okay=!strcmp(hash,m[newest].base_hash);}
    if(!okay){free(base);return false;}
-   free(s->snapshot_base);s->snapshot_base=base;strcpy(s->snapshot_base_hash,hash);return true;
+   free(s->snapshot_base);s->snapshot_base=base;strcpy(s->snapshot_base_hash,hash);
+   memset(s->snapshot_dirty,0,sizeof(s->snapshot_dirty));
+   for(size_t i=0;i<ARC_INSTALL_HD_SECTORS;++i)
+      if(memcmp(s->image+i*512u,base+i*512u,512u))s->snapshot_dirty[i/8u]|=(uint8_t)(1u<<(i%8u));
+   return true;
 }
 void arc_install_store_snapshot(ArcState *state,ArcInstallStore *s)
 {
@@ -930,8 +942,7 @@ void arc_install_store_snapshot(ArcState *state,ArcInstallStore *s)
       bool available=snapshot_native_base(s);arc_state_io_speculate(speculative);
       if(!available){arc_state_fail(state,"HD immutable base");return;}
       arc_state_expect(state,"hd.image.base",s->snapshot_base_hash,sizeof(s->snapshot_base_hash));
-      const void *next=arc_state_delta(state,"hd.image",s->image,s->snapshot_base,ARC_INSTALL_HD_BYTES);
-      if(arc_state_loading(state)&&next)arc_state_stage(state,s->image,next,ARC_INSTALL_HD_BYTES);
+      arc_state_delta_stage_indexed(state,"hd.image",s->image,s->snapshot_base,ARC_INSTALL_HD_BYTES,s->snapshot_dirty);
    }
    if(s->image_loaded)arc_state_expect(state,"hd.image.base",s->snapshot_base_hash,sizeof(s->snapshot_base_hash));
    if(!arc_state_pass(state))return;

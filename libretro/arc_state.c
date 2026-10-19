@@ -68,7 +68,7 @@ struct ArcState {
    uint32_t *region_table;size_t region_table_size;
    StateRegion **addresses;size_t address_count;
    StateRegion *object;
-   size_t output_size,heap_bytes,decoded_limit;
+   size_t output_size,heap_bytes,decoded_limit,ownership_limit,scratch_limit,scratch_bytes;
 };
 static uint64_t get64(const uint8_t *p)
 { uint64_t v=0; for(unsigned i=0;i<8;++i)v|=(uint64_t)p[i]<<(8*i); return v; }
@@ -148,6 +148,16 @@ const char *arc_state_error(const ArcState *s) { return s?s->error:"allocation";
 bool arc_state_loading(const ArcState *s) { return s&&s->loading; }
 unsigned arc_state_pass(const ArcState *s) { return s?s->pass:0; }
 size_t arc_state_decoded_limit(const ArcState *s) { return s?s->decoded_limit:0; }
+size_t arc_state_ownership_limit(const ArcState *s) { return s?s->ownership_limit:0; }
+size_t arc_state_ownership_remaining(const ArcState *s) { return s?s->ownership_limit-s->heap_bytes:0; }
+bool arc_state_ownership_resize(ArcState *s,size_t previous,size_t next)
+{
+   if(!s||s->error)return false;
+   if(previous>s->heap_bytes||next>s->ownership_limit-(s->heap_bytes-previous)){
+      arc_state_fail(s,"ownership bounds");return false;
+   }
+   s->heap_bytes=s->heap_bytes-previous+next;return true;
+}
 bool arc_state_registering(const ArcState *s) { return s&&s->registering; }
 static bool grow(ArcState *s,void **p,size_t *capacity,size_t count,size_t width)
 {
@@ -156,6 +166,9 @@ static bool grow(ArcState *s,void **p,size_t *capacity,size_t count,size_t width
       size_t cap=*capacity?*capacity*2u:64u;
       if(cap<count)cap=count;
       if(cap>ARC_STATE_ITEMS||width>SIZE_MAX/cap) {arc_state_fail(s,"item limit");return false;}
+      size_t extra=(cap-*capacity)*width;
+      if(extra>s->scratch_limit-s->scratch_bytes){arc_state_fail(s,"scratch bounds");return false;}
+      s->scratch_bytes+=extra;
       void *next=realloc(*p,cap*width);
       if(!next){arc_state_fail(s,"allocation");return false;}
       *p=next;*capacity=cap;
@@ -286,17 +299,22 @@ static void compressed_later(ArcState *s,void *destination,const StateItem *item
 ArcState *arc_state_begin(const void *input,size_t length)
 { return arc_state_begin_limited(input,length,ARC_STATE_LIMIT); }
 ArcState *arc_state_begin_limited(const void *input,size_t length,size_t decoded_limit)
+{ return arc_state_begin_bounded(input,length,ARC_STATE_LIMIT,decoded_limit,decoded_limit,ARC_STATE_LIMIT); }
+ArcState *arc_state_begin_bounded(const void *input,size_t length,size_t wire,
+                                  size_t decoded,size_t ownership,size_t scratch)
 {
    ArcState *s=calloc(1,sizeof(*s));if(!s)return NULL;
    s->loading=input!=NULL;s->output_size=ARC_STATE_HEADER;
-   s->decoded_limit=decoded_limit<ARC_STATE_LIMIT?decoded_limit:ARC_STATE_LIMIT;
+   s->decoded_limit=decoded<ARC_STATE_LIMIT?decoded:ARC_STATE_LIMIT;
+   s->ownership_limit=ownership<ARC_STATE_LIMIT?ownership:ARC_STATE_LIMIT;
+   s->scratch_limit=scratch<ARC_STATE_LIMIT?scratch:ARC_STATE_LIMIT;
 #if defined(ARCDROID_TEST_FAULTS)
    const char *drop=getenv("ARCDROID_SS1_DROP_OBJECT");
    if(drop)s->drop_owner=name_key(drop);
 #endif
    if(!s->loading)return s;
    const uint8_t *p=input;
-   if(length<ARC_STATE_HEADER||length>ARC_STATE_LIMIT||memcmp(p,ARC_STATE_MAGIC,8)||get64(p+8)!=3||
+   if(length<ARC_STATE_HEADER||length>wire||length>ARC_STATE_LIMIT||memcmp(p,ARC_STATE_MAGIC,8)||get64(p+8)!=3||
       get64(p+16)>length||get64(p+16)<ARC_STATE_HEADER||get64(p+24)>ARC_STATE_ITEMS) {
       arc_state_fail(s,"container");return s;
    }
@@ -323,11 +341,11 @@ ArcState *arc_state_begin_limited(const void *input,size_t length,size_t decoded
       at+=ARC_STATE_RECORD+(size_t)bytes;
    }
    if(at!=used||s->count!=count)arc_state_fail(s,"record bounds");
-   size_t decoded=0;
+   size_t decoded_bytes=0;
    for(size_t i=0;!s->error&&i<s->count;++i)if(s->items[i].compressed) {
       size_t n=s->items[i].bytes;
-      if(n>s->decoded_limit||decoded>s->decoded_limit-n)arc_state_fail(s,"decoded bounds");
-      else decoded+=n;
+      if(n>s->decoded_limit||decoded_bytes>s->decoded_limit-n)arc_state_fail(s,"decoded bounds");
+      else decoded_bytes+=n;
    }
    /* Validate every packet before preparing the transaction. Large live
     * arrays are decoded only at commit, eliminating a full scratch copy. */
@@ -494,16 +512,18 @@ void arc_state_reference(ArcState *s,void *slot,intptr_t bias,size_t extent,size
 /* String ownership is deliberately not implicit. Registered immutable strings
  * use references; session diagnostic strings use an explicit fixed buffer. */
 void arc_state_string(ArcState *s,const char **slot)
+{ arc_state_string_bounded(s,slot,4096u); }
+void arc_state_string_bounded(ArcState *s,const char **slot,size_t maximum)
 {
    if(!s||s->error||!s->pass)return;
-   if(arc_state_measure(s,4096u))return;
+   if(arc_state_measure(s,maximum))return;
    size_t bytes=*slot?strlen(*slot)+1u:0u;
-   if(bytes>4096u){arc_state_fail(s,"string bounds");return;}
+   if(bytes>maximum){arc_state_fail(s,"string bounds");return;}
    uint64_t key=address_key(s,slot,sizeof(*slot));
    StateItem *r;
    if(s->loading) {
       r=find_item(s,key);
-      if(!r||r->seen||r->kind!=4||r->bytes>4096u||(r->bytes&&
+      if(!r||r->seen||r->kind!=4||r->bytes>maximum||(r->bytes&&
          (r->data[r->bytes-1]||memchr(r->data,0,r->bytes-1)))) {arc_state_fail(s,"string bounds");return;}
       r->seen=true;
       const char *value=NULL;
@@ -526,7 +546,7 @@ void arc_state_buffer(ArcState *s,const char *name,void *value,size_t bytes)
    arc_state_region(s,name,value,bytes);
    if(s&&s->pass){arc_state_object(s,name);arc_state_value(s,value,bytes);}
 }
-void *arc_state_heap(ArcState *s,const char *name,void *slot,size_t bytes,size_t maximum)
+static void *arc_state_heap_data(ArcState *s,const char *name,void *slot,size_t bytes,size_t maximum,bool preserve)
 {
    void *old=NULL;memcpy(&old,slot,sizeof(old));
    if(!s||s->error)return old;
@@ -538,15 +558,15 @@ void *arc_state_heap(ArcState *s,const char *name,void *slot,size_t bytes,size_t
    size_t count=old?bytes:0;
    if(s->loading) {
       uint64_t n=get64(saved->data);
-      if(n>maximum||n>s->decoded_limit||n>s->decoded_limit-s->heap_bytes){arc_state_fail(s,"heap bounds");return old;}
-      s->heap_bytes+=(size_t)n;
+      if(n>maximum){arc_state_fail(s,"heap bounds");return old;}
+      if(!arc_state_ownership_resize(s,0,(size_t)n))return old;
       count=(size_t)n;
    }
    void *next=old;
    if(s->loading) {
       next=count?calloc(count,1):NULL;
       if(count&&!next){arc_state_fail(s,"allocation");return old;}
-      if(next&&old)memcpy(next,old,count<bytes?count:bytes);
+      if(preserve&&next&&old)memcpy(next,old,count<bytes?count:bytes);
    }
    arc_state_region(s,name,next,count);
    StateRegion *r=region(s,key);
@@ -555,6 +575,10 @@ void *arc_state_heap(ArcState *s,const char *name,void *slot,size_t bytes,size_t
    if(s->loading)write_later(s,slot,&next,sizeof(next));
    return next;
 }
+void *arc_state_heap(ArcState *s,const char *name,void *slot,size_t bytes,size_t maximum)
+{ return arc_state_heap_data(s,name,slot,bytes,maximum,true); }
+void *arc_state_heap_derived(ArcState *s,const char *name,void *slot,size_t bytes,size_t maximum)
+{ return arc_state_heap_data(s,name,slot,bytes,maximum,false); }
 size_t arc_state_heap_size(ArcState *s,const char *name)
 { StateRegion *r=s?region(s,name_key(name)):NULL;return r?r->bytes:0; }
 void arc_state_project(ArcState *s,void *output,const void *value,size_t bytes)
@@ -610,6 +634,8 @@ const void *arc_state_blob(ArcState *s,const char *name,const void *data,size_t 
    /* A blob is decoded only after its owner has validated the declared size. */
    if(r&&s->loading&&r->compressed) {
       if(r->bytes>s->decoded_limit){arc_state_fail(s,"decoded bounds");return NULL;}
+      if(r->bytes>s->scratch_limit-s->scratch_bytes){arc_state_fail(s,"scratch bounds");return NULL;}
+      s->scratch_bytes+=r->bytes;
       r->owned=malloc(r->bytes);
       if(!r->owned||!decompress_words(r->owned,r->bytes,r->data,r->encoded_bytes)) {
          arc_state_fail(s,"blob decode");return NULL;
@@ -638,6 +664,7 @@ bool arc_state_run(ArcState *s,ArcStateVisit visit)
          qsort(s->addresses,s->address_count,sizeof(*s->addresses),address_order);
       }
    }
+   if(s->error)return false; /* No field traversal after failed graph construction. */
    s->pass=1;visit(s);
    if(s->loading) { for(size_t i=0;i<s->count;++i)if(!s->items[i].seen)arc_state_fail(s,"unknown field"); }
    else if(!s->error) {
@@ -691,8 +718,8 @@ bool arc_state_commit(ArcState *s)
 void arc_state_end(ArcState *s)
 {
    if(!s)return;
-   while(s->scratch){StateScratch *p=s->scratch;s->scratch=p->next;free(p);}
    while(s->actions){StateAction *a=s->actions;s->actions=a->next;if(!s->committed&&a->rollback)a->rollback(a->opaque);free(a);}
+   while(s->scratch){StateScratch *p=s->scratch;s->scratch=p->next;free(p);}
    while(s->texts){StateText *next=s->texts->next;free(s->texts);s->texts=next;}
    for(size_t i=0;i<s->count;++i)free(s->items[i].owned);
    if(s->loading&&!s->committed)for(size_t i=0;i<s->region_count;++i)if(s->regions[i].heap)free(s->regions[i].base);
@@ -734,9 +761,15 @@ void arc_state_boolean_array(ArcState *s,void *value,size_t bytes)
    arc_state_value(s,value,bytes);
 }
 
+bool arc_state_scratch_reserve(ArcState *s,size_t bytes)
+{
+   if(!s||s->error)return false;
+   if(bytes>s->scratch_limit-s->scratch_bytes){arc_state_fail(s,"scratch bounds");return false;}
+   s->scratch_bytes+=bytes;return true;
+}
 void *arc_state_scratch(ArcState *s,size_t bytes)
 {
-   if(!s||s->error||bytes>s->decoded_limit)return NULL;
+   if(bytes>SIZE_MAX-sizeof(StateScratch)||!arc_state_scratch_reserve(s,bytes))return NULL;
    StateScratch *p=malloc(sizeof(*p)+bytes);
    if(!p){arc_state_fail(s,"allocation");return NULL;}
    p->next=s->scratch;s->scratch=p;return p->data;
@@ -781,13 +814,14 @@ void arc_state_reference_array(ArcState *s,void *slots,size_t count,intptr_t str
 
 /* Only changed 512-byte sectors travel in the state. The immutable baseline is
  * rebound and fingerprinted by the owning media/store visitor. */
-const void *arc_state_delta(ArcState *s,const char *name,const void *current,const void *base,size_t bytes)
+static const void *state_delta(ArcState *s,const char *name,const void *current,const void *base,size_t bytes,void *destination,uint8_t *dirty)
 {
    if(!s||s->error)return NULL;
    size_t sectors=(bytes+511u)/512u,count=0;
    if(!s->loading)for(size_t i=0;i<sectors;++i) {
       size_t n=bytes-i*512u;if(n>512u)n=512u;
-      if(memcmp((const uint8_t*)current+i*512u,(const uint8_t*)base+i*512u,n))++count;
+      if((!dirty||(dirty[i/8u]&(1u<<(i%8u))))&&
+         memcmp((const uint8_t*)current+i*512u,(const uint8_t*)base+i*512u,n))++count;
    }
    size_t capacity=16u+count*520u;uint8_t *wire=s->loading?NULL:arc_state_scratch(s,capacity);
    size_t used=16u;
@@ -795,7 +829,8 @@ const void *arc_state_delta(ArcState *s,const char *name,const void *current,con
       put64(wire,bytes);put64(wire+8,count);
       for(size_t i=0;i<sectors;++i) {
          size_t n=bytes-i*512u;if(n>512u)n=512u;
-         if(memcmp((const uint8_t*)current+i*512u,(const uint8_t*)base+i*512u,n)) {
+         if((!dirty||(dirty[i/8u]&(1u<<(i%8u))))&&
+            memcmp((const uint8_t*)current+i*512u,(const uint8_t*)base+i*512u,n)) {
             put64(wire+used,i);used+=8u;memcpy(wire+used,(const uint8_t*)current+i*512u,n);used+=n;
          }
       }
@@ -803,7 +838,10 @@ const void *arc_state_delta(ArcState *s,const char *name,const void *current,con
    const uint8_t *saved=arc_state_blob(s,name,wire,used,16u+bytes+sectors*8u,&used);
    if(!s->loading||s->error)return current;
    if(used<16u||get64(saved)!=bytes||get64(saved+8)>sectors){arc_state_fail(s,"media delta header");return NULL;}
-   uint8_t *next=arc_state_scratch(s,bytes);if(!next)return NULL;memcpy(next,base,bytes);
+   uint8_t *next=destination?NULL:arc_state_scratch(s,bytes);
+   if(!destination){if(!next)return NULL;memcpy(next,base,bytes);}
+   uint8_t *next_dirty=dirty?arc_state_scratch(s,(sectors+7u)/8u):NULL;
+   if(dirty){if(!next_dirty)return NULL;memset(next_dirty,0,(sectors+7u)/8u);}
    uint64_t previous=0;size_t at=16u;count=(size_t)get64(saved+8);
 #if defined(ARCDROID_TEST_FAULTS)
    bool drop=count&&s->drop_owner==name_key(name);if(drop)s->drop_done=true;
@@ -816,11 +854,65 @@ const void *arc_state_delta(ArcState *s,const char *name,const void *current,con
       if(sector>=sectors||(j&&sector<=previous)){arc_state_fail(s,"media delta order");return NULL;}
       size_t n=bytes-(size_t)sector*512u;if(n>512u)n=512u;
       if(n>used-at){arc_state_fail(s,"media delta bounds");return NULL;}
-      if(!drop)memcpy(next+(size_t)sector*512u,saved+at,n);at+=n;previous=sector;
+      if(next&&!drop)memcpy(next+(size_t)sector*512u,saved+at,n);
+      if(next_dirty&&!drop&&memcmp(saved+at,(const uint8_t*)base+(size_t)sector*512u,n))
+         next_dirty[sector/8u]|=(uint8_t)(1u<<(sector%8u));
+      at+=n;previous=sector;
    }
    if(at!=used){arc_state_fail(s,"media delta trailing bytes");return NULL;}
+   if(destination) {
+      /* Visit every sector: live changes absent from the saved delta must
+       * return to the immutable base too. Only changed bytes enter the write
+       * set, and no live image byte changes before the transaction commits. */
+      at=16u;size_t entry=0;
+      for(size_t i=0;i<sectors;) {
+         size_t following=entry<count?(size_t)get64(saved+at):sectors;
+         bool payload=following==i;size_t end=payload?i+1u:following;
+         size_t offset=i*512u,n=(end-i)*512u;
+         if(n>bytes-offset)n=bytes-offset;
+         const uint8_t *desired=(const uint8_t*)base+offset;
+         if(payload) {
+            if(!drop)desired=saved+at+8u;
+            at+=8u+n;++entry;
+         }
+         /* Clean gaps are usually many MiB. One comparison avoids a call
+          * per sector; a changed gap still stages only its changed sectors. */
+         uint8_t *live=(uint8_t*)destination+offset;
+         if(dirty&&!payload) {
+            /* Unmarked sectors equal base. Only the owning store writes the
+             * image; it updates this conservative index on every mutation. */
+            for(size_t sector=i;sector<end;) {
+               if(!dirty[sector/8u]){sector=(sector/8u+1u)*8u;continue;}
+               if(dirty[sector/8u]&(1u<<(sector%8u))) {
+                  size_t off=sector*512u,part=bytes-off;if(part>512u)part=512u;
+                  const uint8_t *from=(const uint8_t*)base+off;
+                  if(memcmp((uint8_t*)destination+off,from,part))
+                     arc_state_stage(s,(uint8_t*)destination+off,from,part);
+               }
+               ++sector;
+            }
+         } else if(memcmp(live,desired,n)) {
+            if(n<=512u)arc_state_stage(s,live,desired,n);
+            else for(size_t within=0;within<n;within+=512u) {
+               size_t part=n-within;if(part>512u)part=512u;
+               if(memcmp(live+within,desired+within,part))
+                  arc_state_stage(s,live+within,desired+within,part);
+            }
+         }
+         i=end;
+      }
+      if(dirty)arc_state_stage(s,dirty,next_dirty,(sectors+7u)/8u);
+      return destination;
+   }
    return next;
 }
+const void *arc_state_delta(ArcState *s,const char *name,const void *current,const void *base,size_t bytes)
+{ return state_delta(s,name,current,base,bytes,NULL,NULL); }
+void arc_state_delta_stage(ArcState *s,const char *name,void *current,const void *base,size_t bytes)
+{ (void)state_delta(s,name,current,base,bytes,current,NULL); }
+
+void arc_state_delta_stage_indexed(ArcState *s,const char *name,void *current,const void *base,size_t bytes,uint8_t *dirty)
+{ (void)state_delta(s,name,current,base,bytes,current,dirty); }
 
 const void *arc_state_view(ArcState *s,const char *name,const void *data,size_t bytes,size_t *view_bytes)
 {

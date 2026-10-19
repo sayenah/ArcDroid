@@ -606,6 +606,22 @@ bool arc_jfd_store_frontier_base(const char *save_directory,const ArcDigest *bas
    if(generations[0]&&generations[0]==generations[1])return false;
    *generation=generations[0]>generations[1]?generations[0]:generations[1];return true;
 }
+bool arc_jfd_state_eligibility(const ArcJfdImage *image,uint8_t *eligible)
+{ return prepare_eligibility(image,eligible); }
+bool arc_jfd_state_bound(const ArcJfdImage *image,ArcJfdWritePolicy policy,size_t *bytes)
+{
+   *bytes=65536u+16u+(image->sector_count+ARC_JFD_PDD5_SLOTS+7u)/8u;
+   if(!arc_jfd_write_authorized(image,policy))return true;
+   ArcJfdOverlay plan={0};plan.eligible=calloc(image->sector_count?image->sector_count:1u,1u);
+   if(!plan.eligible)return false;
+   bool okay=prepare_eligibility(image,plan.eligible);
+   if(okay) {
+      (void)arc_jfd_plan_creation(image,&plan,policy);
+      for(size_t i=0;i<image->sector_count;++i)if(plan.eligible[i])*bytes+=image->sectors[i].size;
+      *bytes+=(size_t)plan.creation_capacity*1024u;
+   }
+   free(plan.eligible);return okay;
+}
 bool arc_jfd_store_frontier(const ArcJfdImage *image,uint64_t *generation)
 {
    *generation=0;
@@ -625,7 +641,7 @@ bool arc_jfd_store_frontier(const ArcJfdImage *image,uint64_t *generation)
    return true;
 }
 void arc_jfd_state_binding(ArcState *s,const char *name,ArcJfdOverlay *overlay,
-                            const void *decoded,size_t bytes,
+                            const char sha1_hex[41],const char sha256_hex[65],
                             const char *save_directory,unsigned image_number)
 {
    if(!overlay)return;
@@ -635,8 +651,8 @@ void arc_jfd_state_binding(ArcState *s,const char *name,ArcJfdOverlay *overlay,
    arc_state_object(s,name);
    arc_state_value(s,&store->active,sizeof(store->active));
    if(arc_state_loading(s)) {
-      char sha1_hex[41],sha256_hex[65];
-      arc_sha1_hex(decoded,bytes,sha1_hex);arc_sha256_hex(decoded,bytes,sha256_hex);
+      /* Identities come from the already validated immutable preparation,
+       * independently of the incoming mutable image/overlay fields. */
       if(!hex_bytes(sha1_hex,store->sha1,20u)||!hex_bytes(sha256_hex,store->sha256,32u)) {
          arc_state_fail(s,"JFD binding");return;
       }

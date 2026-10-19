@@ -51,10 +51,20 @@ policy_sites={'arc_disk_insert_entry':1,'arc_disc_commit':5,
     'retro_reset':1,'arc_run':1}
 for name,count in policy_sites.items():
     require(len(re.findall(r'\barc_kind\s*==\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==count,f'{name}: changed session-kind policy census')
-# SS-1's public wrapper owns the reentrancy latch; all existing session policy
-# remains in arc_run. Pin this delegation rather than dropping its census.
-require(body('retro_run').strip()=='if(arc_secondary_instance)return;\n   arc_state_inside_run=true;arc_run();arc_state_inside_run=false;',
-        'retro_run: changed secondary/reentrancy wrapper')
+# R-SS4e: secondary/failed rollback stops execution, callback restoration alone
+# cannot publish speculation, and the outer real return finalizes storage.
+# Pin the full delegation/ordering; comments and whitespace carry no policy.
+wrapper=re.sub(r'/\*.*?\*/|//[^\n]*','',body('retro_run'),flags=re.S)
+expected_wrapper='''
+   if(arc_secondary_instance||arc_state_rollback_failed)return;
+   if(arc_state_speculation&&arc_input_poll==arc_state_real_poll)return;
+   arc_state_inside_run=true;arc_run();
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&!arc_state_speculation)
+      (void)arc_state_boundary_finish();
+   arc_state_inside_run=false;
+'''
+require(''.join(wrapper.split())==''.join(expected_wrapper.split()),
+        'retro_run: changed secondary/reentrancy/speculation/publication wrapper')
 for name in ('arc_disc_commit','arc_disk_set_eject','arc_disk_set_index','arc_disk_replace','arc_disk_add','arc_keyboard'):
     require(len(re.findall(r'\barc_kind\s*!=\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==1,f'{name}: changed part 2 non-RPC policy census')
 poll=body('arc_poll_inputs')

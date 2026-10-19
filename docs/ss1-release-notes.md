@@ -2,12 +2,15 @@
 
 # SS-1 compatibility and frontend settings
 
-Run H is not acceptance-complete: its 16 MiB session-bound target and default
-20 MiB rewind-buffer gate remain unmet. The copied-module isolation proof also
-does not cover Android API 21–22 loaders that alias the copy to the primary.
-The authored read-only ADF bound is
-93,152,803 bytes (88.84 MiB). This is a conservative upper bound, not an
-established minimum. Do not interpret functional tests as approval to ship.
+Run K implements D-215: guest state remains exact and host picture histories
+are rebuilt after load. Authored floppy-session bounds are 7,356,448–9,020,448
+bytes across the four 4 MiB profiles, including writable media. The conservative
+all-floppy bound is 16,638,196 bytes, below 16 MiB and small enough for
+RetroArch 1.22.2's default 20,000,000-byte rewind-buffer initialization.
+Native hard-disc sessions reserve a larger buffer and require a larger rewind
+setting. Local tests are evidence, not approval to ship.
+The copied-module isolation proof still does not cover Android API 21–22
+loaders that alias the copy to the primary.
 
 R-SS3g replaces the proposed Android version restriction; no API-level switch
 is added. After R3d-4 merges, its R-1a guard must extend to both gate states and
@@ -23,15 +26,22 @@ keeps running while state operations refuse with a timed notice.
 States require the same core build, platform/ABI, machine, firmware, ordered
 media and options. Cross-version migration is unsupported. Mismatches preserve
 the running session. The [state design](arculator-save-states.md) describes the
-format, capacity, validation and current performance limitation.
+format, capacity, validation and the Run K representation.
 
 Distinct copied secondary instances are inert before initialization and frontend
 registrations, including RiscPC. Size queries never request a savestate context
 that could create a secondary. Preemptive Frames is unsupported: its first save
 refuses, invoking RetroArch 1.22.2's preempt error cleanup. Single-instance fake
-frames stage writes; original polling publishes final effects before the next
-real frame, unload or deinit. A publication failure blocks later mutations and
-shows one warning.
+frames stage writes. Real frames publish eagerly and finish their storage effects
+before the outer frame call returns, including early returns. Speculative
+provenance survives restoration of the original callbacks until a successful
+load discards those effects. Failed rollback stops guest execution and publication
+until reset or reload. Unload never publishes effects retained as speculative.
+A save requested before speculative rollback also refuses, even after the
+original input callbacks have returned. An exceptional capture with more than
+65,536 encoded bytes of staged operations
+refuses before changing the caller's buffer or stores. A publication failure
+blocks later mutations and shows one warning.
 
 A state cannot roll persisted discs or CMOS back. Loading or rewinding older
 than a committed store frontier refuses. Raw media without state history keep
@@ -43,6 +53,9 @@ arcdroid/state-stores/ and immutable state-base.adf files. Original media retain
 stable identities across acknowledged writes; external edits establish a newer
 frontier and identity.
 
-The original full-buffer save/load/save byte identity remains required; output
-spare capacity is zeroed. The Founder permits this clearing under R-SS4d.
-The remaining bound gate is independent of exact-payload work.
+CPU, memory, audio, storage and every guest-visible byte remain exact after load.
+Historical frontend geometry, keyboard overlay and input state remain exact too.
+Presented pixels may differ in host picture content until scanout rewrites it,
+including both interlace parities and retained tails; no one-field convergence
+limit is promised. The original full-buffer save/load/save byte identity remains
+required; output spare capacity is zeroed (R-SS4d).

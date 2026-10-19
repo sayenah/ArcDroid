@@ -9,10 +9,20 @@ import tempfile
 from arculator_state_matrix import run
 p=argparse.ArgumentParser()
 for name in ('harness','core','fixtures','output'):p.add_argument(name,type=Path)
+p.add_argument('--only-mode',choices=('video','rewind-buffer'))
 a=p.parse_args()
-for name in vars(a):setattr(a,name,getattr(a,name).resolve())
+for name in ('harness','core','fixtures','output'):setattr(a,name,getattr(a,name).resolve())
 a.output.mkdir(parents=True,exist_ok=True)
 for mode,media_class,machines,media in [
+    ('video','adf',('A3000','A3010','A3020','A4000'),'arcdroid-test.adf'),
+    ('rewind-buffer','adf',('A3000','A3010','A3020','A4000'),'arcdroid-test.adf'),
+    ('rewind-buffer','adf-shadow',('A3000','A3010','A3020','A4000'),'arcdroid-test.adf'),
+    ('rewind-buffer','adl-shadow',('A3000','A3010','A3020','A4000'),'arcdroid-application-l.adl'),
+    ('rewind-buffer','hd-media-shadow',('A3010','A3020','A4000'),'hd-family/valid-f.adf'),
+    ('rewind-buffer','jfd-shadow',('A3000','A3010','A3020','A4000'),'adffs/writable.jfd'),
+    ('created-cold','jfd-shadow',('A3000','A3010','A3020','A4000'),'jfd-writes/rw-create-d.jfd'),
+    ('created-cold-refusal','jfd-shadow',('A3000','A3010','A3020','A4000'),'jfd-writes/rw-create-d.jfd'),
+    ('large-derived','adf',('A3000','A3010','A3020','A4000'),'arcdroid-test.adf'),
     ('compat','adf',('A3000',),'arcdroid-test.adf'),
     ('write-path','adf-shadow',('A3000',),'arcdroid-test.adf'),
     ('write-path','adf-shadow',('A3020',),'hd-family/valid-f.adf'),
@@ -32,6 +42,8 @@ for mode,media_class,machines,media in [
     ('store','jfd-swap',('A3000',),'adffs/Writable-folder.jfd/Writable-folder.jfd'),
     ('store','jfd-shadow',('A3000',),'adffs/writable.jfd'),
     ('store','hd',('A3020',),'hd-family/valid-f.adf')]:
+    if a.only_mode and mode!=a.only_mode:continue
+    if not a.only_mode and mode in ('video','rewind-buffer'):continue
     for machine in machines:
         with tempfile.TemporaryDirectory(dir=a.output) as directory:
             root=Path(directory);content=a.fixtures/media
@@ -44,4 +56,4 @@ for mode,media_class,machines,media in [
                 # diagnostic for this actual two-module lifecycle probe.
                 env['ASAN_OPTIONS']=env.get('ASAN_OPTIONS','')+':detect_odr_violation=0'
             print(run([a.harness,a.core,a.fixtures/'arcdroid-test.rom',content,root,
-                       '--ss1-'+mode,machine],env),flush=True)
+                       '--ss1-'+mode,machine],env,timeout=600 if mode=='video' else 90),flush=True)

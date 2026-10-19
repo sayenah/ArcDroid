@@ -155,5 +155,17 @@ void arc_state_visit_engine_arculator_src_vidc(ArcState *s)
    /* No shipping control changes the host black-level setting. Historical
     * colours use the admitted session's RGB444 producer, not a blob-selected
     * colour transform. Guest palette writes remain fully serialized. */
-   if(arc_state_loading(s))ARC_STATE_MATCH(s,video_black_level);
+   if(arc_state_loading(s)) {
+      ARC_STATE_MATCH(s,video_black_level);
+      ARC_STATE_BOUND(s,vidc.vtot,0,1024);ARC_STATE_BOUND(s,vidc.htot,0,1023);
+      ARC_STATE_BOUND(s,vidc.hdstart,-14,2065);ARC_STATE_BOUND(s,vidc.hdend,-14,2065);
+      ARC_STATE_BOUND(s,vidc.hbstart,0,2047);ARC_STATE_BOUND(s,vidc.hbend,0,2047);
+      ARC_STATE_BOUND(s,vidc.vdstart,0,1024);ARC_STATE_BOUND(s,vidc.vdend,0,1024);
+      ARC_STATE_BOUND(s,vidc.vbstart,0,1024);ARC_STATE_BOUND(s,vidc.vbend,0,1024);
+      ARC_STATE_BOUND(s,vidc.cx,0,2053);ARC_STATE_BOUND(s,vidc.cys,0,0xffc000);
+      ARC_STATE_BOUND(s,vidc.cye,0,0xffc000);ARC_STATE_BOUND(s,vidc.scanrate,0,1);
+      ARC_STATE_BOUND(s,vidc.oddeven,0,1);
+      int interlace;arc_state_project(s,&interlace,&vidc.interlace_enable,sizeof(interlace));
+      if(interlace!=0&&interlace!=64)arc_state_fail(s,"VIDC interlace");
+   }
 }

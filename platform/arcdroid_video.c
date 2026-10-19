@@ -29,6 +29,19 @@ void arc_platform_video_reset(void)
              (size_t)ARC_VIDEO_MAX_WIDTH * ARC_VIDEO_MAX_HEIGHT * sizeof(*arc_video_frame));
 }
 
+/* Keep the serialized geometry/sequence: they feed frontend input mapping. */
+void arc_platform_video_rebuild(void)
+{
+   if(!arc_video_frame)return;
+   for(unsigned y=0;y<2048u;++y)if(arc_video_rows[y][1])
+      memset(arc_video_frame+(size_t)y*4096u+arc_video_rows[y][0],0,
+         (arc_video_rows[y][1]-arc_video_rows[y][0])*4u);
+   memset(arc_video_rows,0,sizeof(arc_video_rows));
+   arc_vidc_rebuild_picture(arc_video_frame,arc_video_width,arc_video_height,ARC_VIDEO_MAX_WIDTH);
+   for(unsigned y=0;y<arc_video_height;++y)
+      arc_state_raster_mark(arc_video_rows,y,0,arc_video_width);
+}
+
 int video_renderer_init(void *window)
 {
    (void)window;

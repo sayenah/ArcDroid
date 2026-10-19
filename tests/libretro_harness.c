@@ -5,6 +5,8 @@
 #include "arculator_test.h"
 #include "boot_observation.h"
 #include "arc_io.h"
+#include "jfd.h"
+#include "playlist.h"
 #include "e_format_fixture.h"
 
 #include <assert.h>
@@ -58,6 +60,16 @@ static uint64_t nonzero_audio_samples;
 static uint64_t video_signatures[16];
 static unsigned video_signature_count;
 static uint64_t last_video_signature;
+static bool ss1_in_restore;
+static bool (*ss1_core_restore)(const void *,size_t);
+static bool (*ss1_tables_check)(void);
+static bool ss1_restore(const void *data,size_t bytes)
+{
+   assert(!ss1_in_restore);ss1_in_restore=true;
+   bool okay=ss1_core_restore(data,bytes);ss1_in_restore=false;
+   if(okay&&ss1_tables_check)assert(ss1_tables_check());
+   return okay;
+}
 static uint32_t last_video_pixel;
 static unsigned video_signature_last_change_frame;
 static bool last_video_was_duplicate;
@@ -1190,7 +1202,9 @@ static bool environment(unsigned command, void *data)
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
          assert(av->timing.fps < last_notified_rate - 0.01 ||
-                av->timing.fps > last_notified_rate + 0.01);
+                av->timing.fps > last_notified_rate + 0.01 ||
+                (ss1_in_restore&&(av->geometry.base_width != geometry_width ||
+                                  av->geometry.base_height != geometry_height)));
          if (measure_av) av_rate_changed_during_measure = true;
          geometry_width = av->geometry.base_width;
          geometry_height = av->geometry.base_height;

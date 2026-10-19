@@ -388,6 +388,7 @@ typedef struct {
    bool zero_tail_presentation;
    ArcDigest digest;
    char jfd_sha256[65]; /* Immutable base identity survives lazy decoded-buffer release. */
+   size_t jfd_state_budget; /* Immutable preparation envelope; never rewound. */
    ArcJfdImage jfd;
    bool jfd_damage_notice_shown;
    bool jfd_off_notice_shown;
@@ -415,6 +416,7 @@ static ArcDigest arc_state_firmware_digest;
 static bool arc_state_firmware_valid;
 static retro_input_poll_t arc_state_real_poll;
 static bool arc_state_boundary_armed;
+static bool arc_state_speculation,arc_state_rollback_failed;
 static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES];
 
 #if defined(ARCDROID_TEST_FAULTS)
@@ -1735,6 +1737,14 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
          }
       }
       entry->digest = arc_digest(entry->jfd.decoded, entry->jfd.decoded_size);
+#if defined(ARCDROID_SAVE_STATES)
+      if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&
+         !arc_jfd_state_bound(&entry->jfd,arc_core_options.jfd_write_policy,&entry->jfd_state_budget)) {
+         arc_jfd_free(&entry->jfd);
+         if(error&&error_size)snprintf(error,error_size,"JFD state capacity could not be prepared.");
+         return false;
+      }
+#endif
       if(arc_kind==ARC_SESSION_KIND_ARCULATOR)
          arc_sha256_hex(entry->jfd.decoded,entry->jfd.decoded_size,entry->jfd_sha256);
       entry->jfd_game_id = entry->jfd.game_id;
@@ -2915,6 +2925,12 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
    }
    ArcJfdImage parsed;
    if (!arc_jfd_parse_owned(data, size, &parsed, error, error_size)) return false;
+#if defined(ARCDROID_SAVE_STATES)
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&
+      !arc_jfd_state_bound(&parsed,policy,&entry->jfd_state_budget)) {
+      arc_jfd_free(&parsed);return false;
+   }
+#endif
    arc_jfd_free(&entry->jfd);
    entry->jfd = parsed;
    const char *reason = NULL;
@@ -8266,6 +8282,11 @@ RETRO_API void retro_reset(void)
 #endif
       arc_rpc_av_attempted=false;return;
    }
+   if(arc_state_speculation||arc_state_rollback_failed) {
+      arc_state_io_speculate(true);arc_engine_stop();
+      arc_state_io_clear();arc_io_state_clear();
+      arc_state_speculation=arc_state_rollback_failed=false;
+   }
    arc_engine_launch_outcome_cancel("reset");
    arc_engine_disc_clear();
    arc_disc_invalidate();
@@ -9033,8 +9054,13 @@ static void arc_run(void)
 
 RETRO_API void retro_run(void)
 {
-   if(arc_secondary_instance)return;
-   arc_state_inside_run=true;arc_run();arc_state_inside_run=false;
+   if(arc_secondary_instance||arc_state_rollback_failed)return;
+   /* Callback restoration alone never finalizes a speculative execution. */
+   if(arc_state_speculation&&arc_input_poll==arc_state_real_poll)return;
+   arc_state_inside_run=true;arc_run();
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&!arc_state_speculation)
+      (void)arc_state_boundary_finish();
+   arc_state_inside_run=false;
 }
 
 RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_PAL; }
@@ -9047,17 +9073,20 @@ static void arc_snapshot_visit(ArcState *s);
  * operations refuse if it needs a larger reservation. */
 static size_t arc_snapshot_media_bound(void)
 {
-   size_t raw=0;bool jfd=false;
+   size_t raw=0,jfd=0,jfd_count=0;
    for(unsigned i=0;i<arc_media_count;++i)if(arc_media[i].populated){
-      if(arc_media[i].info.kind==ARC_MEDIA_JFD)jfd=true;
-      else if(arc_plan.disk_writes!=ARC_DISK_WRITES_OFF&&arc_media[i].info.declared_size>raw)
+      if(arc_media[i].info.kind==ARC_MEDIA_JFD) {
+         ++jfd_count;
+         if(arc_media[i].jfd_state_budget>jfd)jfd=arc_media[i].jfd_state_budget;
+      } else if(arc_plan.disk_writes!=ARC_DISK_WRITES_OFF&&arc_media[i].info.declared_size>raw)
          raw=arc_media[i].info.declared_size;
    }
-   size_t bytes=raw+(raw+511u)/512u*8u+32u;
-   if(jfd){
-      bytes+=ARC_JFD_MAX_DECODED+ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK*(sizeof(ArcJfdSector)+128u);
-      bytes+=ARC_JFD_PDD5_SLOTS*(1024u+64u);
-   }
+   raw+=(raw+511u)/512u*8u;
+   /* Drive zero is closed before the next medium is mounted. Other drives
+    * contain only immutable helper media. At most one JFD owns decoded state;
+    * all known discs' preparation envelopes survive lazy release. */
+   size_t bytes=32u+jfd_count*96u;
+   bytes+=raw>(jfd?jfd-96u:0u)?raw:(jfd?jfd-96u:0u);
    if(arc_hd_store)bytes+=ARC_INSTALL_HD_BYTES+(ARC_INSTALL_HD_BYTES/512u)*8u+16u;
    return bytes;
 }
@@ -9066,30 +9095,10 @@ static size_t arc_snapshot_session_bound(const ArcMachineDescriptor *machine)
    size_t bytes=arc_state_static_bound(arc_snapshot_static_visit);
    if(!bytes)return 0;
    bytes+=16u+(size_t)machine->memory_kib*1024u;
-   /* Two historical VIDC surfaces use exact RGB444 (vidc_make_colour at
-    * fixed black-level configuration). Presentation additionally holds the
-    * RGB888 OSK/chooser output. Row copies need only their 16-byte recipes.
-    * Incompressible distinct rows, not the frontend geometry, set the bound. */
-   bytes+=(size_t)ARC_STATE_VIDC_WIDTH*ARC_STATE_VIDC_HEIGHT*6u+
-      3u*ARC_STATE_VIDC_HEIGHT*16u;
+   /* D-215: converted engine/platform/presentation pixels are derived. */
    bytes+=0x4000u*16u+24u+17u*40u; /* MEMC map and CPU bank/fetch references. */
    bytes+=4u*256u+65536u; /* File metadata, heap sizes, identities and frontiers. */
-   /* Guest-side raw writes are sectors or one track side (disc_adf.c).
-    * A frame boundary can also prepare a helper/carrier or replacement, so
-    * include their complete admitted file extents. JFD publishes at most its
-    * 9 MiB STORE_CAP snapshot; IDE compaction writes the whole native image.
-    * These cover each protocol write, without assuming a finite number of
-    * fake frames. Logical M bindings and generated S store names fit 256 B. */
-   size_t effect_write=ARC_ADFFS_DISC_SIZE>ARC_LAUNCH_DISC_SIZE?ARC_ADFFS_DISC_SIZE:ARC_LAUNCH_DISC_SIZE;
-   for(unsigned i=0;i<arc_media_count;++i)if(arc_media[i].populated) {
-      if(arc_media[i].info.kind==ARC_MEDIA_JFD) {
-         if(effect_write<9u*1024u*1024u)effect_write=9u*1024u*1024u;
-      } else if(arc_media[i].info.declared_size>effect_write)effect_write=arc_media[i].info.declared_size;
-   }
-   if(arc_hd_store&&effect_write<ARC_INSTALL_HD_BYTES)effect_write=ARC_INSTALL_HD_BYTES;
-   size_t effects=arc_state_io_session_bound(effect_write,256u);
-   if(!effects)return 0;
-   bytes+=effects;
+   bytes+=65536u+24u; /* Exceptional saved operation log, including framing. */
    arc_state_media_budget=arc_snapshot_media_bound();bytes+=arc_state_media_budget;
    /* Source identity belongs to load-time preparation, including its cache.
     * The first public state load must not pay for immutable media hashing. */
@@ -9114,12 +9123,18 @@ RETRO_API size_t retro_serialize_size(void)
 }
 RETRO_API bool retro_serialize(void *data,size_t size)
 {
-   if(!arc_snapshot_available()||!data||size<40u)return false;
+   if(!arc_snapshot_available()||arc_state_rollback_failed||!data||size<40u)return false;
    if(arc_input_poll!=arc_state_real_poll) {
       arc_message("Preemptive Frames is unavailable; use single-instance run-ahead.",RETRO_LOG_WARN);return false;
    }
+   /* Restored callbacks do not make the still-speculative guest/queue a
+    * real snapshot. Only rollback can release its provenance latch. */
+   if(arc_state_speculation)return false;
    if(arc_snapshot_media_bound()>arc_state_media_budget){
       arc_message("The replacement disc needs a larger save-state buffer. Reload the content to use save states.",RETRO_LOG_WARN);return false;
+   }
+   if(!arc_state_io_preflight(65536u)) {
+      arc_message("Save state refused: too many pending disc changes.",RETRO_LOG_WARN);return false;
    }
    arc_state_note_committed();
    ArcState *s=arc_state_begin(NULL,0);
@@ -9133,6 +9148,9 @@ RETRO_API bool retro_serialize(void *data,size_t size)
 }
 RETRO_API bool retro_unserialize(const void *data,size_t size)
 {
+   if(arc_state_rollback_failed)return false;
+   /* Pessimistic until commit, including every early refusal path. */
+   if(arc_state_speculation)arc_state_rollback_failed=true;
    if(!arc_snapshot_available()||!data||!size)return false;
    if(arc_snapshot_media_bound()>arc_state_media_budget){
       arc_message("The replacement disc needs a larger save-state buffer. Reload the content to use save states.",RETRO_LOG_WARN);return false;
@@ -9140,19 +9158,48 @@ RETRO_API bool retro_unserialize(const void *data,size_t size)
    arc_state_note_committed();
    unsigned old_width=arc_video_width,old_height=arc_video_height;double old_rate=arc_video_rate;
    bool speculative=arc_state_io_speculative();arc_state_io_speculate(false);
-   ArcState *s=arc_state_begin_limited(data,size,arc_state_capacity);
+   /* Wire bytes do not bound derived OSK/JFD/file ownership. Each owner
+    * validates its own dimensions; these budgets bound aggregate work. */
+   ArcState *s=arc_state_begin_bounded(data,size,arc_state_capacity,arc_state_capacity,
+      192u*1024u*1024u+2u*arc_state_capacity,128u*1024u*1024u+4u*arc_state_capacity);
    bool okay=arc_state_run(s,arc_snapshot_visit);
    okay=okay&&arc_state_commit(s);
    if(okay&&arc_environment&&(old_width!=arc_video_width||old_height!=arc_video_height||old_rate!=arc_video_rate)) {
       struct retro_system_av_info av;retro_get_system_av_info(&av);
       arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
    }
+   if(okay) {
+      arc_state_speculation=arc_state_rollback_failed=false;
+      arc_platform_video_rebuild();
+      memset(arc_frame,0,sizeof(arc_frame));memset(arc_audio_frame,0,sizeof(arc_audio_frame));
+      if(arc_session==ARC_SESSION_CHOOSING)
+         (void)arc_launch_chooser_render(&arc_chooser,&arc_chooser_discovery,
+            arc_frame,ARC_WIDTH,ARC_HEIGHT,ARC_WIDTH*sizeof(uint32_t));
+      /* Preserve exact historical frontend geometry and OSK/input state. */
+      for(unsigned y=0;y<2048u;++y)if(arc_present_rows[y][1])
+         memset(arc_present_frame+(size_t)y*4096u+arc_present_rows[y][0],0,
+            (arc_present_rows[y][1]-arc_present_rows[y][0])*4u);
+      memset(arc_present_rows,0,sizeof(arc_present_rows));
+      unsigned w,h;size_t pitch;const uint32_t *pixels=arc_platform_video_frame(&w,&h,&pitch,NULL);
+      size_t present_pitch=arc_video_pitch?arc_video_pitch:(size_t)arc_video_width*4u;
+      unsigned rows=arc_video_height<h?arc_video_height:h,columns=arc_video_width<w?arc_video_width:w;
+      for(unsigned y=0;y<arc_video_height;++y) {
+         if(pixels&&y<rows)memcpy((uint8_t*)arc_present_frame+y*present_pitch,(const uint8_t*)pixels+y*pitch,columns*4u);
+         size_t at=y*present_pitch/4u,remain=arc_video_width;
+         while(remain){unsigned x=(unsigned)(at%4096u),n=(unsigned)(4096u-x);if(n>remain)n=(unsigned)remain;
+            arc_state_raster_mark(arc_present_rows,(unsigned)(at/4096u),x,n);at+=n;remain-=n;}
+      }
+      if(arc_osk.visible&&arc_osk.width==arc_video_width&&arc_osk.height==arc_video_height)
+         (void)arc_osk_render(&arc_osk,arc_present_frame,arc_video_width,arc_video_height,
+            present_pitch,arc_input_resolution.custom?"Custom controls":"Default controls");
+   }
    if(!okay) {
+      if(arc_state_speculation)arc_state_rollback_failed=true;
       if(arc_log)arc_log(RETRO_LOG_WARN,"Save state refused: %s\n",arc_state_error(s));
       arc_message("This save state does not match the running session or saved disc changes.",RETRO_LOG_WARN);
    }
    arc_state_io_speculate(okay&&arc_state_boundary_armed?
-      arc_input_poll!=arc_state_real_poll:speculative);
+      arc_input_poll!=arc_state_real_poll:(speculative||arc_state_speculation));
    arc_state_end(s);return okay;
 }
 #else
@@ -9273,6 +9320,8 @@ RETRO_API bool arc_libretro_test_persistence_guard(unsigned site, unsigned phase
 }
 RETRO_API bool arc_libretro_test_disc_name(unsigned index,ArcGuestName *name)
 { return arc_disc_name(index,name); }
+RETRO_API bool arc_libretro_test_ss1_large_derived(void)
+{ return arc_osk_prepare_surface(4096u,2048u); }
 RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned count)
 {
    char journal[4096];snprintf(journal,sizeof(journal),"%s/arcdroid/hd-riscpc/journal.1",arc_save_path);

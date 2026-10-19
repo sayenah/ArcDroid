@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 void arc_platform_video_reset(void);
+void arc_platform_video_rebuild(void);
 const uint32_t *arc_platform_video_frame(unsigned *width, unsigned *height,
                                          size_t *pitch, uint64_t *sequence);
 void arc_platform_audio_reset(void);
