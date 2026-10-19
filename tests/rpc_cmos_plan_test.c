@@ -104,6 +104,12 @@ static void settle(void (*run)(void))
 {
     for(unsigned i=0;phase()==1;++i){assert(i<100000);run();}
 }
+static void expected_reload(uint8_t bytes[256],const uint8_t session[256])
+{
+    /* R-Y1 refreshes only the calendar year and its checksum at reopen. */
+    bytes[0xc0]=session[0xc0];bytes[0xc1]=session[0xc1];
+    unsigned sum=1;for(unsigned i=16;i<256;++i)if(i!=63)sum+=bytes[i];bytes[63]=(uint8_t)sum;
+}
 int main(int argc,char **argv)
 {
     assert(argc==8);system_directory=argv[3];assert(canonical(argv[4],save_directory));
@@ -261,9 +267,9 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
         if(!strcmp(mode,"reset"))assert(reset_done);
     }
     if(!strcmp(mode,"fallback"))assert(progress_messages>2 && fallback_messages>2);
-    uint8_t before[256],after[256];cmos(before);reset();cmos(after);assert(!memcmp(before+16,after+16,240));
+    uint8_t before[256],after[256],session[256];cmos(session);cmos(before);reset();cmos(after);assert(!memcmp(before+16,after+16,240));
     if(!strcmp(mode,"writer")){
-        assert(advance(1000000));cmos(before);unload();assert(load(&game));settle(run);assert(phase()==2);cmos(after);assert(!memcmp(before+16,after+16,240));
+        assert(advance(1000000));cmos(before);unload();assert(load(&game));settle(run);assert(phase()==2);cmos(after);expected_reload(before,session);assert(!memcmp(before+16,after+16,240));
     }
     for(unsigned i=0;i<4;++i){
         cmos(before);unsigned publications=tmp_writes;run();cmos(after);
@@ -271,9 +277,9 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
          * most one candidate; unload below proves the newest snapshot. */
         assert(tmp_writes-publications<=1u);
     }
-    cmos(before);unload();assert(phase()==0);assert(load(&game));settle(run);assert(phase()==2);cmos(after);assert(!memcmp(before+16,after+16,240));
+    cmos(before);unload();assert(phase()==0);assert(load(&game));settle(run);assert(phase()==2);cmos(after);expected_reload(before,session);assert(!memcmp(before+16,after+16,240));
     /* Guest work outside retro_run is persisted specifically by unload. */
-    assert(advance(10000000));cmos(before);unload();assert(load(&game));settle(run);assert(phase()==2);cmos(after);assert(!memcmp(before+16,after+16,240));unload();
+    assert(advance(10000000));cmos(before);unload();assert(load(&game));settle(run);assert(phase()==2);cmos(after);expected_reload(before,session);assert(!memcmp(before+16,after+16,240));unload();
     /* Failed admission leaves persistence unarmed. */
     game.path="/missing.arcplan";assert(!load(&game)&&phase()==0);unload();deinit();vfs_assert_no_open_handles();
     puts("RPC plan CMOS: slices, clean restart, reset, eager/unload and failed start passed");

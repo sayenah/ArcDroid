@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <time.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -154,7 +155,7 @@ static void check_alias(const struct retro_game_info *game,void (*env)(retro_env
 #define LOAD(v,n) do{void *p=symbol(n);assert(p);memcpy(&(v),&p,sizeof(v));}while(0)
 int main(int argc,char **argv)
 {
-    assert(argc==7);primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
+    assert(argc==7);primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
@@ -247,6 +248,22 @@ int main(int argc,char **argv)
     for(unsigned f=0;f<100000 && !running;++f){unsigned v=videos,a=audios;run();assert(videos==v+1 && audios==a+1);}
     assert(running==1 && !arculator_writes && observer_bind);
     check_alias(&game,env,init,reset,run,unload,deinit);
+    if(!strcmp(argv[5],"calendar")){
+        bool (*ram)(unsigned,uint32_t *);LOAD(ram,"arc_rpc_test_read_ram");
+        for(unsigned reopen=0;reopen<2;++reopen){
+            for(unsigned resetting=0;resetting<2;++resetting){
+                for(unsigned f=0;f<32;++f)run(); /* execute fresh boot after reset */
+                uint32_t done=0,year=0,checksum=0;
+                for(unsigned f=0;done!=0xa5;++f){assert(f<1000);run();assert(ram(0x20408,&done));}
+                assert(ram(0x20400,&year) && ram(0x20404,&checksum) && checksum==1);
+                time_t now=time(NULL);struct tm *local=localtime(&now);assert(local && year==(unsigned)local->tm_year+1900);
+                if(!resetting)reset();
+            }
+            unload();
+            if(!reopen){running=0;assert(load(&game));for(unsigned f=0;!running;++f){assert(f<10000);run();}assert(running==1);}
+        }
+        deinit();vfs_assert_no_open_handles();puts("rpc-route calendar: guest IIC year/checksum, reset and persisted reopen passed");return 0;
+    }
     if(!strcmp(argv[5],"admit") || !strcmp(argv[5],"drift") || !strcmp(argv[5],"empty-after-probe")){
         if(!strcmp(argv[5],"empty-after-probe"))assert(package_opens>0);
         assert(drift==(!strcmp(argv[5],"drift")?1u:0u));for(unsigned f=0;f<30 && !guest_fields;++f)run();assert(guest_fields);unload();deinit();vfs_assert_no_open_handles();return 0;

@@ -2983,6 +2983,21 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   # Keep the original session bound; the blanket 1200 s merge override was
   # unsupported by a duration measurement. The W4 session bound is unchanged.
   set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  if(ARCDROID_SANITIZERS)
+    # Keep every pair/year/client and all 200 switches. Debug sanitizer factory
+    # generation is much slower; independent process-owned fixtures can shard.
+    foreach(calendar_case IN ITEMS pair-0 pair-1 pair-2 pair-3 pair-4 pair-5 pair-6 switching)
+      add_test(NAME rpc-session-calendar-${calendar_case} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+        $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar-${calendar_case})
+      set_tests_properties(rpc-session-calendar-${calendar_case} PROPERTIES TIMEOUT 900)
+    endforeach()
+  else()
+    add_test(NAME rpc-session-calendar COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+      $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar)
+    set_tests_properties(rpc-session-calendar PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+  endif()
   add_test(NAME rpc-launch-preparation COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
     $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" launch)
@@ -3664,7 +3679,7 @@ if(ARCDROID_RPC_AUTHORED_ROUTE)
   set(RPC_ROUTE_PROVIDER "${RPC_ROUTE_FIXTURES}/rpc_route_catalogue.c")
   add_custom_command(OUTPUT "${RPC_ROUTE_PROVIDER}"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_fixtures.py" "${RPC_ROUTE_FIXTURES}"
-    DEPENDS tests/rpc_route_fixtures.py tests/rpc_cmos_factory_rom.py tests/rpc_d2_rom.py tests/rpc_video_rom.py tests/rpc_boot_packages_test.py tests/generate_fixtures.py
+    DEPENDS tests/rpc_route_fixtures.py tests/rpc_cmos_factory_rom.py tests/rpc_year_rom.py tests/rpc_d2_rom.py tests/rpc_video_rom.py tests/rpc_boot_packages_test.py tests/generate_fixtures.py
     VERBATIM)
   add_library(arcdroid_core_route STATIC ${ARCDROID_CORE_SOURCES} core/adffs_profiles.c core/firmware_table.c ${RPC_BOOT_ASSETS} "${RPC_ROUTE_PROVIDER}")
   set_property(TARGET arcdroid_core_route PROPERTY ARCDROID_AUTHORED_CATALOGUE TRUE)

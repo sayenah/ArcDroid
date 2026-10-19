@@ -634,7 +634,16 @@ static void unit(ArcRpcPreparation *p)
         if(!arc_riscpc_cmos_store_put_step(&p->record,&done,p->error,sizeof(p->error)))failed(p,p->error);
         else if(done){memset(p->seed,0,16);memcpy(p->seed+16,p->record.payload,240);after_cmos(p);}break;
     case ARC_RPC_PREP_START:{
-        if(!p->substep){if(!start(p,false))failed(p,p->error);else p->substep=1;break;}
+        if(!p->substep){
+            /* R-Y1: route capture already encodes local calendar time. Never
+             * sample the host clock again or alter the shared default. */
+            unsigned year;
+            if(!arc_engine_rpc_calendar_year(p->request.epoch,&year)){
+                failed(p,"RiscPC session clock is outside the supported range");break;
+            }
+            arc_riscpc_cmos_session_year(p->seed+16,year);
+            if(!start(p,false))failed(p,p->error);else p->substep=1;break;
+        }
         if(p->substep==1){
             if(!arc_engine_rpc_start_step(&done,p->error,sizeof(p->error)))failed(p,p->error);
             else if(done){if(p->host.started)p->host.started(p->host.opaque,false);p->substep=2;}

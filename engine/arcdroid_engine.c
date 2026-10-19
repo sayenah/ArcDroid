@@ -283,6 +283,12 @@ bool arc_engine_active(void)
    return arc_backend->active();
 }
 
+bool arc_engine_rpc_calendar_year(uint64_t epoch,unsigned *year)
+{
+    ArcRpcCalendar calendar;
+    if(!year || !arc_rpc_calendar(epoch,0,&calendar))return false;
+    *year=calendar.year;return true;
+}
 bool arc_engine_rpc_start_begin(unsigned model,const uint8_t *rom,size_t size,
     const uint8_t seed[256],uint64_t epoch,bool factory,char *e,size_t n)
 {

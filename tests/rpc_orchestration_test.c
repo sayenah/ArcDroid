@@ -68,6 +68,7 @@ static void host_log(void *opaque,enum retro_log_level level,const char *text)
 
 static unsigned test_model;
 static bool test_ordinary;
+static uint64_t test_epoch=UINT64_C(1234567890);
 static bool helper_override;
 static bool populate_request=true;
 static const ArcEngineMedia *explicit_helper;
@@ -208,7 +209,7 @@ static bool attach(void *opaque,char *e,size_t n)
     uint8_t b[256],m[32];uint64_t w,l,now;unsigned state;
     arc_engine_rpc_evidence(b,m,&w,&l,&now,&state);
     ArcRpcCalendar actual,expected;assert(arc_rpc_rtc_read(&actual));
-    assert(arc_rpc_calendar(1234567890,0,&expected));assert(!memcmp(&actual,&expected,sizeof(actual)));
+    assert(arc_rpc_calendar(test_epoch,0,&expected));assert(!memcmp(&actual,&expected,sizeof(actual)));
     assert(now==0 && state==0); /* No requested instruction before final attachment. */
     ArcRpcHdStore *disc=arc_riscpc_preparation_disc(current);
     assert(disc && arc_riscpc_hd_receipt(disc,NULL));
@@ -263,7 +264,7 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 {
     rpc_fixture_create_sentinel=create_sentinel;
     ArcRpcPreparationRequest r={0};r.ordinary=test_ordinary;r.firmware=rom;r.firmware_size=size;r.key.model=test_model;r.key.layout=test_os==ARC_RPC_OS_350?1:test_os==ARC_RPC_OS_360?2:3;
-    strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=1234567890;
+    strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=test_epoch;
     r.hard_disc=true;r.populate=populate_request;r.helper_override=helper_override;r.helper=explicit_helper;
     ArcRpcLaunchPlan launch={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(launch.target,"ADFS::0.$.!Boot");
     if(launch_product){launch.action=ARC_RPC_PLAN_PRODUCT;snprintf(launch.target,sizeof(launch.target),"%s",launch_product);}
@@ -272,7 +273,8 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
      * core/cmos_defaults.c documents n+0x40 wrapping past 255 to 16.
      * https://www.riscos.com/support/developers/prm/cmos.html
      * NetFS, ADFS drive 2, NoBoot, altered floppy/IDE counts; extra raw
-     * 19/253/checksum bytes remain deliberately authoritative too. */
+     * 19/253 bytes remain deliberately authoritative. R-Y1 alone replaces
+     * the year and checksum before starting the requested session. */
     uint8_t bytes[256]={0};memset(bytes,0xee,16);bytes[69]=5;bytes[75]=2;bytes[80]=0;
     bytes[19]=0;bytes[253]=9;bytes[199]=0x95;bytes[63]=0x51;
     if(seed)r.seed=bytes;
@@ -330,6 +332,77 @@ static void finish(ArcRpcPreparation *p)
 {
     unsigned clears_before=clears;char e[512]={0};assert(arc_riscpc_preparation_free(p,e,sizeof(e)));
     current=NULL;assert(clears==clears_before);assert(!arc_engine_active());test_vfs_no_open_handles();
+}
+static void guest_calendar(unsigned expected)
+{
+    ram00[(0x20000+0x408)/4]=0;
+    for(unsigned i=0;ram00[(0x20000+0x408)/4]!=0xa5;++i){
+        assert(i<1000);assert(arc_engine_rpc_advance(1000000));
+    }
+    assert(ram00[(0x20000+0x400)/4]==expected);
+    assert(ram00[(0x20000+0x404)/4]==1); /* guest checksum acceptance */
+    assert(ram00[(0x20000+199*4)/4]==2); /* retains generated drive setting */
+}
+static void calendar_cases(ArcRpcPreparationHost host,bool focused,int pair_filter)
+{
+    int file=find("/system/calendar.rom",false);assert(file>=0);
+    size_t size=files[file].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[file].data,size);
+    /* Seven qualified model/OS pairs, both preparation clients, independent
+     * Jan-1 epochs spanning every mod-4 and century carry. */
+    static const unsigned models[]={0,1,1,2,2,3,3};
+    static const ArcRpcSelectionOs families[]={ARC_RPC_OS_350,ARC_RPC_OS_360,ARC_RPC_OS_371,
+        ARC_RPC_OS_370,ARC_RPC_OS_371,ARC_RPC_OS_360,ARC_RPC_OS_371};
+    static const unsigned years[]={1970,1999,2000,2001,2002,2003,2026,2099,2100,2399};
+    unsigned sessions=0;
+    for(unsigned pair=0;pair<(focused?1u:7u);++pair){
+        if(pair_filter>=0 && pair!=(unsigned)pair_filter)continue;
+        restore();test_model=models[pair];test_os=families[pair];
+        for(unsigned ordinary=0;ordinary<(focused?1u:2u);++ordinary){
+        test_ordinary=ordinary!=0;
+        clock_mode=1;
+        for(unsigned y=0;y<(focused?1:sizeof(years)/sizeof(years[0]));++y){
+            uint64_t days=0;for(unsigned k=1970;k<years[y];++k)days+=365+(k%4==0 && (k%100!=0 || k%400==0));
+            test_epoch=days*86400+43200; /* noon avoids rollover during reader */
+            /* First use from the unchanged shared default at each year,
+             * followed by a persisted record (including a player-edited year). */
+            for(unsigned f=0;f<TEST_FILES;++f)if(files[f].present &&
+                strstr(files[f].path,"/cmos-riscpc/") && !strstr(files[f].path,"/defaults/"))files[f].present=false;
+            for(unsigned reopen=0;reopen<2;++reopen){
+                ArcRpcPreparation *p=new_request(rom,size,false,false,host);settle(p);
+                assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+                uint8_t before[256],after[256];arc_rpc_cmos_snapshot(before);
+                guest_calendar(years[y]);
+                assert(before[0xc0]==years[y]%100 && before[0xc1]==years[y]/100);
+                assert(arc_riscpc_cmos_checksum(before+16));
+                if(!y && !reopen){
+                    /* Prove the guest oracle actually uses RTC year bits,
+                     * independently of a correctly matched session seed. */
+                    before[0xc0]=(uint8_t)((years[y]-1)%100);before[0xc1]=(uint8_t)((years[y]-1)/100);
+                    unsigned sum=1;for(unsigned a=16;a<256;++a)if(a!=63)sum+=before[a];before[63]=(uint8_t)sum;
+                    arc_rpc_cmos_seed(before);assert(arc_riscpc_preparation_reset(p));guest_calendar(years[y]);
+                }
+                /* Player year survives reset, refreshed at the next load. */
+                arc_rpc_cmos_snapshot(before);unsigned changed=years[y]==2399?2395:years[y]+4;
+                before[0xc0]=(uint8_t)(changed%100);before[0xc1]=(uint8_t)(changed/100);
+                unsigned sum=1;for(unsigned a=16;a<256;++a)if(a!=63)sum+=before[a];before[63]=(uint8_t)sum;
+                arc_rpc_cmos_seed(before);
+                assert(arc_riscpc_preparation_reset(p));arc_rpc_cmos_snapshot(after);
+                assert(!memcmp(before+16,after+16,240));
+                guest_calendar(changed);finish(p);++sessions;
+                bool defaults=false;
+                for(unsigned f=0;f<TEST_FILES;++f)if(files[f].present && files[f].size==512 &&
+                    strstr(files[f].path,"/defaults/") && !strstr(files[f].path,".tmp")){
+                    defaults=true;for(unsigned a=0;a<240;++a)
+                        assert(files[f].data[104+a]==(a==47?3:a==183?2:0));
+                }assert(defaults);
+            }
+        }
+        }
+        printf("calendar pair %u/7 passed\n",pair+1);fflush(stdout);
+    }
+    free(rom);test_epoch=1234567890;test_model=0;test_os=ARC_RPC_OS_350;test_ordinary=false;
+    printf("calendar: %u requested sessions, %u pairs, %u years, %u clients, reopen and player-year reset stability passed\n",
+        sessions,focused || pair_filter>=0?1u:7u,focused?1u:10u,focused?1u:2u);
 }
 static void state_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost host,bool sanitizer,bool mutant)
 {
@@ -1000,6 +1073,27 @@ static void video(const void *p,unsigned w,unsigned h,size_t pitch)
 static size_t audio(const int16_t *p,size_t n){assert(p&&n);++audio_calls;return n;}
 static void poll(void){}
 static int16_t input(unsigned p,unsigned d,unsigned i,unsigned id_){(void)p;(void)d;(void)i;(void)id_;return 0;}
+static void calendar_switching(ArcRpcPreparationHost host,const char *fixtures)
+{
+    restore();clock_mode=1;test_model=0;test_os=ARC_RPC_OS_350;test_epoch=1767268800; /* 2026-01-01 noon */
+    int file=find("/system/calendar.rom",false);assert(file>=0);
+    size_t size=files[file].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[file].data,size);
+    char source[4096];snprintf(source,sizeof(source),"%s/arcdroid-test.rom",fixtures);
+    file_copy("/system/arcdroid/firmware/authored",source);
+    snprintf(source,sizeof(source),"%s/arcdroid-test.adf",fixtures);file_copy("/content.adf",source);
+    retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample_batch(audio);
+    retro_set_input_poll(poll);retro_set_input_state(input);retro_init();
+    struct retro_game_info content={.path="/content.adf"};
+    for(unsigned cycle=0;cycle<200;++cycle){
+        test_ordinary=(cycle&1)!=0;
+        ArcRpcPreparation *p=new_request(rom,size,false,false,host);settle(p);
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);guest_calendar(2026);finish(p);
+        assert(retro_load_game(&content) && !arc_engine_is_rpc());retro_run();retro_unload_game();
+        assert(!arc_engine_active());test_vfs_no_open_handles();
+    }
+    retro_deinit();free(rom);test_epoch=1234567890;test_ordinary=false;
+    puts("calendar: 200 preparation RPC/Arculator switches retain guest-visible year and checksum");
+}
 static uint64_t content_generation(const uint8_t payload[240])
 {
     uint64_t generation=0;int latest=-1;
@@ -1211,6 +1305,15 @@ static int unload_flush(struct retro_vfs_file_handle *file)
 }
 static struct retro_vfs_file_handle *marker_open(const char *path,unsigned mode,unsigned hints)
 {if(fail_marker_open && strstr(path,".unsaved"))return NULL;return test_open(path,mode,hints);}
+static void publish_session_cmos(ArcRpcPreparation *p)
+{
+    /* R-Y1 changes the live year even before a guest write. Publish that
+     * baseline before testing a no-op persist or the HD-close identity step. */
+    char error[512]={0};
+    assert(arc_riscpc_preparation_complete_publication(p,error,sizeof(error)));
+    assert(arc_riscpc_preparation_persist(p,error,sizeof(error)));
+    uint8_t live[256];arc_rpc_cmos_snapshot(live);assert(content_generation(live+16));
+}
 static void host_unload_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHost callbacks)
 {
     for(unsigned marker_failure=0;marker_failure<2;++marker_failure){
@@ -1218,6 +1321,7 @@ static void host_unload_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHo
         use_frontend_host=true;host_extended=true;host_n13=host_unload=host_marker=0;
         ArcRpcPreparation *p=new_request(rom,size,true,true,callbacks);
         while(arc_riscpc_host_pending(frontend_test_host))arc_riscpc_host_pending_frame(frontend_test_host);
+        publish_session_cmos(p);
         uint8_t latest[256];arc_rpc_cmos_snapshot(latest);latest[100]^=1;arc_rpc_cmos_seed(latest);
         fail_unload_flush=true;fail_marker_open=marker_failure;vfs.flush=unload_flush;vfs.open=marker_open;
         char error[512]={0};assert(!arc_riscpc_host_free(frontend_test_host,error,sizeof(error)));
@@ -1245,8 +1349,9 @@ static void host_unload_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHo
     rpc_fixture_lost=false;frontend_test_host=NULL;current=NULL;use_frontend_host=false;test_vfs_no_open_handles();
     restore();clock_mode=0;clock_value=0;clock_delta=1000;use_frontend_host=true;host_extended=true;host_marker=0;
     ArcLockBackend close_backend=rpc_preparation_test_backend;close_backend.identity=unload_identity;callbacks.lock_backend=&close_backend;
-    new_request(rom,size,true,true,callbacks);
+    ArcRpcPreparation *closing=new_request(rom,size,true,true,callbacks);
     while(arc_riscpc_host_pending(frontend_test_host))arc_riscpc_host_pending_frame(frontend_test_host);
+    publish_session_cmos(closing);
     mutations=namespace_calls;unload_identity_countdown=3; /* teardown identity, unchanged CMOS begin, then HD close */
     assert(!arc_riscpc_host_free(frontend_test_host,lost_error,sizeof(lost_error)) && !unload_identity_countdown);
     assert(namespace_calls==mutations && !host_marker && strstr(host_display,"Another app changed") && host_duration==5000);
@@ -1272,6 +1377,7 @@ static void host_hd_close_cases(const uint8_t *rom,size_t size,ArcRpcPreparation
         restore();clock_mode=0;clock_value=1000000;clock_delta=1000;use_frontend_host=true;host_extended=true;host_n17=0;
         ArcRpcPreparation *p=new_request(rom,size,true,true,callbacks);
         while(arc_riscpc_host_pending(frontend_test_host))arc_riscpc_host_pending_frame(frontend_test_host);
+        publish_session_cmos(p);
         ArcRpcHdStore *disc=arc_riscpc_preparation_disc(p);uint8_t *payload=calloc(256,512);assert(payload);
         for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(disc,ARC_RPC_HD_SECTORS-256,256,payload));free(payload);
         ArcRpcHdStats stats;
@@ -1321,6 +1427,9 @@ static void host_observation_fault(const uint8_t *rom,size_t size,ArcRpcPreparat
         launch_test=guest_subject=guest_cells=true;
         ArcRpcPreparation *p=new_request(files[firmware].data,files[firmware].size,true,true,callbacks);
         while(arc_riscpc_host_pending(frontend_test_host))arc_riscpc_host_pending_frame(frontend_test_host);
+        /* Keep the fault-drain generation relative to the R-Y1 baseline,
+         * rather than an in-flight publication of the session's year. */
+        publish_session_cmos(p);
         ArcRpcLaunchAttempt attempt;arc_riscpc_preparation_attempt(p,&attempt);
         ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(plan.target,"ADFS::0.$.!Boot");
         ArcRpcLaunchController controller;assert(arc_riscpc_controller_build(&plan,&attempt.token,&controller));
@@ -1657,11 +1766,20 @@ int main(int argc,char **argv)
     snprintf(source,sizeof(source),"%s/product.zip",argv[1]);file_copy("/system/product.zip",source);
     snprintf(source,sizeof(source),"%s/guest-return.rom",argv[1]);file_copy("/system/guest-return.rom",source);
     snprintf(source,sizeof(source),"%s/guest-reset.rom",argv[1]);file_copy("/system/guest-reset.rom",source);
+    snprintf(source,sizeof(source),"%s/calendar.rom",argv[1]);file_copy("/system/calendar.rom",source);
     file_copy("/system/full.rom",argv[2]);int i=find("/system/full.rom",false);assert(i>=0);
     size_t size=files[i].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[i].data,size);
     construction_and_attachments(rom,size);
     file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.lock_backend=&rpc_preparation_test_backend,.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
+    if(!strncmp(argv[4],"calendar",8)){
+        bool switching=!strcmp(argv[4],"calendar-switching");
+        bool focused=!strcmp(argv[4],"calendar-mutant");int pair=-1;
+        if(!strncmp(argv[4],"calendar-pair-",14))assert(sscanf(argv[4],"calendar-pair-%d",&pair)==1 && pair>=0 && pair<7);
+        if(!switching)calendar_cases(host,focused,pair);
+        if(switching || (!focused && pair<0))calendar_switching(host,argv[3]);
+        free(rom);fresh_files();return 0;
+    }
     if(!strcmp(argv[4],"host-privacy")){
         for(unsigned fallback=0;fallback<2;++fallback){
             restore();clock_mode=0;clock_value=0;clock_delta=1000;use_frontend_host=true;host_extended=!fallback;
@@ -1700,10 +1818,10 @@ int main(int argc,char **argv)
         uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
         arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
         for(unsigned i=0;i<16;++i)assert(!b[i]);
-        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
+        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[0xc0]==9 && b[0xc1]==20 && arc_riscpc_cmos_checksum(b+16));
         assert(arc_riscpc_preparation_reset(p));arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
         for(unsigned i=0;i<16;++i)assert(!b[i]);
-        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
+        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[0xc0]==9 && b[0xc1]==20 && arc_riscpc_cmos_checksum(b+16));
         ArcRpcHdStats before_tick,after_tick;
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&before_tick);
         unsigned reads=all_clock_reads;
@@ -1746,7 +1864,7 @@ int main(int argc,char **argv)
     uint8_t saved_bytes[256],saved_mask[32];uint64_t saved_writes,saved_last,saved_now;unsigned saved_state;
     arc_engine_rpc_evidence(saved_bytes,saved_mask,&saved_writes,&saved_last,&saved_now,&saved_state);
     for(unsigned i=0;i<16;++i)assert(!saved_bytes[i]);
-    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[63]==0x51);finish(p);reopen_expected=false;
+    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[0xc0]==9 && saved_bytes[0xc1]==20 && arc_riscpc_cmos_checksum(saved_bytes+16));finish(p);reopen_expected=false;
     /* A receipt remains a reopen even if its per-content settings vanished. */
     for(unsigned j=0;j<TEST_FILES;++j)if(files[j].present && strstr(files[j].path,"/cmos-riscpc/"))files[j].present=false;
     reopen_expected=true;clock_mode=3;p=new_request(rom,size,false,false,host);

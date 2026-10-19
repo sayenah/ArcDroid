@@ -106,6 +106,10 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-route-') as temporary:
             if rom.name!=['','ro350.rom','ro360.rom','ro370.rom','ro371.rom'][os]:rom.unlink()
         image=bytearray((fixtures/'route.jfd').read_bytes());struct.pack_into('<I',image,304,(cpu<<8)|(os_bits<<16));disc=work/'ROUTE-PRIVATE-SENTINEL.jfd';disc.write_bytes(image)
         subprocess.run([exe,test,str(system),str(save),str(disc),'admit',str(secondary)],check=True,timeout=360)
+        # The ordinary route uses the same authored firmware. Existing test
+        # exports only read the guest's IIC result; no fault is injected.
+        calendar_save=work/'calendar-save';calendar_save.mkdir()
+        subprocess.run([exe,fault_test,str(system),str(calendar_save),str(disc),'calendar',str(secondary)],check=True,timeout=360)
     # Loose/single-ZIP/folder keys match; playlist identity stays domain-separated.
     work=root/'identity';work.mkdir();save=work/'save';save.mkdir();system=work/'system';shutil.copytree(fixtures/'system',system)
     image=(fixtures/'route.jfd').read_bytes();loose=work/'disc.jfd';loose.write_bytes(image)

@@ -10,6 +10,13 @@ from rpc_d2_rom import Guest
 from rpc_video_rom import program
 from rpc_boot_packages_test import inputs
 from generate_fixtures import build_extended_jfd
+from rpc_year_rom import calendar_reader
+
+def calendar_then_video(video):
+    words=calendar_reader().words
+    done=next(i+1 for i,w in enumerate(words) if w==0xe5880408)
+    words[done]=0xea000000|((len(words)-done-2)&0xffffff)
+    return words+video
 
 def generate_route(out):
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
@@ -35,7 +42,8 @@ def generate_route(out):
         # architectural CPU ID, so the same authored OS tuple serves its pairs.
         stub.emit(0xee100f10);stub.load(1,0x41027100);stub.emit(0xe1500001)
         a7000=len(stub.words);stub.emit(0)
-        ordinary=program(2,640,256,3,60,'plain');dram=program(3,640,256,3,60,'plain')
+        ordinary=calendar_then_video(program(2,640,256,3,60,'plain'))
+        dram=calendar_then_video(program(3,640,256,3,60,'plain'))
         stub.words[a7000]=0x0a000000|((len(stub.words)+len(ordinary)-a7000-2)&0xffffff)
         base=4096;stub.words[found]=0x0a000000|((resume-(base+found)-2)&0xffffff)
         combined=stub.words+ordinary+dram
