@@ -471,3 +471,15 @@ Both candidates gain about 13 % on 031 but regress both way-0 guards beyond thei
 - **way0-mirror:** the same with the mirror for the remainder.
 - Hint-only and hint-plus-mirror stay on record as measured; they are not re-run.
 Sol builds both variants as selectable SA-110 gate configurations in the variant measurement cores (the same mechanism as run A's variants), with the same exactness tests, reference cross-check, mutants (including one that skips the way-0 check and one that consults the hint before way 0) and identity checks; ARM610, ARM710 and ARM7500 gates unchanged. Fable then runs **selection run 3** (way0-hint and way0-mirror against linear, the same three workloads, on a device verified at normal speed before the run and re-checked after it). If neither qualifies, SA-110 stays linear and L1 is not merged on benefit grounds; S1 is then re-planned onto `main`.
+
+## SA-110 selection run 3 (Fable, S68)
+
+Run C's variant cores (way0-hint, way0-mirror), the same procedure, workloads and D-201 bands; 72 runs, all rc 0; device at normal speed throughout (battery 87 % to 55 % with the S68 battery guard, no pause). p50 change against linear, per order:
+
+| Workload | way0-hint | way0-mirror | Band₅₀ / band₉₅ |
+|---|---|---|---|
+| 031 (deciding) | −11.89 % / −12.60 % (p95 −11.55 % / −12.41 %) | −11.85 % / −11.74 % (p95 −11.66 % / −11.46 %) | 0.80 % / 0.62 % |
+| warm (guard) | −0.90 % / −2.29 % | −2.15 % / −1.88 % | 0.50 % / 0.50 % |
+| ldm-stm8 (guard) | −2.96 % / −2.27 % | −2.00 % / −2.30 % | 0.50 % / 0.50 % |
+
+Both candidates qualify (031 gain beyond band in both orders; no guard regression — both guards now improve). The 031 gains lie within each other's band₅₀, so the tie rule selects **way0-hint** (fewer mechanisms). **SA-110 gate: way0-hint.** The rule-4 confirmation run (L1 off against the way0-hint core on hot, warm, stream-sa110, stream-arm710, ldm-stm8 and 031) started on the Odin3 at 21:40 on 2026-10-18.
