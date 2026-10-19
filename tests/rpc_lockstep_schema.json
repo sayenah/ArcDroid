@@ -36715,6 +36715,78 @@
         "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
         "classification": "immutable-input identity",
         "reason": "Fixed frontend label, safe-error, controller-description or hash-domain initializer; no mutable guest content or process-address identity."
+      },
+      "::arc_present_rows": {
+        "declaration": "static uint16_t arc_present_rows[2048][2]",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Arculator retained-presentation span index; RPC presentation is emitted by the existing framebuffer fields and never uses this Arculator codec index."
+      },
+      "::arc_state_inside_run": {
+        "declaration": "static bool arc_state_inside_run",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Public retro_run reentrancy latch; prevents state entry during callbacks. RPC states always refuse; does not choose or change RPC execution."
+      },
+      "::arc_state_capacity": {
+        "declaration": "static size_t arc_state_capacity,arc_state_media_budget",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Arculator session-latched serialization reservation. RPC getter remains zero, no RPC engine/memory state depends on this reservation."
+      },
+      "::arc_state_media_budget": {
+        "declaration": "static size_t arc_state_capacity,arc_state_media_budget",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Admitted Arculator writable-media reservation, used only by Arculator serialization refusal; RPC media/store state is compared by existing fields."
+      },
+      "::arc_secondary_instance": {
+        "declaration": "static bool arc_secondary_instance",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Host module-identity admission gate before registrations: copied secondary is inert. Lockstep emitter compares admitted primary sessions only; direct secondary lifecycle is verified by production-frontend tests."
+      },
+      "::arc_state_publication_noticed": {
+        "declaration": "static bool arc_state_publication_noticed",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Arculator ordered-publication warning deduplication; RPC uses its own store notices and native write route."
+      },
+      "::arc_state_firmware_digest": {
+        "declaration": "static ArcDigest arc_state_firmware_digest",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Cached immutable Arculator firmware identity for same-build state refusals. RPC firmware identity is already compared by its session/locator fields."
+      },
+      "::arc_state_firmware_valid": {
+        "declaration": "static bool arc_state_firmware_valid",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Validity of that Arculator identity cache; recomputed at session construction, unused for RPC execution or state loading."
+      },
+      "::arc_state_real_poll": {
+        "declaration": "static retro_input_poll_t arc_state_real_poll",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Host normal-poll callback identity at Arculator admission; gates speculative Arculator effects. RPC never arms save-state speculation and retains its native preparation/persistence route."
+      },
+      "::arc_state_boundary_armed": {
+        "declaration": "static bool arc_state_boundary_armed",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Arculator successful-capture latch for speculative media staging. RPC states always refuse so this latch cannot arm for an RPC session."
+      },
+      "::arc_state_committed_hd": {
+        "declaration": "static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES]",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Arculator durable native-HD frontier remembered outside rollback; RPC native-HD state and generations use their existing compared preparation/store fields."
+      },
+      "::arc_state_committed_jfd": {
+        "declaration": "static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES]",
+        "citation": "docs/arculator-save-states.md:Run H RPC census review",
+        "classification": "host-only/excluded",
+        "reason": "Arculator JFD durable frontier remembered outside rollback; RPC JFD state/generation remain in existing RPC media comparisons."
       }
     },
     "tests/arc_test_plan.c": {

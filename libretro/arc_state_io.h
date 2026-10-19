@@ -14,6 +14,7 @@ void arc_state_io_snapshot(ArcState *state);
 void arc_state_io_root(const char *save_directory);
 void arc_state_io_binding(unsigned index, const char *path);
 bool arc_state_io_store(const char *path, const char *identity);
+bool arc_state_io_store_lazy(const char *path,const char *identity);
 void arc_state_io_frontiers(ArcState *state);
 void arc_state_io_forget_stores(void);
 bool arc_state_io_pending(void);

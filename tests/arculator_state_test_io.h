@@ -78,8 +78,17 @@ static size_t ss1_record(uint8_t *p,const char *name,unsigned kind)
    return 0;
 }
 
-static void ss1_fake_poll(void) { poll(); }
+static int16_t ss1_last_input[2][7][2][RETROK_LAST];
+static int16_t ss1_logged_input(unsigned p,unsigned d,unsigned i,unsigned id)
+{
+   int16_t value=input(p,d,i,id);
+   if(p<2u&&d<7u&&i<2u&&id<RETROK_LAST)ss1_last_input[p][d][i][id]=value;
+   return value;
+}
+static void ss1_fake_poll(void) {}
 static int16_t ss1_fake_input(unsigned p,unsigned d,unsigned i,unsigned id)
+{ return p<2u&&d<7u&&i<2u&&id<RETROK_LAST?ss1_last_input[p][d][i][id]:0; }
+static int16_t ss1_preempt_input(unsigned p,unsigned d,unsigned i,unsigned id)
 { return input(p,d,i,id); }
 static size_t ss1_compressed_record(uint8_t *p)
 {
@@ -87,3 +96,22 @@ static size_t ss1_compressed_record(uint8_t *p)
       if(ss1_get64(p+at+8)>>32u)return at;
    return 0;
 }
+
+typedef struct {
+   void *file;
+   int64_t (*seek)(void *,int64_t,int);
+   size_t (*write)(void *,const void *,size_t);
+   bool (*flush)(void *);
+} Ss1WritePath;
+static uint64_t ss1_write_batch(const Ss1WritePath *path)
+{
+   uint8_t sector[512];struct timespec start;assert(!clock_gettime(CLOCK_MONOTONIC,&start));
+   for(unsigned i=0;i<256u;++i){
+      memset(sector,(int)(i^0x5au),sizeof(sector));
+      assert(path->seek(path->file,(int64_t)(100u*1024u+(i%16u)*512u),RETRO_VFS_SEEK_POSITION_START)>=0);
+      assert(path->write(path->file,sector,sizeof(sector))==sizeof(sector)&&path->flush(path->file));
+   }
+   return ss1_elapsed_ns(start)/256u;
+}
+static int ss1_ns_order(const void *a,const void *b)
+{uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return (x>y)-(x<y);}

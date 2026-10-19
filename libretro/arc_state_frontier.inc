@@ -11,17 +11,75 @@ typedef struct {
    uint64_t generation;
    ArcDigest origin;
    unsigned active;
-   bool failed;
+   bool failed,lazy,tracking_failed;
+   uint8_t *untracked;uint16_t *untracked_index;
+   size_t untracked_bytes,untracked_count;uint64_t fingerprint;
 } StateFrontier;
 static StateFrontier state_frontiers[STATE_FRONTIERS];
 static unsigned state_frontier_count;
+static uint64_t state_frontier_revision;
 static uint64_t frontier_get64(const uint8_t *p)
 { uint64_t n=0;for(unsigned i=0;i<8u;++i)n|=(uint64_t)p[i]<<(8u*i);return n; }
 static void frontier_put64(uint8_t *p,uint64_t n)
 { for(unsigned i=0;i<8u;++i)p[i]=(uint8_t)(n>>(8u*i)); }
 static StateFrontier *state_frontier_find(const char *path)
 { for(unsigned i=0;i<state_frontier_count;++i)if(!strcmp(state_frontiers[i].path,path))return &state_frontiers[i];return NULL; }
-static bool state_frontier_known(const char *path) { return state_frontier_find(path)!=NULL; }
+static void state_frontier_bind(StateHandle *handle)
+{
+   StateFrontier *f=state_frontier_find(handle->path);
+   handle->frontier_slot=f?(unsigned)(f-state_frontiers):STATE_FRONTIERS;
+   handle->frontier_revision=state_frontier_revision;
+}
+static bool state_frontier_known(StateHandle *handle)
+{
+   if(handle->frontier_revision!=state_frontier_revision)state_frontier_bind(handle);
+   StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
+   return f&&(!f->lazy||f->generation||f->failed);
+}
+static bool frontier_bound(const StateFrontier *f)
+{
+   for(unsigned i=0;i<68u;++i)if(state_io_bindings[i][0]&&!strcmp(f->path,state_io_bindings[i]))return true;
+   return false;
+}
+static bool frontier_pending(const StateFrontier *f)
+{
+   for(StateOperation *op=state_io_head;op;op=op->next)
+      if(!strcmp(op->path,f->path)||(op->kind==5&&!strcmp(op->target,f->path)))return true;
+   return false;
+}
+/* A labelled sector fingerprint is an accidental-edit check for the initial
+ * frontier, not an authentication mechanism. Later commits retain the existing
+ * intent/applied redo protocol. No state exists before this first frontier. */
+static uint64_t frontier_sector_fingerprint(const uint8_t *data,size_t bytes,size_t sector)
+{
+   uint64_t h=UINT64_C(0x9e3779b97f4a7c15)^(uint64_t)sector;
+   for(size_t i=0;i<bytes;){
+      uint64_t word=0;size_t n=bytes-i;if(n>8u)n=8u;memcpy(&word,data+i,n);
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      word=__builtin_bswap64(word);
+#endif
+      h=(h^word)*UINT64_C(0x100000001b3);i+=n;
+   }
+   h^=h>>33u;h*=UINT64_C(0xff51afd7ed558ccd);h^=h>>33u;return h;
+}
+static uint64_t frontier_fingerprint(const uint8_t *data,size_t bytes)
+{
+   uint64_t h=0;for(size_t at=0;at<bytes;at+=512u){size_t n=bytes-at;if(n>512u)n=512u;h^=frontier_sector_fingerprint(data+at,n,at/512u);}return h;
+}
+static void state_frontier_observe(StateHandle *handle,int64_t at,const void *data,size_t bytes,bool truncate)
+{
+   StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
+   if(!f||!f->lazy||f->generation||f->tracking_failed||f->failed)return;
+   if(truncate||at<0||(uint64_t)at>f->untracked_bytes||bytes>f->untracked_bytes-(size_t)at){f->tracking_failed=true;return;}
+   if(!bytes)return;
+   size_t sectors=(f->untracked_bytes+511u)/512u;
+   uint8_t *flags=(uint8_t *)(f->untracked_index+sectors);
+   size_t last=((size_t)at+bytes-1u)/512u;
+   for(size_t sector=(size_t)at/512u;sector<=last;++sector)if(!flags[sector]){
+      flags[sector]=1;f->untracked_index[f->untracked_count++]=(uint16_t)sector;
+   }
+   (void)data; /* Read only these written sectors when the first state is used. */
+}
 static bool frontier_write_all(const char *path,const void *data,size_t size)
 {
    if(!state_io_native||!state_io_native->open||!state_io_native->write||!state_io_native->flush||!state_io_native->close)return false;
@@ -69,19 +127,26 @@ static bool frontier_parse(const StateFrontier *f,const uint8_t *p,size_t bytes)
    if(frontier_get64(p+136)>UINT32_MAX||frontier_get64(p+144)>STATE_IO_BYTES)return false;
    if(memcmp(p,"ACFR2\0\0\0",8)||
       memcmp(p+40,f->identity,40)||frontier_get64(p+24)!=bytes-STATE_FRONTIER_HEADER||
-      !frontier_get64(p+8)||frontier_get64(p+16)<1||frontier_get64(p+16)>2||
+      !frontier_get64(p+8)||frontier_get64(p+16)<1||frontier_get64(p+16)>3||
+      (frontier_get64(p+16)==3&&bytes!=STATE_FRONTIER_HEADER+8u)||
       frontier_get64(p+32)>STATE_IO_BYTES||frontier_get64(p+24)>STATE_IO_BYTES)return false;
    return frontier_get64(p+80)==frontier_header_crc(p)&&
       frontier_get64(p+88)==arc_crc32(p+STATE_FRONTIER_HEADER,bytes-STATE_FRONTIER_HEADER);
 }
 void arc_state_io_forget_stores(void)
-{ memset(state_frontiers,0,sizeof(state_frontiers));state_frontier_count=0; }
+{ for(unsigned i=0;i<state_frontier_count;++i){free(state_frontiers[i].untracked);free(state_frontiers[i].untracked_index);}
+  memset(state_frontiers,0,sizeof(state_frontiers));state_frontier_count=0;++state_frontier_revision; }
 bool arc_state_io_store(const char *path,const char *identity)
 {
    if(!path||!path[0]||!identity||!state_io_root_path[0])return false;
    StateFrontier *f=state_frontier_find(path);if(f)return !f->failed;
-   if(state_frontier_count>=STATE_FRONTIERS)return false;
-   f=&state_frontiers[state_frontier_count++];memset(f,0,sizeof(*f));f->active=1;
+   if(state_frontier_count>=STATE_FRONTIERS){
+      for(unsigned i=0;i<state_frontier_count;++i)if(!frontier_bound(&state_frontiers[i])&&!frontier_pending(&state_frontiers[i])){
+         f=&state_frontiers[i];free(f->untracked);free(f->untracked_index);break;
+      }
+      if(!f)return false;
+   }else f=&state_frontiers[state_frontier_count++];
+   ++state_frontier_revision;memset(f,0,sizeof(*f));f->active=1;
    if(!state_path(f->path,path)){f->failed=true;return false;}
    arc_sha1_hex(identity,strlen(identity),f->identity);
    int n=snprintf(f->stem,sizeof(f->stem),"%s/arcdroid/state-stores/%s",state_io_root_path,f->identity);
@@ -103,9 +168,11 @@ bool arc_state_io_store(const char *path,const char *identity)
       f->origin.crc32=(uint32_t)frontier_get64(record+136);f->origin.size=(size_t)frontier_get64(record+144);
       size_t expected=lengths[newest]-STATE_FRONTIER_HEADER;uint8_t *current=NULL;size_t bytes=0;
       bool read=state_read_native(path,&current,&bytes);
-      bool same=read&&bytes==expected&&!memcmp(current,record+STATE_FRONTIER_HEADER,expected);
+      bool checkpoint=frontier_get64(record+16)==3;
+      bool same=checkpoint?(read&&bytes==frontier_get64(record+32)&&frontier_fingerprint(current,bytes)==frontier_get64(record+STATE_FRONTIER_HEADER)):
+         (read&&bytes==expected&&!memcmp(current,record+STATE_FRONTIER_HEADER,expected));
       if(!same) {
-         if(frontier_get64(record+16)==2) {
+         if(frontier_get64(record+16)!=1) {
             /* A normal content reopen may observe an external edit (including
              * a CMOS record which the existing seed/healing path will repair).
              * Adopt those bytes at a new frontier; never overwrite the edit
@@ -118,7 +185,7 @@ bool arc_state_io_store(const char *path,const char *identity)
                else {
                   memcpy(observed,record,STATE_FRONTIER_HEADER);frontier_put64(observed+8,f->generation+1u);
                   memset(&f->origin,0,sizeof(f->origin));frontier_origin_write(observed,&f->origin);
-                  frontier_put64(observed+24,bytes);frontier_put64(observed+32,bytes);
+                  frontier_put64(observed+16,2);frontier_put64(observed+24,bytes);frontier_put64(observed+32,bytes);
                   if(bytes)memcpy(observed+STATE_FRONTIER_HEADER,current,bytes);
                   if(!frontier_publish(f,observed,STATE_FRONTIER_HEADER+bytes))f->failed=true;
                   free(observed);
@@ -133,9 +200,53 @@ bool arc_state_io_store(const char *path,const char *identity)
    } else if(present[0]||present[1])f->failed=true;
    free(records[0]);free(records[1]);return !f->failed;
 }
+bool arc_state_io_store_lazy(const char *path,const char *identity)
+{
+   if(!arc_state_io_store(path,identity))return false;
+   StateFrontier *f=state_frontier_find(path);if(f->lazy)return !f->failed;
+   f->lazy=true;
+   if(!f->generation){
+      if(!state_read_native(path,&f->untracked,&f->untracked_bytes))f->tracking_failed=true;
+      else {
+         f->fingerprint=frontier_fingerprint(f->untracked,f->untracked_bytes);
+         size_t sectors=(f->untracked_bytes+511u)/512u;
+         f->untracked_index=calloc(sectors?sectors:1u,3u);
+         if(!f->untracked_index)f->tracking_failed=true;
+      }
+   }
+   return !f->failed;
+}
+static bool frontier_activate(StateFrontier *f)
+{
+   if(!f->lazy||f->generation)return !f->failed;
+   if(f->tracking_failed)return false;
+   if(f->untracked_count){
+      struct retro_vfs_file_handle *file=state_io_native->open(f->path,RETRO_VFS_FILE_ACCESS_READ,0);
+      bool okay=file!=NULL;
+      for(size_t i=0;okay&&i<f->untracked_count;++i){
+         size_t sector=f->untracked_index[i],at=sector*512u,n=f->untracked_bytes-at;if(n>512u)n=512u;
+         f->fingerprint^=frontier_sector_fingerprint(f->untracked+at,n,sector);
+         okay=state_io_native->seek&&state_io_native->seek(file,(int64_t)at,RETRO_VFS_SEEK_POSITION_START)>=0&&
+            state_io_native->read(file,f->untracked+at,n)==(int64_t)n;
+         f->fingerprint^=frontier_sector_fingerprint(f->untracked+at,n,sector);
+      }
+      if(file&&state_io_native->close(file))okay=false;
+      if(!okay){f->tracking_failed=true;return false;}
+   }
+   uint8_t record[STATE_FRONTIER_HEADER+8u]={0};
+   memcpy(record,"ACFR2\0\0\0",8);frontier_put64(record+8,1);frontier_put64(record+16,3);
+   frontier_put64(record+24,8);frontier_put64(record+32,f->untracked_bytes);memcpy(record+40,f->identity,40);
+   frontier_origin_write(record,&f->origin);frontier_put64(record+STATE_FRONTIER_HEADER,f->fingerprint);
+   char directory[4096];int n=snprintf(directory,sizeof(directory),"%s/arcdroid/state-stores",state_io_root_path);
+   bool speculative=state_io_speculating;state_io_speculating=false;
+   bool okay=n>0&&(size_t)n<sizeof(directory)&&arc_io_make_path(directory)&&frontier_publish(f,record,sizeof(record));
+   state_io_speculating=speculative;
+   if(!okay)f->failed=true;
+   free(f->untracked);free(f->untracked_index);f->untracked=NULL;f->untracked_index=NULL;f->untracked_bytes=f->untracked_count=0;return okay;
+}
 static int64_t state_frontier_write(StateHandle *handle,const void *data,size_t bytes)
 {
-   StateFrontier *f=state_frontier_find(handle->path);
+   StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
    if(!f||f->failed||f->generation==UINT64_MAX||handle->position<0||bytes>STATE_IO_BYTES||
       (uint64_t)handle->position>STATE_IO_BYTES-bytes)return -1;
    uint8_t *old=NULL;size_t old_bytes=0;
@@ -191,20 +302,24 @@ static bool frontier_current(const StateFrontier *f,uint64_t *generation)
       free(bytes);
    }
    bool okay=!present_any;
-   if(newest&&frontier_get64(newest+16)==2u) {
+   if(newest&&(frontier_get64(newest+16)==2u||frontier_get64(newest+16)==3u)) {
       uint8_t *target=NULL;size_t bytes=0;
       bool read=state_read_native(f->path,&target,&bytes);
-      okay=read&&bytes==newest_size-STATE_FRONTIER_HEADER&&
-         !memcmp(target,newest+STATE_FRONTIER_HEADER,bytes);
+      okay=frontier_get64(newest+16)==3u?
+         (read&&bytes==frontier_get64(newest+32)&&frontier_fingerprint(target,bytes)==frontier_get64(newest+STATE_FRONTIER_HEADER)):
+         (read&&bytes==newest_size-STATE_FRONTIER_HEADER&&!memcmp(target,newest+STATE_FRONTIER_HEADER,bytes));
       free(target);
    }
    free(newest);return okay&&*generation>=f->generation;
 }
 void arc_state_io_frontiers(ArcState *s)
 {
-   arc_state_expect(s,"frontier.count",&state_frontier_count,sizeof(state_frontier_count));
+   if(arc_state_error(s))return;
+   unsigned count=0;for(unsigned i=0;i<state_frontier_count;++i)if(frontier_bound(&state_frontiers[i]))++count;
+   arc_state_expect(s,"frontier.count",&count,sizeof(count));
    for(unsigned i=0;i<state_frontier_count;++i) {
-      char name[96];StateFrontier *f=&state_frontiers[i];
+      char name[96];StateFrontier *f=&state_frontiers[i];if(!frontier_bound(f))continue;
+      if(!arc_state_loading(s)&&!arc_state_pass(s)&&!frontier_activate(f)){arc_state_fail(s,"store frontier activation");return;}
       snprintf(name,sizeof(name),"frontier.%s",f->identity);
       uint64_t generation=f->generation;
       if(arc_state_loading(s)&&arc_state_pass(s)&&!frontier_current(f,&generation))

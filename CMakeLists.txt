@@ -335,7 +335,7 @@ function(arcdroid_add_libretro target shipping)
         "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T"
         "-Wl,-z,defs")
     endif()
-    target_link_libraries(${target} PRIVATE m)
+    target_link_libraries(${target} PRIVATE m ${CMAKE_DL_LIBS})
   endif()
 endfunction()
 
@@ -3634,8 +3634,9 @@ if(BUILD_TESTING)
   get_property(arcdroid_ci_tests DIRECTORY PROPERTY TESTS)
   foreach(test IN LISTS arcdroid_ci_tests)
     if(test MATCHES "(mutants|mutations|faults)" OR
-        # SS-1 differential matrix exceeds two minutes under sanitizers.
-        test STREQUAL "arculator-state-matrix" OR
+        # SS-1 differential and expanded frontend protocol matrices exceed
+        # two minutes under sanitizers (Run H features: 177 s on Mac).
+        test MATCHES "^arculator-state-(matrix|features)$" OR
         test STREQUAL "rpc-lockstep-sensitivity-variants" OR
         test STREQUAL "rpc-profile-lockstep-coverage" OR
         # R3d-3 sanitizer maxima: guest 268.61 s, state matrix 305.34 s.

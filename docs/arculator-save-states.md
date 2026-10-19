@@ -2,10 +2,14 @@
 
 # SS-1: Arculator state and publication design
 
-Order: [SS-1](handoff.md), D-011, D-210, R-SS3a and run-C R-SS4b. Compatibility is the
+Order: [SS-1](handoff.md), D-011, D-210, R-SS3a and run-H adjudication.
+Run H is not acceptance-complete: the 16 MiB session-bound gate remains unmet,
+and the module guard cannot distinguish a legacy Android loader aliasing the
+secondary copy to the primary module. Compatibility is the
 same core build, platform, firmware, machine, prepared media and options.
 RiscPC serialization remains unavailable. Capability advertising is the last
-acceptance gate; see [Sol's report](../SOL-REPORT-SS1.md) for actual results.
+acceptance gate. The committed [state harnesses](../tests/arculator_state_matrix.py)
+and [compatibility notes](ss1-release-notes.md) describe the checks and public contract.
 
 ## Inventory and ownership
 
@@ -93,32 +97,39 @@ state and host files. Snapshots are refused inside `retro_run`, where the native
 fault continuation and callbacks are active. A successful geometry/rate change
 notifies the frontend after commit.
 
-## Compact machine state and stable frontend capacity (run C)
+## Compact machine state and stable frontend capacity (run H)
 
-R-SS4b supersedes the variable-size rule. At content load, a registration-only
-walk of the same reviewed visitors measures complete compiled static owners,
-including unused media/discovery capacity. It does not execute the engine or
-capture a frame. Twice native storage covers pointer bindings on the shipping
-64-bit targets; the record limit reserves all record headers, and 512 bounded
-string/identity slots cover OSK labels, active JFD reasons and observer strings.
-The retained presentation array is counted in the raster allowance instead.
+R-SS4b keeps a stable capacity in every context. A schema-measuring pass walks
+the reviewed field visitors at load, counting encoded values and references,
+maximum bounded strings and all prepared-media slots without copying guest
+payloads. It no longer charges native pointer padding or the parser's complete
+record allowance. Machine RAM, display limits, mutable media and pending effects
+are added separately. The capacity is host authority, never restored from data.
 
-The session capacity adds machine RAM; three 4096×2048 retained rasters and
-row-span headers; admitted raw-media limits (1,600 KiB drive 0 and an 800 KiB
-helper); four raw track caches; the maximum active JFD descriptors, replacements
-and created sectors; and bounded speculative publication ownership. Native HD
-capacity covers profile changes at reset. Disk replacement and reset never grow
-this capacity. Release clears it; every context returns the same value once the
-Arculator engine is initialized. RiscPC and pre-boot chooser states return zero.
-The fixed-buffer AC-6 harness queries at load and retains its buffers through
-real/speculative frames, restore, media swaps and reset.
+Only media classes admitted at load reserve payload capacity: the largest current
+writable raw image, active JFD capability if present, and native HD if attached.
+A larger replacement remains usable but state save/load refuses with a timed
+notice. Replacement registration is transactional and retires inactive native
+registrations when their slots are needed. Only the current bound media set
+enters frontier identities. Disc replacements and reset never grow the bound.
+RiscPC returns zero. The launch chooser returns the session's nonzero bound from
+load, while save and load themselves return false until the engine is running.
+The AC-6 harness retains its original fixed buffers throughout the session.
 
-The bound is conservative and independent of current compression. The payload
-still captures only used retained spans and dirty media. Size queries are now
-constant-time. The report includes capacity, payload sizes and actual costs;
-capacity padding is part of save cost. Input never treats unused capacity as
-machine state. Source caches are primed during validated load preparation so the
-first public state load does not pay immutable-media hashing costs.
+**Remaining M-2 gate:** the current authored read-only ADF bound is
+143,758,088 bytes. Three maximal retained rasters account for 100,712,448 bytes;
+pending ordered-operation ownership reserves another 33,554,432 bytes. Measuring
+only admitted media and actual field encodings does not meet 16 MiB. No proof
+currently permits discarding these histories at every incomplete/interlaced
+frame boundary. No smaller bound is advertised without that proof. Default
+20 MiB RetroArch rewind memory therefore still cannot hold a state. The format
+continues to zero spare output bytes so the original full-buffer AC-2 byte
+identity holds with arbitrary caller allocations. Consequently save work also
+still includes the bound; M-2's exact-work requirement is not claimed complete.
+
+Source caches are primed during validated load preparation, so the first public
+state load does not pay immutable-media hashing costs. Size queries are constant
+time and never query GET_SAVESTATE_CONTEXT, which can create another core.
 
 The VIDC bitmap, platform framebuffer and frontend presentation history can
 contain pixels that are read before a complete redraw. They remain serialized,
@@ -132,6 +143,11 @@ reading it, and dupe paths do not read it. Its validated capacity is reconstruct
 The original last-pixel history mutants still exercise every retained buffer.
 
 Raw media use changed 512-byte sectors against an immutable cached source.
+Admission primes an open-file mirror and sparse indexes. Native writes only mark
+changed sectors in every open alias; they add no native reads or writes. Capture
+refreshes changed sectors and emits dirty sectors only, sorting their IDs for
+canonical output. Restore reconstructs the file view from its validated source
+and saved deltas, then derives indexes. No-state writes do not scan the image.
 Shadow and Original preparation preserve an immutable `state-base.adf` under
 the source identity's media directory; Off mode uses its read-only staged file.
 The state binds the base's exact size and SHA-1. Original's durable origin ID
@@ -158,7 +174,12 @@ payloads retain exact publication-protocol bytes, including any complete base
 rewrite required by compaction; lossless word-run compression applies to them.
 No native write occurs while preparing a load.
 
-Parser, aggregate heap replacement and decoded data remain bounded to 1 GiB.
+The parser retains a 1 GiB absolute ceiling. A frontend load additionally bounds
+aggregate decoded records and heap ownership by its admitted session capacity.
+Blob decompression waits until its visitor has checked the owner-specific maximum;
+a tiny record cannot allocate its declared gigabyte before schema validation.
+Derived pending file views also have an aggregate session-capacity budget;
+resize and rename-copy growth are checked before allocation.
 Immutable source caches, sparse-span trackers, reconstruction scratch and native
 base caches have explicit inventory ownership classifications. Measured costs
 and frontend compatibility evidence belong in the report.
@@ -184,26 +205,57 @@ and arbitrary absolute paths do not come from the blob. The ordered log is seria
 never touches native files. Publication replays the existing store protocol
 and clears the queue only after success. Failure latches a refusal condition.
 
-R-SS3a accepts the input-callback switch in [RetroArch 1.22.2
+R-SS3a accepts the poll-callback switch in [RetroArch 1.22.2
 runahead.c](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c).
-The initial real frame publishes eagerly. A special same-instance save captures
-the real callbacks; switched callbacks identify fake frames, including the final
-fake frame which has A/V enabled. Successful restore makes the next baseline
-frame real. A baseline frame without that evidence remains staged; a later
-switch can prove that the preceding uncertain baseline frame was real. A/V
-suppression is not used as a commit signal. The harness follows this callback
-sequence through `retro_*`, injects speculative JFD writes, checks zero native
-mutations, restores, and compares real-frame video/PCM/CPU traces.
+Normal polling remains stable across its permanent input-state logging hook;
+comparing the state callback would misclassify real frames. After the first
+successful save, null/switched polling stages fake frames, including the final
+fake frame with A/V enabled. Original polling publishes a retained queue before
+the next real frame and keeps that frame's guest writes eager. The stated bound
+is entry to the next real retro_run, or unload/deinit, whichever occurs first.
+A/V suppression and GET_SAVESTATE_CONTEXT are not commit signals. Failed publish
+blocks every later native mutation and emits one warning per loaded session.
 
-CMOS and raw Original/shadow files have a new two-slot durable frontier under
-`arcdroid/state-stores/`. An `ACFR2` record has generation, intent/applied phase,
-identity, whole after-image, checksums and an Original-media origin identity.
-A flushed and validated intent is renamed into an inactive slot before target
-mutation; the target is then written and flushed, followed by an applied
-acknowledgment of the same generation. Normal cold preparation redoes an
-interrupted intent. Applied bytes changed externally are adopted at a new
-frontier without overwriting the external edit; existing CMOS validation and
-healing still run. A state load encountering changed target bytes refuses.
+Preemptive Frames installs its fixed null poll before its first save. That save
+returns false before a preempt frame can execute. RetroArch's preempt_run error
+path restores callbacks through preempt_deinit; subsequent real frames and mode
+changes remain eager. This mode is unsupported, using RetroArch's actual
+failed-save route rather than a quirk it ignores. Native tests model initial
+preempt, re-entry and normal callback restoration. The source's line numbering
+differs between the web-served tagged file and QA's local copy; function-level
+sequences agree. A live RetroArch execution is not claimed.
+
+Before any frontend registration, a module compares its private-function native
+module with GET_LIBRETRO_PATH's primary module (borrowed Windows handles or
+balanced POSIX RTLD_NOLOAD references). A distinct copied secondary is inert at environment,
+init, load, run, reset, cheat, unload and deinit boundaries: no guest, stores,
+registrations or persistence. Missing primary-path support leaves ordinary
+non-copy frontends usable; an ambiguous probe after a supplied path fails closed.
+The distinct-module assumption does not hold on Android API 21–22, whose
+loader resolves matching basenames to the existing primary module; that
+aliased-lifecycle case remains an explicit release blocker.
+Neither init nor the size getter queries GET_SAVESTATE_CONTEXT. Tests cover
+copied modules reached by default run-ahead, cheats and failed-preempt routes,
+including RiscPC and preservation of primary Disc Control callbacks.
+
+CMOS and raw Original/shadow files use two-slot durable frontiers under
+arcdroid/state-stores/. CMOS retains the eager intent/applied protocol. A raw
+store without previous state history follows main's native sector writes. At
+admission it caches committed bytes and a labelled 64-bit sector fingerprint;
+writes mark sectors only. Its first-ever save reads only changed sectors and
+publishes a validated 168-byte ACFR2 checkpoint (phase 3). This is an
+accidental-edit check, not authentication. No older state exists before that
+checkpoint. Once a store has state history, later writes and later opens retain
+the durable protocol; skipping new state use cannot permit old states to roll it
+back. This qualification matters for write-cost measurements.
+
+Subsequent intent/applied records include the full after-image. Intent is durable
+before native target mutation; applied acknowledgement follows flush. Cold
+preparation redoes interrupted intents. Applied/checkpoint bytes changed
+externally are adopted at a newer frontier without overwriting the edit; a hot
+state load only refuses. State loads never repair native files. Native authority
+and untracked caches do not rewind. Persistent store history is retained across
+module/session lifetimes.
 
 Original-media guest writes change the source file's hash. Its first identity
 is therefore retained with the durable frontier across its own acknowledged
@@ -247,3 +299,111 @@ has 4 MiB. The engine's 2 MiB mapping is outside this slice.
 Only a successful special-context snapshot arms the input-callback boundary.
 An undersized failed snapshot leaves the preceding evidence intact, so a frontend
 abandoning run-ahead cannot leave known-real writes indefinitely staged.
+
+### Run H RPC census review
+
+The RPC lockstep census retains every existing frontend object and adds twelve
+explicit SS-1 owner classifications (mirrored in the independent reviewed policy).
+The presentation-row index belongs to Arculator's retained raster; the reentrancy
+latch, admitted capacity/media budget, publication warning, immutable firmware
+cache/validity, normal poll identity, successful-capture latch and HD/JFD committed
+frontiers belong to the Arculator state boundary. RPC states remain size zero and
+refuse save/load. Its engine, media and persistent generations continue through
+the existing RPC comparisons. The secondary-module latch gates admission before
+registrations, outside admitted primary lockstep execution; the production host
+frontend tests exercise copied-secondary rejection explicitly. No RPC engine
+member, existing comparison or census source is excluded.
+
+The public retro_run wrapper now owns the secondary and reentrancy checks;
+arc_run owns the unchanged RPC session-kind policy. The source guard pins both
+owners. All 1,508 existing launch mutation IDs and equivalences remain, rebound
+within their original function (retro_run's policy body is now arc_run); spacing
+changes do not alter their expressions' semantics. This is a reviewed source-pin
+refresh, not a regenerated mutation exclusion list.
+
+Native directory entries with a null name must remain entries with an invalid
+name through the speculative VFS. They are not EOF: firmware inventory must
+report an unreadable inventory. StateDirectory.name_missing is transient native
+iteration metadata, never serialized; close releases its owner. JFD fault probes
+name the JFD store directory so unrelated CMOS frontier temporary files cannot
+consume their intended publication failure.
+
+Linux's independent process heap oracle uses mallinfo2.uordblks, which includes
+freed chunks retained in glibc's thread cache. The harness driver disables that
+cache before child startup via glibc.malloc.tcache_count=0, preserving unrelated
+tunables. Exact process bytes and allocation-census bytes/blocks still have zero
+tolerance, and the actual malloc/calloc/realloc/realpath/dropped-free mutants are
+retained. The CI symptom was six equal-sized early increases followed by a flat
+heap while the intercepted live census stayed zero. This diagnoses allocator
+retention; local Mac evidence cannot claim a native Linux re-test. See the
+[glibc tunable contract](https://sourceware.org/glibc/manual/2.30/html_node/Memory-Allocation-Tunables.html).
+
+### R-SS3f verification stop (Android API 21–22)
+
+A runtime size-zero switch alone cannot supply the required aliased-module
+protection in RetroArch 1.22.2. Its tagged
+[core_set_cheat/core_reset_cheat](https://github.com/libretro/RetroArch/blob/v1.22.2/runloop.c)
+call secondary_core_ensure_exists when the run-ahead settings and availability
+flags permit it, without checking the known serialized size. The tagged
+[secondary/preempt code](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c)
+creates that module directly. A failed preempt_allocate on size zero calls
+preempt_deinit, which restores both availability flags. Thus the counterexample
+is: size-zero primary; failed preempt initialization; secondary-instance
+run-ahead settings enabled; cheat set or reset. The secondary loader is reached
+before any successful serialization. A cheat before initial run-ahead sizing is
+another route while the initial availability flags remain set. Ordinary
+runahead_create does reject size zero, but that does not guard these independent
+entry points.
+
+On API 21–22 the loader may alias the same-basename copied library to the primary
+module. The existing distinct-module check cannot detect that alias. Per the
+Founder's conditional instruction, R-SS3f is stopped: no system-property runtime
+gate or claim that size zero protects the primary is shipped here. The modern
+module check remains. Native copied-module RPC tests already exercise a primary
+whose actual retro_serialize_size is zero, followed by secondary lifecycle entry;
+only distinct-module rejection prevents its side effects. The earlier same-handle
+native diagnostic remains a failing registration check, not an acceptance pass.
+A core-only API-size switch is insufficient; a frontend fix or an additional
+reviewed aliased-lifecycle protocol is needed for those legacy Android routes.
+
+The Founder adopted the raw-frontier interpretation: stores with no state
+history use the native main IO path until their first capture. Canonical spare
+buffer clearing is permitted by R-SS4d; it is no longer a proportional-work
+failure. The 16 MiB capacity and save/load cost targets still apply independently.
+
+### R-SS4d producer-limit audit (still open)
+
+The geometry constant is not used as proof of an engine limit. The producer
+itself reaches the same order of storage:
+
+* `writevidc` in `engine/arculator/src/vidc.c` masks horizontal total to ten
+  bits. `vidc_poll` uses `(htot + 1) * 2`, up to 2,048 clocks; its 8/12 MHz
+  pixel paths double horizontal positions and write paired pixels, reaching
+  the 4,096-wide backing surface. Fast paths write independent pixels at up
+  to 2,048 positions. Current control bits cannot describe older rows retained
+  across mode changes.
+* The vertical register is ten bits plus one. The draw guard admits line 1,023;
+  interlace selects `l * 2 + oddeven`, reaching backing row 2,047. These are
+  alternating fields, not two identical rows. `arc_machine_create` fixes
+  `dblscan=1` and the standard/SVGA monitor from the machine descriptor; that
+  does not disable guest-controlled interlace or horizontal pixel-rate changes.
+* `video_renderer_update` clips against the engine bitmap and platform buffer.
+  `video_renderer_present` performs a separate in-place line duplication.
+  This duplication is derivable if its source and last-copy recipe are retained.
+  The platform image can otherwise precede the partially redrawn VIDC bitmap.
+  `arc_send_video` then retains the last presented image, potentially with an
+  OSK overlay; a boot-prompt transition can re-use that preceding image. The
+  three arrays are not three independent full screens in ordinary frames, but
+  neither are they unconditionally functions of the current VIDC registers/RAM.
+
+A fast interlaced retained raster alone needs about 16 MiB in the current
+32-bit literal-span representation, before 4 MiB RAM, framing, dirty media or
+pending effects. This is a lower reservation for **that representation**, not
+an information-theoretic lower bound for a redesigned palette/history codec.
+The current 137.10 MiB bound is therefore not fixed by substituting ordinary
+640x480 geometry, and an arbitrary 16 MiB cap would lose state. No smaller bound
+has been installed without proof. R-SS4d remains unfinished: derive retained
+platform/presentation copies from an explicit last-copy/overlay recipe, compact
+non-derived VIDC history, and derive a pending-effect bound from actual session
+producers and their publication window. The fixed 32 MiB log allowance has not
+been presented as such a derivation. The target has not been declared impossible.

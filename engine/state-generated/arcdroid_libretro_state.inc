@@ -352,6 +352,7 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    arc_state_value(s,&((arc_boot_discovery).geometry),sizeof((arc_boot_discovery).geometry));
    size_t arc_boot_discovery_count=0;
    unsigned arc_boot_discovery_incoming;arc_state_project(s,&arc_boot_discovery_incoming,&arc_boot_discovery.candidate_count,sizeof(arc_boot_discovery_incoming));
+   if(arc_state_measuring(s))arc_boot_discovery_incoming=ARC_LAUNCH_MAX_CANDIDATES;
    if(arc_boot_discovery_incoming>ARC_LAUNCH_MAX_CANDIDATES)arc_state_fail(s,"discovery count");else arc_boot_discovery_count=arc_boot_discovery_incoming;
    for (size_t ss_i0=0; ss_i0<arc_boot_discovery_count; ++ss_i0) {
       arc_state_value(s,&(((((arc_boot_discovery).candidates)[ss_i0]).name).bytes),sizeof(((((arc_boot_discovery).candidates)[ss_i0]).name).bytes));
@@ -427,6 +428,7 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    arc_state_value(s,&((arc_chooser_discovery).geometry),sizeof((arc_chooser_discovery).geometry));
    size_t arc_chooser_discovery_count=0;
    unsigned arc_chooser_discovery_incoming;arc_state_project(s,&arc_chooser_discovery_incoming,&arc_chooser_discovery.candidate_count,sizeof(arc_chooser_discovery_incoming));
+   if(arc_state_measuring(s))arc_chooser_discovery_incoming=ARC_LAUNCH_MAX_CANDIDATES;
    if(arc_chooser_discovery_incoming>ARC_LAUNCH_MAX_CANDIDATES)arc_state_fail(s,"discovery count");else arc_chooser_discovery_count=arc_chooser_discovery_incoming;
    for (size_t ss_i0=0; ss_i0<arc_chooser_discovery_count; ++ss_i0) {
       arc_state_value(s,&(((((arc_chooser_discovery).candidates)[ss_i0]).name).bytes),sizeof(((((arc_chooser_discovery).candidates)[ss_i0]).name).bytes));

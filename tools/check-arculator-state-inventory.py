@@ -17,7 +17,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TOKEN = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
                    r'[A-Za-z_]\w*|0[xX][\da-fA-F]+|\d+(?:\.\d+)?\w*|\S', re.S)
 ALLOCATORS = {'malloc', 'calloc', 'realloc', 'create_bitmap', 'arc_io_open_file',
-              'arc_io_read_all', 'arc_io_read_all_limit'}
+              'arc_io_read_all', 'arc_io_read_all_limit',
+              'strdup', 'strndup', 'wcsdup', 'aligned_alloc', 'posix_memalign',
+              'memalign', 'valloc', 'pvalloc', 'reallocarray', 'recallocarray',
+              '_strdup', '_wcsdup', '_aligned_malloc', '_aligned_realloc',
+              'mmap', 'VirtualAlloc', 'VirtualAllocEx', 'HeapAlloc', 'HeapReAlloc',
+              'MapViewOfFile', 'MapViewOfFileEx',
+              'dlopen', 'LoadLibraryA', 'LoadLibraryW', 'LoadLibraryExA', 'LoadLibraryExW',
+              'GetModuleHandleExW'}
 CLASSES = {'serialized', 'derived-on-load', 'host-only'}
 
 
@@ -88,8 +95,8 @@ def census(text):
                         rows.append(('local:' + owner, ' '.join(ts[j:k + 1])))
                         j = k + 1
                         continue
-                    if ts[j] in ALLOCATORS and ts[j + 1:j + 2] == ['(']:
-                        k = closing(ts, j + 1)
+                    if ts[j] in ALLOCATORS:
+                        k = closing(ts, j + 1) if ts[j + 1:j + 2] == ['('] else j
                         rows.append(('allocation:' + owner, ' '.join(ts[j:k + 1])))
                     j += 1
                 i = start = end + 1

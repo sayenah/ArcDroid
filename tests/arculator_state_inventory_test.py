@@ -71,6 +71,22 @@ class InventoryTests(unittest.TestCase):
         self.mutate('engine/arculator/src/mem.c', lambda s:
                     s + '\nvoid ss1_heap(void) { (void)malloc(19); }\n')
 
+    def test_alternate_allocators_in_existing_owner(self):
+        for expression in ('strdup("authored")', 'strndup("authored", 3)',
+                           'aligned_alloc(64, 128)', 'memalign(64, 128)',
+                           'reallocarray(state_decode_arena, 2, 64)',
+                           'VirtualAlloc(0, 128, 0, 0)'):
+            with self.subTest(expression=expression):
+                self.mutate('libretro/arc_state.c', lambda s:
+                    s + '\nvoid ss1_existing_owner(void) { state_decode_arena = (uint8_t *)' + expression + '; }\n')
+        self.mutate('libretro/arc_state.c', lambda s:
+            s + '\nvoid ss1_existing_owner(void) { posix_memalign((void **)&state_decode_arena, 64, 128); }\n')
+
+    def test_allocator_callback_reference(self):
+        before = 'void f(void) { existing_factory = previous_factory; }'
+        after = before.replace('previous_factory', 'strdup')
+        self.assertNotEqual(GUARD.census(before), GUARD.census(after))
+
     def test_function_local_heap_layout(self):
         before = ('void f(void) { struct LocalHeap { unsigned x; }; '
                   'static struct LocalHeap *p; p = malloc(sizeof(*p)); }')

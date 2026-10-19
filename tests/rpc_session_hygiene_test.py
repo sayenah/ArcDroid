@@ -58,6 +58,14 @@ def run(exe,core,fixtures,mode,profile="full"):
         progress=root/"progress.txt"
         print(f"hygiene-{mode}-progress={progress}",flush=True)
         test_env=os.environ.copy();test_env["ARCDROID_HYGIENE_PROGRESS"]=str(progress)
+        if sys.platform.startswith('linux'):
+            # mallinfo2.uordblks includes freed blocks retained in glibc's
+            # per-thread cache. Disable that cache before process startup so
+            # the independent, exact process-live-heap oracle counts frees.
+            # Keep both zero-tolerance byte/block assertions and leak mutants.
+            tunables=[t for t in test_env.get('GLIBC_TUNABLES','').split(':')
+                      if t and not t.startswith('glibc.malloc.tcache_count=')]
+            test_env['GLIBC_TUNABLES']=':'.join([*tunables,'glibc.malloc.tcache_count=0'])
         result=subprocess.run([str(exe),str(core),str(system/'run.arcplan'),str(system),str(save),mode,
             str(system/'failed.arcplan'),str(system/'generation.arcplan')],capture_output=True,text=True,timeout=850,env=test_env)
         check(result.returncode==0,result.stdout+result.stderr)

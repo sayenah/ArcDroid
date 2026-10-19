@@ -48,7 +48,7 @@ enum Phase { PHASE_NONE, PHASE_ENV, PHASE_INIT, PHASE_LOAD, PHASE_RUN };
 static enum Phase phase;
 static const char *system_dir;
 static const char *save_dir;
-static uint64_t ss1_native_mutations;
+static uint64_t ss1_native_mutations,ss1_native_read_bytes,ss1_native_write_bytes;
 static unsigned ss1_kill_phase;
 static unsigned open_files;
 static unsigned open_dirs;
@@ -96,6 +96,8 @@ static unsigned measured_video_frames;
 static bool av_rate_changed_during_measure;
 static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
+static const char *ss1_primary_path;
+static unsigned ss1_context_queries,ss1_secondary_calls;
 static bool ss1_context_capability=true;
 static uint64_t ss1_quirks;
 static unsigned ss1_quirks_calls;
@@ -506,7 +508,7 @@ static int64_t vfs_read(struct retro_vfs_file_handle *h, void *s, uint64_t n)
    if (observed_vfs_path && !strcmp(h->path, observed_vfs_path))
       ++observed_vfs_reads;
    if (fault_once(h->path, &fault_read_substring) && n) --n;
-   return (int64_t)fread(s, 1u, (size_t)n, h->file);
+   int64_t count=(int64_t)fread(s,1u,(size_t)n,h->file);if(count>0)ss1_native_read_bytes+=(uint64_t)count;return count;
 }
 static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_t n)
 {
@@ -518,7 +520,7 @@ static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_
    if(ss1_journal&&((ss1_kill_phase==2u&&n==512u)||(ss1_kill_phase==3u&&n==16u))) {
       assert(!fflush(h->file));kill(getpid(),SIGKILL);
    }
-   if(written>0)++ss1_native_mutations;
+   if(written>0){++ss1_native_mutations;ss1_native_write_bytes+=(uint64_t)written;}
    if (at + written > h->cached_size) h->cached_size = at + written;
    return written;
 }
@@ -1202,7 +1204,11 @@ static bool environment(unsigned command, void *data)
             reported_rates[reported_rate_count++] = av->timing.fps;
          return true;
       }
+      case RETRO_ENVIRONMENT_GET_LIBRETRO_PATH:
+         if(!ss1_primary_path)return false;
+         *(const char **)data=ss1_primary_path;return true;
       case RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT:
+         ++ss1_context_queries;
          if(!ss1_context_capability)return false;
          *(enum retro_savestate_context*)data=ss1_context;return true;
       case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
@@ -2562,6 +2568,13 @@ static void stick_write_trace(FILE *file, const char *leg,
 
 #include "arculator_state_test_io.h"
 
+/* A copied core may ask only for the primary module identity. In particular
+ * no frontend registrations, writable VFS request or CMOS preparation is allowed. */
+static bool ss1_secondary_environment(unsigned command,void *data)
+{
+   if(command==RETRO_ENVIRONMENT_GET_LIBRETRO_PATH){*(const char **)data=ss1_primary_path;return true;}
+   ++ss1_secondary_calls;return environment(command,data);
+}
 int main(int argc, char **argv)
 {
    bool reset_poweron = argc == 6 && !strcmp(argv[5], "--reset-poweron");
@@ -2870,6 +2883,7 @@ int main(int argc, char **argv)
    system_dir = system_path; save_dir = save_path;
    assert(getcwd(cwd, sizeof(cwd)));
 
+   if(ss1_mode)ss1_primary_path=argv[1];
    void (*retro_set_environment)(retro_environment_t); LOAD(retro_set_environment);
    void (*retro_set_video_refresh)(retro_video_refresh_t); LOAD(retro_set_video_refresh);
    void (*retro_set_audio_sample_batch)(retro_audio_sample_batch_t); LOAD(retro_set_audio_sample_batch);
@@ -10720,7 +10734,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_rows() == 3u &&
              arc_libretro_test_chooser_focus() == 0u &&
-             retro_serialize_size() == 0u &&
+             retro_serialize_size() > 0u &&
              disk_control.get_num_images() == 1u &&
              disk_control.get_image_index() == 0u &&
              !disk_control.get_eject_state() &&
@@ -10732,6 +10746,11 @@ int main(int argc, char **argv)
              !arc_engine_test_cmos_image(clean_machine_cmos) &&
              !file_exists(chooser_helper) && !file_exists(chooser_cmos) &&
              !file_exists(chooser_choice));
+      { uint8_t refused[64];memset(refused,0xa7,sizeof(refused));
+        bool (*save_state)(void *,size_t)=dlsym(module,"retro_serialize");
+        bool (*load_state)(const void *,size_t)=dlsym(module,"retro_unserialize");
+        assert(save_state&&load_state&&!save_state(refused,sizeof(refused))&&!load_state(refused,sizeof(refused)));
+        for(unsigned i=0;i<sizeof(refused);++i)assert(refused[i]==0xa7); }
       retro_cheat_set(0u, true, "invented-code");
       retro_cheat_reset();
       assert(arc_libretro_test_session_state() == 2u);

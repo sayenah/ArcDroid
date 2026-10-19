@@ -3,6 +3,7 @@
 static void arc_state_raw_cache(ArcState *s,unsigned drive)
 {
    if(!arc_state_pass(s)||arc_state_error(s))return;
+   if(arc_state_measure(s,16u+sizeof(adf[0].track_data)+(sizeof(adf[0].track_data)+511u)/512u*8u))return;
    ArcIoFile *file;int sides,sectors,size,track;int64_t effective;
    arc_state_project(s,&file,&adf[drive].f,sizeof(file));
    arc_state_project(s,&sides,&adf[drive].dblside,sizeof(sides));

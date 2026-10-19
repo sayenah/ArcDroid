@@ -45,6 +45,7 @@ if(ss1_mode) {
       option_machine=machines[machine_index];option_joystick=machine_index==1u?"A3010":"Keyboard";
       phase=PHASE_LOAD;if(!retro_load_game(&game)){fprintf(stderr,"SS1 load refused class=%s machine=%s: %s\n",media_class,option_machine,last_message);abort();}phase=PHASE_RUN;
       {struct retro_system_av_info av;retro_get_system_av_info(&av);geometry_width=av.geometry.base_width;geometry_height=av.geometry.base_height;current_reported_rate=last_notified_rate=av.timing.fps;}
+      if(!output_only){memset(ss1_last_input,0,sizeof(ss1_last_input));retro_set_input_state(ss1_logged_input);}
       if(!strcmp(media_class,"folder")||!strcmp(media_class,"playlist"))assert(disk_control.get_num_images()==2u);
       if(!strcmp(media_class,"hd")||!strcmp(media_class,"hd-jfd")||!strcmp(media_class,"hd-dirty"))assert(strstr(hard_disc_policy_log,"attach=yes"));
       if(!strcmp(media_class,"adffs")) {
@@ -54,6 +55,151 @@ if(ss1_mode) {
          bool (*status)(uint64_t*)=dlsym(module,"arc_libretro_test_ss1_store_status");uint64_t values[4];assert(status&&status(values));
          printf("SS1 store-status %llu %llu %llu %llu\n",(unsigned long long)values[0],(unsigned long long)values[1],(unsigned long long)values[2],(unsigned long long)values[3]);
          retro_unload_game();continue;
+      }
+      if(!strcmp(argv[5],"--ss1-write-path")) {
+         void *(*raw_file)(unsigned)=dlsym(module,"arc_engine_test_raw_file");
+         const char *(*staged)(unsigned)=dlsym(module,"arc_libretro_test_staged_path");assert(raw_file&&staged);
+         Ss1WritePath current={.file=raw_file(0)};assert(current.file&&retro_serialize_size());
+         current.seek=dlsym(module,"arc_io_seek_file");current.write=dlsym(module,"arc_io_write_file");current.flush=dlsym(module,"arc_io_flush_file");
+         assert(current.seek&&current.write&&current.flush);uint64_t samples[15],reference[30];
+         const char *baseline=getenv("ARCDROID_SS1_IO_BASELINE");void *comparison=NULL;Ss1WritePath main_path={0};
+         bool (*close_main)(void *)=NULL;
+         if(baseline&&*baseline){
+            comparison=dlopen(baseline,RTLD_NOW|RTLD_LOCAL);assert(comparison);
+            void (*set_vfs)(struct retro_vfs_interface *)=dlsym(comparison,"arc_io_set_vfs");
+            void *(*open_main)(const char *,bool)=dlsym(comparison,"arc_io_open_file");
+            void (*set_observer)(void (*)(const char *))=dlsym(comparison,"arc_io_set_write_observer");
+            void (*(*observer)(void))(const char *)=dlsym(module,"arc_libretro_test_ss1_write_observer");
+            main_path.seek=dlsym(comparison,"arc_io_seek_file");main_path.write=dlsym(comparison,"arc_io_write_file");main_path.flush=dlsym(comparison,"arc_io_flush_file");close_main=dlsym(comparison,"arc_io_close_file");
+            assert(set_vfs&&open_main&&set_observer&&observer&&main_path.seek&&main_path.write&&main_path.flush&&close_main);
+            set_vfs(&vfs);set_observer(observer());main_path.file=open_main(staged(0),true);assert(main_path.file);
+         }
+         (void)ss1_write_batch(&current); /* First-touch and stdio warm-up. */
+         for(unsigned i=0;i<15u;++i){
+            if(comparison)reference[i*2u]=ss1_write_batch(&main_path);
+            ss1_native_read_bytes=ss1_native_write_bytes=0;samples[i]=ss1_write_batch(&current);
+            assert(!ss1_native_read_bytes&&ss1_native_write_bytes==256u*512u);
+            if(comparison)reference[i*2u+1u]=ss1_write_batch(&main_path);
+         }
+         qsort(samples,15u,sizeof(*samples),ss1_ns_order);
+         printf("SS1 no-state sector IO: machine=%s medium=%llu bytes read=0 written=512 per sector; p50=%llu ns",option_machine,(unsigned long long)digest_file(staged(0)).size,(unsigned long long)samples[7]);
+         if(comparison){
+            qsort(reference,30u,sizeof(*reference),ss1_ns_order);
+            uint64_t band=reference[26]-reference[3];
+            printf(" main-p50=%llu ns main-p10/p90=%llu/%llu ns noise=%llu ns\n",(unsigned long long)reference[15],(unsigned long long)reference[3],(unsigned long long)reference[26],(unsigned long long)band);fflush(stdout);
+            assert(samples[7]<=reference[26]+band);assert(close_main(main_path.file));assert(!dlclose(comparison));
+         }else puts(" (main time comparison not requested)");
+         assert(!ss1_context_queries);retro_unload_game();continue;
+      }
+      if(!strcmp(argv[5],"--ss1-replacement")) {
+         size_t bound=retro_serialize_size();uint8_t *buffer=malloc(bound);assert(buffer);
+         assert(retro_serialize(buffer,bound));
+         void *(*raw_file)(unsigned)=dlsym(module,"arc_engine_test_raw_file");assert(raw_file);
+         Ss1WritePath writer={0};writer.seek=dlsym(module,"arc_io_seek_file");
+         writer.write=dlsym(module,"arc_io_write_file");writer.flush=dlsym(module,"arc_io_flush_file");
+         assert(writer.seek&&writer.write&&writer.flush);
+         /* More replacements than the registry's simultaneous-store limit:
+          * inactive registrations must not exhaust or enter current states. */
+         for(unsigned cycle=0;cycle<72u;++cycle){
+            assert(disk_control.set_eject_state(true));
+            char path[4096];snprintf(path,sizeof(path),"%s/replacement-%u.adf",data_root,cycle);copy_file(argv[3],path);
+            FILE *f=fopen(path,"r+b");assert(f&&!fseek(f,100u*1024u,SEEK_SET));assert(fputc((int)cycle,f)!=EOF&&!fclose(f));
+            struct retro_game_info replacement={.path=path};assert(disk_control.replace_image_index(0,&replacement));
+            assert(disk_control.set_eject_state(false));retro_run();assert(retro_serialize_size()==bound&&retro_serialize(buffer,bound));
+            writer.file=raw_file(0);assert(writer.file);uint8_t byte=(uint8_t)(cycle^0xa5u);
+            assert(writer.seek(writer.file,101u*1024u,RETRO_VFS_SEEK_POSITION_START)>=0&&writer.write(writer.file,&byte,1u)==1u&&writer.flush(writer.file));
+            unsigned notices=total_osd_calls;assert(!retro_unserialize(buffer,bound)&&total_osd_calls>notices);
+            assert(!remove(path));
+         }
+         assert(disk_control.set_eject_state(true));char larger[4096];
+         snprintf(larger,sizeof(larger),"%s",argv[3]);char *slash=strrchr(larger,'/');assert(slash);*slash=0;
+         size_t prefix=strlen(larger);assert(snprintf(larger+prefix,sizeof(larger)-prefix,"/hd-family/valid-f.adf")<(int)(sizeof(larger)-prefix));
+         struct retro_game_info replacement={.path=larger};assert(disk_control.replace_image_index(0,&replacement));
+         assert(disk_control.set_eject_state(false));retro_run();unsigned notices=total_osd_calls;
+         assert(retro_serialize_size()==bound&&!retro_serialize(buffer,bound)&&total_osd_calls>notices);
+         notices=total_osd_calls;assert(!retro_unserialize(buffer,bound)&&total_osd_calls>notices);
+         retro_run();assert(retro_serialize_size()==bound);free(buffer);retro_unload_game();
+         puts("SS1 replacement: 72 swaps retain write frontiers; larger media runs with a stable bound and notice-refused states");continue;
+      }
+      if(!strcmp(argv[5],"--ss1-secondary")) {
+         struct retro_disk_control_ext_callback primary_disk=disk_control;
+         void (*persist)(void)=dlsym(module,"arc_libretro_test_ss1_persist_cmos");
+         bool (*write_cmos)(unsigned,uint8_t)=dlsym(module,"arc_engine_test_cmos_write");assert(persist&&write_cmos);
+         assert(write_cmos(216u,0x42));persist();uint64_t before=ss1_native_mutations;
+         /* Default secondary creation, cheat set/reset and failed-preempt
+          * re-entry all use a copied core and the same init/load lifecycle. */
+         for(unsigned route=0;route<3u;++route) {
+            char copy[4096];snprintf(copy,sizeof(copy),"%s/secondary-%u.dylib",data_root,route);copy_file(argv[1],copy);
+            void *secondary=dlopen(copy,RTLD_NOW|RTLD_LOCAL);assert(secondary&&secondary!=module);
+#define SS1_SECONDARY(name,signature) signature=dlsym(secondary,#name);assert(name)
+            SS1_SECONDARY(retro_set_environment,void (*retro_set_environment)(retro_environment_t));
+            SS1_SECONDARY(retro_init,void (*retro_init)(void));
+            SS1_SECONDARY(retro_load_game,bool (*retro_load_game)(const struct retro_game_info *));
+            SS1_SECONDARY(retro_serialize_size,size_t (*retro_serialize_size)(void));
+            SS1_SECONDARY(retro_serialize,bool (*retro_serialize)(void *,size_t));
+            SS1_SECONDARY(retro_unserialize,bool (*retro_unserialize)(const void *,size_t));
+            SS1_SECONDARY(retro_run,void (*retro_run)(void));
+            SS1_SECONDARY(retro_reset,void (*retro_reset)(void));
+            SS1_SECONDARY(retro_cheat_set,void (*retro_cheat_set)(unsigned,bool,const char *));
+            SS1_SECONDARY(retro_cheat_reset,void (*retro_cheat_reset)(void));
+            SS1_SECONDARY(retro_unload_game,void (*retro_unload_game)(void));
+            SS1_SECONDARY(retro_deinit,void (*retro_deinit)(void));
+#undef SS1_SECONDARY
+            retro_set_environment(ss1_secondary_environment);retro_init();
+            assert(!retro_load_game(&game)&&!retro_serialize_size());uint8_t poison[64];memset(poison,0xa7,sizeof(poison));
+            assert(!retro_serialize(poison,sizeof(poison))&&!retro_unserialize(poison,sizeof(poison)));
+            retro_run();retro_reset();retro_cheat_set(0,true,"authored");retro_cheat_reset();retro_unload_game();retro_deinit();
+            assert(!ss1_secondary_calls&&!ss1_context_queries&&before==ss1_native_mutations);
+            assert(!memcmp(&primary_disk,&disk_control,sizeof(primary_disk)));assert(!dlclose(secondary));assert(!remove(copy));
+         }
+         retro_run();assert(write_cmos(216u,0x52));persist();assert(ss1_native_mutations>before);
+         puts("SS1 secondary: default, cheats and failed-preempt copied modules inert before registration/load; primary persists");
+         retro_unload_game();continue;
+      }
+      if(!strcmp(argv[5],"--ss1-publish-failure")) {
+         bool (*pending)(void)=dlsym(module,"arc_state_io_pending");
+         bool (*write_cmos)(unsigned,uint8_t)=dlsym(module,"arc_engine_test_cmos_write");
+         void (*persist)(void)=dlsym(module,"arc_libretro_test_ss1_persist_cmos");assert(pending&&write_cmos&&persist);
+         retro_run();size_t bound=retro_serialize_size();uint8_t *buffer=malloc(bound);assert(buffer&&retro_serialize(buffer,bound));
+         retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_fake_input);
+         retro_run();assert(write_cmos(216u,0x64u));persist();assert(pending());
+         retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
+         /* Model a failed restore: the running machine is retained, then the
+          * next original-callback frame makes it final. Its publish fails. */
+         uint8_t bad[40]={0};assert(!retro_unserialize(bad,sizeof(bad)));
+         fault_write_substring="/state-stores/";unsigned notices=total_osd_calls;
+         retro_run();
+         if(fault_write_substring||!pending()||total_osd_calls!=notices+1u)fprintf(stderr,"publication failure: fault=%u pending=%u notices=%u last=%s\n",fault_write_substring!=NULL,pending(),total_osd_calls-notices,last_message);
+         assert(!fault_write_substring&&pending()&&total_osd_calls==notices+1u);
+         uint64_t native=ss1_native_mutations;
+         for(unsigned i=0;i<4u;++i){retro_run();assert(write_cmos(216u,(uint8_t)(0x74u+i)));persist();}
+         assert(ss1_native_mutations==native&&pending()&&total_osd_calls==notices+1u);
+         retro_unload_game();assert(ss1_native_mutations==native&&total_osd_calls==notices+1u);free(buffer);
+         puts("SS1 publication failure: one notice, later real-frame writes cannot overtake the failed queue, unload fail-closed");continue;
+      }
+      if(!strcmp(argv[5],"--ss1-preempt")) {
+         bool (*pending)(void)=dlsym(module,"arc_state_io_pending");
+         bool (*write_cmos)(unsigned,uint8_t)=dlsym(module,"arc_engine_test_cmos_write");
+         void (*persist)(void)=dlsym(module,"arc_libretro_test_ss1_persist_cmos");assert(pending&&write_cmos&&persist);
+         size_t bound=retro_serialize_size();assert(bound);uint8_t *buffer=malloc(bound);assert(buffer);
+         /* preempt_init runs a first real frame, allocates once and installs
+          * its fixed callbacks. First save fails before preempt's real run. */
+         retro_run();assert(retro_serialize(buffer,bound));
+         for(unsigned transition=0;transition<3u;++transition) {
+            retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_preempt_input);
+            unsigned notices=total_osd_calls;uint64_t native=ss1_native_mutations;
+            assert(retro_serialize_size()==bound&&!retro_serialize(buffer,bound));
+            assert(total_osd_calls>notices&&strstr(last_message,"Preemptive Frames"));
+            assert(!pending()&&ss1_native_mutations==native);
+            /* preempt_deinit restores original callbacks and re-enables
+             * run-ahead/secondary. No zero-size latch or frozen primary. */
+            retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
+            retro_run();assert(write_cmos(216u,(uint8_t)(0x60u+transition)));persist();
+            assert(!pending()&&ss1_native_mutations>native&&retro_serialize_size()==bound);
+            assert(retro_serialize(buffer,bound));
+         }
+         assert(!ss1_context_queries);free(buffer);retro_unload_game();
+         puts("SS1 preempt: refused before first real frame, repeated mode changes/failure cleanup retain eager final writes");continue;
       }
       size_t session_capacity=output_only?0u:retro_serialize_size();
       if(!output_only)assert(session_capacity);
@@ -163,10 +309,10 @@ if(ss1_mode) {
          if(produce||output_only){trace=fopen(trace_path,"wb");assert(trace);}
       }
       if(!strcmp(argv[5],"--ss1-compat")) {
-         assert(ss1_quirks_calls==1u&&(ss1_quirks&RETRO_SERIALIZATION_QUIRK_INCOMPLETE));
+         assert(ss1_quirks_calls==1u&&!(ss1_quirks&RETRO_SERIALIZATION_QUIRK_INCOMPLETE)&&!ss1_context_queries);
          assert(ss1_quirks&RETRO_SERIALIZATION_QUIRK_MUST_INITIALIZE);
          assert(retro_unserialize(saved,bytes)&&retro_serialize(again,bytes)&&!memcmp(saved,again,bytes));
-         puts("SS1 no-context fallback: run-ahead disabled by quirk, complete save/load still available");
+         puts("SS1 context-free boundary: complete save/load without secondary-creating context queries");
          retro_unload_game();free(saved);free(again);continue;
       }
       if(!strcmp(argv[5],"--ss1-boundary")) {
@@ -186,18 +332,18 @@ if(ss1_mode) {
          assert(retro_serialize(saved,bytes));
          mutations=ss1_native_mutations;
          retro_run();assert(write_cmos(216u,0x49u));persist();
-         assert(pending()&&mutations==ss1_native_mutations);
-         /* Switching away from the original callbacks proves the preceding
-          * uncertain baseline frame real and publishes it at this boundary. */
+         assert(!pending()&&mutations<ss1_native_mutations);
+         /* Every original-callback frame is final and publishes eagerly.
+          * Switching callbacks never delays or publishes a real-frame queue. */
          retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_fake_input);
          assert(!pending()&&ss1_native_mutations>mutations);
          mutations=ss1_native_mutations;retro_run();assert(write_cmos(216u,0x59u));persist();
          assert(pending()&&mutations==ss1_native_mutations);
-         retro_set_input_poll(poll);retro_set_input_state(input);
+         retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
          unsigned notices=total_osd_calls;assert(!retro_unserialize(saved,bytes));
          assert(total_osd_calls>notices&&mutations==ss1_native_mutations);
          ss1_context=RETRO_SAVESTATE_CONTEXT_NORMAL;
-         puts("SS1 boundary: uncertain effects deferred until callback proof; speculative effects remain staged; stale restore refused");
+         puts("SS1 boundary: real effects eager, speculative effects staged, stale restore refused");
          retro_unload_game();free(saved);free(again);continue;
       }
       if(!strcmp(argv[5],"--ss1-store")) {
@@ -316,7 +462,7 @@ if(ss1_mode) {
                void (*persist)(void)=dlsym(module,"arc_libretro_test_ss1_persist_cmos");assert(write_cmos&&persist);
                assert(write_cmos(216u,(uint8_t)(0x80u+i)));persist();
                assert(mutations==ss1_native_mutations);
-               retro_set_input_poll(poll);retro_set_input_state(input);
+               retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
             }
             assert(retro_unserialize(saved,bytes));
             assert(retro_serialize(again,bytes));assert(!memcmp(saved,again,bytes));
@@ -324,10 +470,7 @@ if(ss1_mode) {
             uint8_t cpu[1024]={0};assert(cpu_snapshot(cpu,sizeof(cpu))==cpu_size);
             assert(frames[i]==last_video_signature&&pcm[i]==poweron_pcm_hash&&!memcmp(cpu,cpus[i],cpu_size));
          }
-         ss1_context=RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY;
-         assert(!retro_serialize_size()&&!retro_serialize(again,bytes));
-         assert(!retro_unserialize(saved,bytes)&&strstr(last_message,"single-instance"));
-         ss1_context=RETRO_SAVESTATE_CONTEXT_NORMAL;
+         assert(!ss1_context_queries);
          puts("SS1 retro_*: 12 rewind frames and 24 speculative frames match the real-frame video/PCM/CPU trace");
       } else if(!consume&&!produce&&!output_only) {
          retro_unload_game();phase=PHASE_LOAD;assert(retro_load_game(&game));phase=PHASE_RUN;

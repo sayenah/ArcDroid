@@ -32,11 +32,12 @@ typedef struct {
    unsigned mode;
    int64_t position,native_position;
    bool needs_truncate;
+   unsigned frontier_slot;uint64_t frontier_revision;
 } StateHandle;
 typedef struct {
    struct retro_vfs_dir_handle *native;
    char path[4096],name[4096];
-   bool directory,native_finished;
+   bool directory,native_finished,name_missing;
    unsigned next;
 } StateDirectory;
 static struct retro_vfs_interface *state_io_native,state_io_proxy;
@@ -45,8 +46,10 @@ static unsigned state_io_file_count,state_io_operation_count;
 static size_t state_io_operation_bytes;
 static StateOperation *state_io_head,*state_io_tail;
 static bool state_io_speculating,state_io_failed;
-static bool state_frontier_known(const char *path);
+static void state_frontier_bind(StateHandle *handle);
+static bool state_frontier_known(StateHandle *handle);
 static int64_t state_frontier_write(StateHandle *handle,const void *data,size_t bytes);
+static void state_frontier_observe(StateHandle *handle,int64_t at,const void *data,size_t bytes,bool truncate);
 static StateFile *state_file(const char *path)
 { for(unsigned i=0;i<state_io_file_count;++i)if(!strcmp(path,state_io_files[i].path))return &state_io_files[i];return NULL; }
 static bool state_path(char destination[4096],const char *path)
@@ -96,9 +99,12 @@ static const char *state_get_path(struct retro_vfs_file_handle *file)
 { return ((StateHandle*)file)->path; }
 static struct retro_vfs_file_handle *state_open(const char *path,unsigned mode,unsigned hints)
 {
+   /* A failed ordered publication is fail-closed until session recovery.
+    * No later native mutation may overtake the retained earlier queue. */
+   if(state_io_failed&&(mode&RETRO_VFS_FILE_ACCESS_WRITE))return NULL;
    StateHandle *h=calloc(1,sizeof(*h));if(!h)return NULL;
    if(!state_path(h->path,path)){free(h);return NULL;}
-   h->mode=mode;
+   h->mode=mode;state_frontier_bind(h);
    StateFile *view=state_io_speculating?state_file(path):NULL;
    bool write=(mode&RETRO_VFS_FILE_ACCESS_WRITE)!=0;
    bool truncate=write&&!(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING);
@@ -107,12 +113,13 @@ static struct retro_vfs_file_handle *state_open(const char *path,unsigned mode,u
       if(!view||!state_record(1,path,NULL,mode,0,NULL,0)){free(h);return NULL;}
    } else if(view) {
       if(view->removed||view->directory){free(h);return NULL;}
-   } else if(write&&truncate&&state_frontier_known(path)) {
+   } else if(write&&truncate&&state_frontier_known(h)) {
       h->needs_truncate=true;
       /* Defer the single truncating target open until its intent is durable. */
    } else {
       h->native=state_io_native->open(path,mode,hints);
       if(!h->native){free(h);return NULL;}
+      if(truncate)state_frontier_observe(h,0,NULL,0,true);
    }
    return (struct retro_vfs_file_handle*)h;
 }
@@ -165,7 +172,7 @@ static int64_t state_read(struct retro_vfs_file_handle *file,void *output,uint64
 static int64_t state_write(struct retro_vfs_file_handle *file,const void *input,uint64_t bytes)
 {
    StateHandle *h=(StateHandle*)file;
-   if(!(h->mode&RETRO_VFS_FILE_ACCESS_WRITE))return -1;
+   if(state_io_failed||!(h->mode&RETRO_VFS_FILE_ACCESS_WRITE))return -1;
    if(state_io_speculating) {
       if(bytes>STATE_IO_BYTES||h->position<0||(uint64_t)h->position>STATE_IO_BYTES-bytes)return -1;
       StateFile *f=state_materialize(h->path,true,false);
@@ -179,19 +186,23 @@ static int64_t state_write(struct retro_vfs_file_handle *file,const void *input,
       if(bytes)memcpy(f->data+(size_t)h->position,input,(size_t)bytes);
       h->position+=(int64_t)bytes;return (int64_t)bytes;
    }
-   if(state_frontier_known(h->path))return state_frontier_write(h,input,(size_t)bytes);
+   if(state_frontier_known(h))return state_frontier_write(h,input,(size_t)bytes);
    if(!h->native||!state_io_native->write||!state_io_native->seek)return -1;
    if(h->native_position!=h->position&&state_io_native->seek(h->native,h->position,RETRO_VFS_SEEK_POSITION_START)<0)return -1;
-   int64_t n=state_io_native->write(h->native,input,bytes);if(n>0)h->position+=n;h->native_position=h->position;return n;
+   int64_t n=state_io_native->write(h->native,input,bytes);
+   if(n>0){state_frontier_observe(h,h->position,input,(size_t)n,false);h->position+=n;}
+   h->native_position=h->position;return n;
 }
 static int state_flush(struct retro_vfs_file_handle *file)
 {
    StateHandle *h=(StateHandle*)file;
+   if(state_io_failed)return -1;
    if(state_io_speculating)return state_record(3,h->path,NULL,h->mode,0,NULL,0)?0:-1;
    return h->native&&state_io_native->flush?state_io_native->flush(h->native):0;
 }
 static int state_remove(const char *path)
 {
+   if(state_io_failed)return -1;
    if(!state_io_speculating)return state_io_native->remove(path);
    StateFile *f=state_materialize(path,false,false);
    if(!f)return -1;
@@ -200,6 +211,7 @@ static int state_remove(const char *path)
 }
 static int state_rename(const char *path,const char *target)
 {
+   if(state_io_failed)return -1;
    if(!state_io_speculating)return state_io_native->rename(path,target);
    StateFile *source=state_materialize(path,false,false);if(!source||source->directory)return -1;
    StateFile *dest=state_materialize(target,true,true);if(!dest)return -1;
@@ -210,6 +222,7 @@ static int state_rename(const char *path,const char *target)
 }
 static int64_t state_truncate(struct retro_vfs_file_handle *file,int64_t length)
 {
+   if(state_io_failed)return -1;
    StateHandle *h=(StateHandle*)file;
    if(!state_io_speculating)return h->native&&state_io_native->truncate?state_io_native->truncate(h->native,length):-1;
    if(length<0||(uint64_t)length>STATE_IO_BYTES)return -1;
@@ -231,6 +244,7 @@ static int32_t state_stat(const char *path,int32_t *size)
 }
 static int state_mkdir(const char *path)
 {
+   if(state_io_failed)return -1;
    if(!state_io_speculating)return state_io_native->mkdir(path);
    int32_t n;int32_t flags=state_stat(path,&n);
    if(flags&RETRO_VFS_STAT_IS_DIRECTORY)return -2;
@@ -260,6 +274,10 @@ static bool state_readdir(struct retro_vfs_dir_handle *directory)
    while(!d->native_finished&&d->native) {
       if(!state_io_native->readdir(d->native)){d->native_finished=true;break;}
       const char *leaf=state_io_native->dirent_get_name(d->native);char path[4096];
+      /* A native entry with an invalid name is not EOF. Inventory callers
+       * distinguish those outcomes and must retain their failure evidence. */
+      d->name_missing=!leaf;
+      if(!leaf)return true;
       int n=snprintf(path,sizeof(path),"%s/%s",d->path,leaf?leaf:"");
       if(n<0||(size_t)n>=sizeof(path))return false;
       if(state_io_speculating&&state_file(path))continue;
@@ -274,7 +292,7 @@ static bool state_readdir(struct retro_vfs_dir_handle *directory)
    return false;
 }
 static const char *state_dir_name(struct retro_vfs_dir_handle *directory)
-{ return ((StateDirectory*)directory)->name; }
+{ StateDirectory *d=(StateDirectory*)directory;return d->name_missing?NULL:d->name; }
 static bool state_dir_is_dir(struct retro_vfs_dir_handle *directory)
 { return ((StateDirectory*)directory)->directory; }
 static int state_closedir(struct retro_vfs_dir_handle *directory)
@@ -395,6 +413,7 @@ static bool state_wire_read_path(StateIoWire *w,char path[4096])
 typedef struct {
    StateFile files[STATE_IO_FILES];unsigned count,operations;
    StateOperation *head,*tail;size_t operation_bytes;
+   size_t view_bytes,view_limit;
 } StateIoReplacement;
 static void state_io_replacement_free(StateIoReplacement *r)
 {
@@ -420,9 +439,11 @@ static StateFile *replacement_file(StateIoReplacement *r,const char *path,bool c
       if(r->count>=STATE_IO_FILES)return NULL;
       f=&r->files[r->count];if(!state_path(f->path,path))return NULL;
       if(!truncate&&!state_read_native(path,&f->data,&f->size)&&!create)return NULL;
+      if(f->size>r->view_limit-r->view_bytes){free(f->data);memset(f,0,sizeof(*f));return NULL;}
+      r->view_bytes+=f->size;
       ++r->count;
    } else if(f->removed&&!create)return NULL;
-   if(truncate||f->removed){free(f->data);f->data=NULL;f->size=0;f->removed=false;}
+   if(truncate||f->removed){r->view_bytes-=f->size;free(f->data);f->data=NULL;f->size=0;f->removed=false;}
    return f;
 }
 static bool replacement_views(StateIoReplacement *r)
@@ -436,9 +457,10 @@ static bool replacement_views(StateIoReplacement *r)
             f=replacement_file(r,op->path,true,false);if(!f||f->directory)return false;
             size_t size=op->kind==6?(size_t)op->offset:(size_t)op->offset+op->bytes;
             if(op->kind==2&&size<f->size)size=f->size;
+            if(size>f->size&&size-f->size>r->view_limit-r->view_bytes)return false;
             uint8_t *data=realloc(f->data,size?size:1u);if(!data)return false;
             if(size>f->size)memset(data+f->size,0,size-f->size);
-            f->data=data;f->size=size;
+            r->view_bytes=r->view_bytes-f->size+size;f->data=data;f->size=size;
             if(op->kind==2&&op->bytes)memcpy(data+(size_t)op->offset,op->data,op->bytes);break;
          }
          case 3:break;
@@ -446,8 +468,9 @@ static bool replacement_views(StateIoReplacement *r)
          case 5:{
             f=replacement_file(r,op->path,false,false);if(!f||f->directory)return false;
             StateFile *target=replacement_file(r,op->target,true,true);if(!target)return false;
+            if(f->size>r->view_limit-r->view_bytes)return false;
             target->data=malloc(f->size?f->size:1u);if(!target->data)return false;
-            memcpy(target->data,f->data,f->size);target->size=f->size;f->removed=true;break;
+            r->view_bytes+=f->size;memcpy(target->data,f->data,f->size);target->size=f->size;f->removed=true;break;
          }
          case 7:f=replacement_file(r,op->path,true,true);if(!f)return false;f->directory=true;break;
          default:return false;
@@ -476,6 +499,7 @@ void arc_state_io_snapshot(ArcState *s)
    if(!arc_state_loading(s)||arc_state_error(s))return;
    w=(StateIoWire){.data=(uint8_t*)payload,.size=bytes};
    StateIoReplacement *r=calloc(1,sizeof(*r));if(!r){arc_state_fail(s,"allocation");return;}
+   r->view_limit=arc_state_decoded_limit(s);
    uint64_t count=state_wire_read_u64(&w),operations=state_wire_read_u64(&w);
    if(count>STATE_IO_FILES||operations>STATE_IO_OPERATIONS)w.failed=true;
    for(uint64_t i=0;!w.failed&&i<operations;++i) {

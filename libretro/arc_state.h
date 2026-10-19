@@ -9,6 +9,7 @@ typedef void (*ArcStateVisit)(ArcState *);
 /* Registration precedes field traversal. Native pointers are encoded as
  * region identities and bounded offsets, never as process addresses. */
 ArcState *arc_state_begin(const void *input, size_t length);
+ArcState *arc_state_begin_limited(const void *input, size_t length, size_t decoded_limit);
 void arc_state_end(ArcState *state);
 /* Callback form of free(p), preserving the census allocator interception. */
 void arc_state_free(void *pointer);
@@ -20,6 +21,7 @@ const void *arc_state_view(ArcState *state,const char *name,const void *data,siz
 
 bool arc_state_loading(const ArcState *state);
 unsigned arc_state_pass(const ArcState *state);
+size_t arc_state_decoded_limit(const ArcState *state);
 bool arc_state_registering(const ArcState *state);
 void arc_state_fail(ArcState *state, const char *reason);
 const char *arc_state_error(const ArcState *state);
@@ -81,5 +83,7 @@ bool arc_state_run(ArcState *state, ArcStateVisit visit);
 bool arc_state_output(ArcState *state, void *output, size_t size);
 size_t arc_state_size(const ArcState *state);
 size_t arc_state_static_bound(ArcStateVisit visit);
+bool arc_state_measuring(const ArcState *state);
+bool arc_state_measure(ArcState *state,size_t bytes);
 bool arc_state_commit(ArcState *state);
 #endif

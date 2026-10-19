@@ -263,6 +263,9 @@ CENSUS_SERVICES = {
     "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoull",
     "clock_gettime", "sysctlbyname",
     "getauxval",  # Linux/Android hash HWCAP query; no allocation.
+    # SS-1 loaded-module identity probes: NOLOAD handles are balanced by dlclose;
+    # Windows module handles are borrowed, without incrementing loader references.
+    "dladdr", "dlopen", "dlclose", "GetModuleHandleExW", "GetModuleHandleW",
     # Existing dormant native lock module: handles/fds, never heap ownership.
     "close", "flock", "fstat", "open", "stat", "fcntl",
     # MinGW runtime and existing test-only exception locator. The locator's

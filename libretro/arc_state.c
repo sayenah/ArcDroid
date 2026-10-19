@@ -48,7 +48,7 @@ struct ArcState {
    StateAction *actions;
    StateScratch *scratch;
    StateText *texts;
-   bool loading, committed, registering;
+   bool loading, committed, registering, measuring;
 #if defined(ARCDROID_TEST_FAULTS)
    uint64_t drop_owner;bool drop_done;
 #endif
@@ -66,7 +66,7 @@ struct ArcState {
    uint32_t *region_table;size_t region_table_size;
    StateRegion **addresses;size_t address_count;
    StateRegion *object;
-   size_t output_size,heap_bytes;
+   size_t output_size,heap_bytes,decoded_limit;
 };
 static uint64_t get64(const uint8_t *p)
 { uint64_t v=0; for(unsigned i=0;i<8;++i)v|=(uint64_t)p[i]<<(8*i); return v; }
@@ -145,6 +145,7 @@ void arc_state_free(void *pointer) { free(pointer); }
 const char *arc_state_error(const ArcState *s) { return s?s->error:"allocation"; }
 bool arc_state_loading(const ArcState *s) { return s&&s->loading; }
 unsigned arc_state_pass(const ArcState *s) { return s?s->pass:0; }
+size_t arc_state_decoded_limit(const ArcState *s) { return s?s->decoded_limit:0; }
 bool arc_state_registering(const ArcState *s) { return s&&s->registering; }
 static bool grow(ArcState *s,void **p,size_t *capacity,size_t count,size_t width)
 {
@@ -281,9 +282,12 @@ static void compressed_later(ArcState *s,void *destination,const StateItem *item
 }
 
 ArcState *arc_state_begin(const void *input,size_t length)
+{ return arc_state_begin_limited(input,length,ARC_STATE_LIMIT); }
+ArcState *arc_state_begin_limited(const void *input,size_t length,size_t decoded_limit)
 {
    ArcState *s=calloc(1,sizeof(*s));if(!s)return NULL;
    s->loading=input!=NULL;s->output_size=ARC_STATE_HEADER;
+   s->decoded_limit=decoded_limit<ARC_STATE_LIMIT?decoded_limit:ARC_STATE_LIMIT;
 #if defined(ARCDROID_TEST_FAULTS)
    const char *drop=getenv("ARCDROID_SS1_DROP_OBJECT");
    if(drop)s->drop_owner=name_key(drop);
@@ -311,7 +315,7 @@ ArcState *arc_state_begin(const void *input,size_t length)
       r->compressed=(kind&UINT64_C(0x100000000))!=0;r->encoded_bytes=(size_t)bytes;r->bytes=(size_t)bytes;r->data=p+at+ARC_STATE_RECORD;
       if(r->kind<1u||r->kind>6u||(kind>>32u)>1u||(r->compressed&&((r->kind!=1u&&r->kind!=6u)||bytes<8u))) {arc_state_fail(s,"record kind");break;}
       if(r->compressed) {
-         uint64_t logical=get64(r->data);if(logical<4096u||logical>ARC_STATE_LIMIT||bytes>=logical){arc_state_fail(s,"decoded bounds");break;}
+         uint64_t logical=get64(r->data);if(logical<4096u||logical>s->decoded_limit||bytes>=logical){arc_state_fail(s,"decoded bounds");break;}
          r->bytes=(size_t)logical;
       }
       at+=ARC_STATE_RECORD+(size_t)bytes;
@@ -320,19 +324,14 @@ ArcState *arc_state_begin(const void *input,size_t length)
    size_t decoded=0;
    for(size_t i=0;!s->error&&i<s->count;++i)if(s->items[i].compressed) {
       size_t n=s->items[i].bytes;
-      if(n>ARC_STATE_LIMIT-8u||decoded>ARC_STATE_LIMIT-n-8u)arc_state_fail(s,"decoded bounds");
-      else decoded+=(n+7u)&~(size_t)7u;
+      if(n>s->decoded_limit||decoded>s->decoded_limit-n)arc_state_fail(s,"decoded bounds");
+      else decoded+=n;
    }
    /* Validate every packet before preparing the transaction. Large live
     * arrays are decoded only at commit, eliminating a full scratch copy. */
    for(size_t i=0;!s->error&&i<s->count;++i)if(s->items[i].compressed) {
       StateItem *r=&s->items[i];
       if(!decompress_words(NULL,r->bytes,r->data,r->encoded_bytes))arc_state_fail(s,"compressed record");
-   }
-   for(size_t i=0;!s->error&&i<s->count;++i)if(s->items[i].compressed&&s->items[i].kind==6u) {
-      StateItem *r=&s->items[i];r->owned=malloc(r->bytes);
-      if(!r->owned||!decompress_words(r->owned,r->bytes,r->data,r->encoded_bytes))arc_state_fail(s,"blob decode");
-      else {r->data=r->owned;r->compressed=false;}
    }
    if(!s->error) {
       size_t capacity=128u;while(capacity<s->count*2u)capacity*=2u;
@@ -407,9 +406,19 @@ static uint64_t address_key(ArcState *s,const void *p,size_t bytes)
    if(a<b||a-b>s->object->bytes||bytes>s->object->bytes-(a-b)){arc_state_fail(s,"field bounds");return 0;}
    return field_key(s->object->key,(size_t)(a-b),bytes);
 }
+bool arc_state_measuring(const ArcState *s){return s&&s->measuring;}
+bool arc_state_measure(ArcState *s,size_t bytes)
+{
+   if(!s||!s->measuring)return false;
+   if(bytes>ARC_STATE_LIMIT-ARC_STATE_RECORD||s->output_size>ARC_STATE_LIMIT-ARC_STATE_RECORD-bytes)
+      arc_state_fail(s,"static bound");
+   else s->output_size+=ARC_STATE_RECORD+bytes;
+   return true;
+}
 void arc_state_value(ArcState *s,void *p,size_t bytes)
 {
    if(!s||s->error||!s->pass)return;
+   if(arc_state_measure(s,bytes))return;
    StateItem *r=item(s,address_key(s,p,bytes),1,p,bytes);
    if(r&&s->loading) {
 #if defined(ARCDROID_TEST_FAULTS)
@@ -455,6 +464,7 @@ static bool reference_target(ArcState *s,const StateRegion *r,size_t offset,ArcS
 void arc_state_typed_reference(ArcState *s,void *slot,intptr_t bias,size_t extent,size_t alignment,ArcStateReferenceKind kind)
 {
    if(!s||s->error||!s->pass)return;
+   if(arc_state_measure(s,16u))return;
    uint8_t wire[16]={0};
    if(!s->loading) {
       void *value;memcpy(&value,slot,sizeof(value));
@@ -484,6 +494,7 @@ void arc_state_reference(ArcState *s,void *slot,intptr_t bias,size_t extent,size
 void arc_state_string(ArcState *s,const char **slot)
 {
    if(!s||s->error||!s->pass)return;
+   if(arc_state_measure(s,4096u))return;
    size_t bytes=*slot?strlen(*slot)+1u:0u;
    if(bytes>4096u){arc_state_fail(s,"string bounds");return;}
    uint64_t key=address_key(s,slot,sizeof(*slot));
@@ -525,7 +536,7 @@ void *arc_state_heap(ArcState *s,const char *name,void *slot,size_t bytes,size_t
    size_t count=old?bytes:0;
    if(s->loading) {
       uint64_t n=get64(saved->data);
-      if(n>maximum||n>ARC_STATE_LIMIT||n>ARC_STATE_LIMIT-s->heap_bytes){arc_state_fail(s,"heap bounds");return old;}
+      if(n>maximum||n>s->decoded_limit||n>s->decoded_limit-s->heap_bytes){arc_state_fail(s,"heap bounds");return old;}
       s->heap_bytes+=(size_t)n;
       count=(size_t)n;
    }
@@ -594,6 +605,15 @@ const void *arc_state_blob(ArcState *s,const char *name,const void *data,size_t 
       if(!r||r->seen||r->kind!=6||r->bytes>maximum){arc_state_fail(s,"blob bounds");return NULL;}
       r->seen=true;
    } else r=item(s,name_key(name),6,data,bytes);
+   /* A blob is decoded only after its owner has validated the declared size. */
+   if(r&&s->loading&&r->compressed) {
+      if(r->bytes>s->decoded_limit){arc_state_fail(s,"decoded bounds");return NULL;}
+      r->owned=malloc(r->bytes);
+      if(!r->owned||!decompress_words(r->owned,r->bytes,r->data,r->encoded_bytes)) {
+         arc_state_fail(s,"blob decode");return NULL;
+      }
+      r->data=r->owned;r->compressed=false;r->encoded_bytes=r->bytes;
+   }
    if(r&&loaded_bytes)*loaded_bytes=r->bytes;
    return r?r->data:NULL;
 }
@@ -625,26 +645,22 @@ bool arc_state_run(ArcState *s,ArcStateVisit visit)
    return !s->error;
 }
 size_t arc_state_size(const ArcState *s) { return s&&!s->error?s->output_size:0; }
-/* Registration-only visitors enumerate complete compiled static owners, also
- * in a pre-boot chooser. Double native bytes cover 16-byte pointer bindings;
- * all record headers and 512 bounded string/identity slots are separate. */
+/* Measure the maximum encoded fields, with schema-declared dynamic maxima;
+ * never reserve inactive structs, native pointer padding or the parser item cap. */
 size_t arc_state_static_bound(ArcStateVisit visit)
 {
    ArcState *s=arc_state_begin(NULL,0);if(!s)return 0;
-   s->registering=true;visit(s);size_t bytes=ARC_STATE_HEADER+ARC_STATE_ITEMS*ARC_STATE_RECORD+512u*4096u;
-   for(size_t i=0;i<s->region_count&&!s->error;++i) {
-      StateRegion *r=&s->regions[i];
-      if(r->key==name_key("libretro/arcdroid_libretro.c:arc_present_frame"))continue;
-      if(r->bytes>(ARC_STATE_LIMIT-bytes)/2u)arc_state_fail(s,"static bound");
-      else bytes+=r->bytes*2u;
-   }
-   if(s->error)bytes=0;arc_state_end(s);return bytes;
+   s->registering=true;visit(s);s->registering=false;s->measuring=true;s->pass=1;visit(s);
+   size_t bytes=s->error?0:s->output_size;arc_state_end(s);return bytes;
 }
 bool arc_state_output(ArcState *s,void *output,size_t size)
 {
    if(!s||s->loading||s->error||!output||size<s->output_size||size>ARC_STATE_LIMIT||(size!=s->output_size&&size-s->output_size<16u))return false;
-   uint8_t *p=output;memset(p,0,ARC_STATE_HEADER);
-   memset(p+s->output_size,0,size-s->output_size);memcpy(p,ARC_STATE_MAGIC,8);put64(p+8,3);put64(p+16,s->output_size);put64(p+24,s->count);
+   /* AC-2 covers every byte returned to the frontend, including its reserved
+    * capacity. Keep this canonical until a smaller complete bound is proven;
+    * caller allocation contents must not become state-file contents. */
+   uint8_t *p=output;memset(p,0,size);
+   memcpy(p,ARC_STATE_MAGIC,8);put64(p+8,3);put64(p+16,s->output_size);put64(p+24,s->count);
    size_t at=ARC_STATE_HEADER;
    for(size_t i=0;i<s->count;++i) {
       StateItem *r=&s->items[i];put64(p+at,r->key);put64(p+at+8,(uint64_t)r->kind|(r->compressed?UINT64_C(0x100000000):0));put64(p+at+16,r->encoded_bytes);
@@ -718,7 +734,7 @@ void arc_state_boolean_array(ArcState *s,void *value,size_t bytes)
 
 void *arc_state_scratch(ArcState *s,size_t bytes)
 {
-   if(!s||s->error||bytes>ARC_STATE_LIMIT)return NULL;
+   if(!s||s->error||bytes>s->decoded_limit)return NULL;
    StateScratch *p=malloc(sizeof(*p)+bytes);
    if(!p){arc_state_fail(s,"allocation");return NULL;}
    p->next=s->scratch;s->scratch=p;return p->data;
@@ -732,6 +748,7 @@ void arc_state_stage(ArcState *s,void *destination,const void *source,size_t byt
 void arc_state_reference_array(ArcState *s,void *slots,size_t count,intptr_t stride,size_t extent,size_t alignment,ArcStateReferenceKind kind)
 {
    if(!s||!s->pass||s->error)return;
+   if(arc_state_measure(s,count*16u))return;
    uint8_t *wire=arc_state_scratch(s,count*16u);if(!wire)return;memset(wire,0,count*16u);
    StateRegion *cached=NULL;
    if(!s->loading)for(size_t i=0;i<count;++i) {

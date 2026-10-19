@@ -48,9 +48,13 @@ policy_sites={'arc_disk_insert_entry':1,'arc_disc_commit':5,
     'arc_disc_observation':1,'arc_disc_setup':1,'arc_rpc_disc_log':1,
     'arc_disc_boundary':1,'arc_disk_replace':2,'arc_poll_inputs':4,
     'arc_disk_set_eject':1,'arc_disk_set_index':1,'arc_disk_add':1,'arc_keyboard':1,
-    'retro_reset':1,'retro_run':1}
+    'retro_reset':1,'arc_run':1}
 for name,count in policy_sites.items():
     require(len(re.findall(r'\barc_kind\s*==\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==count,f'{name}: changed session-kind policy census')
+# SS-1's public wrapper owns the reentrancy latch; all existing session policy
+# remains in arc_run. Pin this delegation rather than dropping its census.
+require(body('retro_run').strip()=='if(arc_secondary_instance)return;\n   arc_state_inside_run=true;arc_run();arc_state_inside_run=false;',
+        'retro_run: changed secondary/reentrancy wrapper')
 for name in ('arc_disc_commit','arc_disk_set_eject','arc_disk_set_index','arc_disk_replace','arc_disk_add','arc_keyboard'):
     require(len(re.findall(r'\barc_kind\s*!=\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==1,f'{name}: changed part 2 non-RPC policy census')
 poll=body('arc_poll_inputs')

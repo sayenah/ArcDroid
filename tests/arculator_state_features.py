@@ -14,6 +14,14 @@ for name in vars(a):setattr(a,name,getattr(a,name).resolve())
 a.output.mkdir(parents=True,exist_ok=True)
 for mode,media_class,machines,media in [
     ('compat','adf',('A3000',),'arcdroid-test.adf'),
+    ('write-path','adf-shadow',('A3000',),'arcdroid-test.adf'),
+    ('write-path','adf-shadow',('A3020',),'hd-family/valid-f.adf'),
+    ('replacement','adf-shadow',('A3020',),'arcdroid-test.adf'),
+    ('secondary','adf-shadow',('A3000',),'arcdroid-test.adf'),
+    ('secondary','jfd-shadow',('A3000',),'adffs/writable.jfd'),
+    ('secondary','hd',('A3020',),'hd-family/valid-f.adf'),
+    ('preempt','adf-shadow',('A3000',),'arcdroid-test.adf'),
+    ('publish-failure','adf',('A3000',),'arcdroid-test.adf'),
     ('features','adf',('A3000','A3010','A3020','A4000'),'arcdroid-test.adf'),
     ('features','jfd-shadow',('A3000',),'adffs/writable.jfd'),
     ('boundary','adf',('A3000',),'arcdroid-test.adf'),
@@ -29,5 +37,11 @@ for mode,media_class,machines,media in [
             root=Path(directory);content=a.fixtures/media
             if media_class=='adf-original':
                 content=root/'authored.adf';shutil.copyfile(a.fixtures/media,content)
+            env=dict(os.environ,ARCDROID_SS1_CLASS=media_class)
+            if mode=='secondary':
+                # Copied core modules intentionally have identical exported C
+                # globals. Keep memory/UB checks; disable only the C++ ODR-name
+                # diagnostic for this actual two-module lifecycle probe.
+                env['ASAN_OPTIONS']=env.get('ASAN_OPTIONS','')+':detect_odr_violation=0'
             print(run([a.harness,a.core,a.fixtures/'arcdroid-test.rom',content,root,
-                       '--ss1-'+mode,machine],dict(os.environ,ARCDROID_SS1_CLASS=media_class)),flush=True)
+                       '--ss1-'+mode,machine],env),flush=True)

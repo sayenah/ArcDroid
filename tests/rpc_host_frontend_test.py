@@ -1,6 +1,6 @@
 """Author-only production frontend lifecycle and shipping A/B. GPL-2.0-only."""
 from pathlib import Path
-import shutil,subprocess,sys,tempfile,struct,zipfile
+import os,shutil,subprocess,sys,tempfile,struct,zipfile
 from rpc_cmos_factory_rom import generate
 from generate_fixtures import build_extended_jfd
 from rpc_video_rom import program
@@ -43,7 +43,15 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
     outputs=[];stores=[]
     for i,library in enumerate([core,*extra]):
         save=root/(f'HOST-PRIVATE-SENTINEL-save{i}' if mode.startswith(('freeze','message-')) else f'save{i}');save.mkdir()
-        run=subprocess.run([exe,library,str(content if mode=='shipping' else plan),str(system),str(save),mode],capture_output=True,text=True,timeout=120)
+        command=[exe,library,str(content if mode=='shipping' else plan),str(system),str(save),mode]
+        if mode!='shipping':
+            copied=root/('secondary'+Path(library).suffix);shutil.copyfile(library,copied);command.append(str(copied))
+        env=dict(os.environ)
+        if mode!='shipping':
+            # Deliberate dlopen of a copied C module; duplicate exported global
+            # names are expected. Memory and undefined-behaviour checks stay on.
+            env['ASAN_OPTIONS']=env.get('ASAN_OPTIONS','')+':detect_odr_violation=0'
+        run=subprocess.run(command,capture_output=True,text=True,timeout=120,env=env)
         assert run.returncode==0,run.stdout+run.stderr
         outputs.append(run.stdout.replace(str(save),'<save>').replace(str(root),'<case>'))
         stores.append(save_snapshot(save))

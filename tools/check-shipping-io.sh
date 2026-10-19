@@ -101,6 +101,7 @@ platform/arcdroid_joystick.c
 platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
+libretro/arc_io_state_cache.inc
 libretro/arc_state.c
 libretro/arc_state_io.c
 libretro/arc_state_frontier.inc

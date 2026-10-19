@@ -2,7 +2,7 @@
   "license": "GPL-2.0-only",
   "version": 1,
   "grounding_commit": "0aa4c93eaec4",
-  "status": "SS-1 run C merged with R3d-3 host and W10: reviewed RPC-only owners, stable Arculator bound, acceptance evidence in SOL-REPORT-SS1.md",
+  "status": "SS-1 run H partial: reviewed dirty-sector caches, decoded/view budgets, native loader services and boundary authority. M2 bound/exact-work and legacy Android aliased-module lifecycle remain release blockers.",
   "cmake_source_commands": [
     "add_library ( arcdroid_sanitizer_compile INTERFACE )",
     "add_library ( arcdroid_sanitizer_link INTERFACE )",
@@ -29,7 +29,7 @@
     "target_link_libraries ( $ { target } PRIVATE m dl )",
     "target_sources ( $ { target } PRIVATE libretro / arcdroid . def )",
     "target_sources ( $ { target } PRIVATE tests / rpc_test_exports . def )",
-    "target_link_libraries ( $ { target } PRIVATE m )",
+    "target_link_libraries ( $ { target } PRIVATE m $ { CMAKE_DL_LIBS } )",
     "target_link_libraries ( hash_accel_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )",
     "target_sources ( rpc_runner PRIVATE tools / rpc_profile_json . c )",
     "target_link_libraries ( rpc_runner PRIVATE $ { CMAKE_DL_LIBS } )",
@@ -18063,9 +18063,105 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_RPC_LOCKSTEP )",
         "classification": "host-only",
         "reason": "RPC lockstep instrumentation conditional; Arculator file binding, pending view and byte ownership are unchanged."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
       {
         "kind": "preprocessor",
@@ -18096,6 +18192,12 @@
         "declaration": "# define ARC_STATE_FILE_BINDINGS 68u",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include \"arc_io_state_cache.inc\"",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "preprocessor",
@@ -18140,10 +18242,34 @@
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
       },
       {
+        "kind": "layout",
+        "declaration": "typedef struct ArcIoStateCache ArcIoStateCache ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
         "kind": "declaration",
-        "declaration": "struct ArcIoFile { struct retro_vfs_file_handle * handle ; bool writable ; bool owns_memory ; char * path ; const uint8_t * memory ; size_t memory_size ; size_t memory_at ; } ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+        "declaration": "static bool arc_io_state_cache_open ( ArcIoFile * file ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static void arc_io_state_cache_close ( ArcIoFile * file ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static void arc_io_state_cache_write ( ArcIoFile * file , int64_t at , const void * data , size_t bytes ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "struct ArcIoFile { struct retro_vfs_file_handle * handle ; bool writable ; bool owns_memory ; char * path ; const uint8_t * memory ; size_t memory_size ; size_t memory_at ; int64_t state_at ; ArcIoStateCache * state_cache ; ArcIoFile * state_next ; } ;",
+        "classification": "host-only",
+        "reason": "Native registry revision or load-time session capacity/media budget; authoritative host lifetime is never rewound."
       },
       {
         "kind": "layout",
@@ -18256,12 +18382,6 @@
       {
         "kind": "allocation:arc_io_state_file",
         "declaration": "arc_io_read_all ( file - > path , & temporary , & bytes )",
-        "classification": "derived-on-load",
-        "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
-      },
-      {
-        "kind": "allocation:arc_io_state_file",
-        "declaration": "arc_io_open_file ( arc_io_state_paths [ meta [ 1 ] ] . path , meta [ 2 ] ! = 0 )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
       },
@@ -18698,6 +18818,32 @@
         "declaration": "void arc_io_state_file ( struct ArcState * state , const char * name , ArcIoFile * file ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      }
+    ],
+    "libretro/arc_io_state_cache.inc": [
+      {
+        "kind": "declaration",
+        "declaration": "struct ArcIoStateCache { uint8_t * data ; const uint8_t * base ; size_t bytes , sectors , count , pending_count ; bool owns_data ; uint16_t indices [ ] ; } ;",
+        "classification": "derived-on-load",
+        "reason": "Intrusive list of live ArcIoFile owners; rebuild on open/restore, unlink on close. Mirrors and dirty indexes are derived from validated immutable sources and serialized medium deltas."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static ArcIoFile * arc_io_state_files ;",
+        "classification": "derived-on-load",
+        "reason": "Intrusive list of live ArcIoFile owners; rebuild on open/restore, unlink on close. Mirrors and dirty indexes are derived from validated immutable sources and serialized medium deltas."
+      },
+      {
+        "kind": "allocation:arc_io_state_cache_open",
+        "declaration": "calloc ( 1 , sizeof ( * c ) + sectors * 8u )",
+        "classification": "derived-on-load",
+        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
+      },
+      {
+        "kind": "allocation:arc_io_state_cache_open",
+        "declaration": "malloc ( bytes ? bytes : 1u )",
+        "classification": "derived-on-load",
+        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
       }
     ],
     "libretro/arc_lock.c": [
@@ -19281,9 +19427,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "struct ArcState { StateView * views ; size_t view_count , view_capacity ; StateTarget * targets ; size_t target_count , target_capacity ; StateAction * actions ; StateScratch * scratch ; StateText * texts ; bool loading , committed , registering ; uint64_t drop_owner ; bool drop_done ; unsigned pass ; const char * error ; char error_text [ 128 ] ; StateItem * items ; uint32_t * item_table ; size_t item_table_size ; size_t count , capacity ; StateRegion * regions ; size_t region_count , region_capacity ; StateWrite * writes ; uint32_t * write_table ; size_t write_table_size ; size_t write_count , write_capacity ; uint32_t * region_table ; size_t region_table_size ; StateRegion * * addresses ; size_t address_count ; StateRegion * object ; size_t output_size , heap_bytes ; } ;",
+        "declaration": "struct ArcState { StateView * views ; size_t view_count , view_capacity ; StateTarget * targets ; size_t target_count , target_capacity ; StateAction * actions ; StateScratch * scratch ; StateText * texts ; bool loading , committed , registering , measuring ; uint64_t drop_owner ; bool drop_done ; unsigned pass ; const char * error ; char error_text [ 128 ] ; StateItem * items ; uint32_t * item_table ; size_t item_table_size ; size_t count , capacity ; StateRegion * regions ; size_t region_count , region_capacity ; StateWrite * writes ; uint32_t * write_table ; size_t write_table_size ; size_t write_count , write_capacity ; uint32_t * region_table ; size_t region_table_size ; StateRegion * * addresses ; size_t address_count ; StateRegion * object ; size_t output_size , heap_bytes , decoded_limit ; } ;",
         "classification": "host-only",
-        "reason": "Reviewed run-C state-bound, capacity-trailer or aggregate publication-budget interface/layout. Runtime owners and derived counters are classified explicitly in objects/reachable_storage; declaration changes remain guard-checked."
+        "reason": "Native registry revision or load-time session capacity/media budget; authoritative host lifetime is never rewound."
       },
       {
         "kind": "allocation:compress_words",
@@ -19322,22 +19468,16 @@
         "reason": "Prepared path change, JFD ownership retirement or bounded codec workspace; commit transfers current bindings and guest bytes, rollback releases only newly prepared resources."
       },
       {
-        "kind": "allocation:arc_state_begin",
+        "kind": "allocation:arc_state_begin_limited",
         "declaration": "calloc ( 1 , sizeof ( * s ) )",
-        "classification": "derived-on-load",
-        "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
-      },
-      {
-        "kind": "allocation:arc_state_begin",
-        "declaration": "malloc ( r - > bytes )",
         "classification": "host-only",
-        "reason": "Transaction-owned decoded blob buffer, bounded and validated before traversal; freed on transaction completion."
+        "reason": "Transactional codec owns parse records, validated decoded-limit accounting and visitor-bounded deferred blob storage. All allocations retire with arc_state_end; no live guest state changes before commit."
       },
       {
-        "kind": "allocation:arc_state_begin",
+        "kind": "allocation:arc_state_begin_limited",
         "declaration": "calloc ( capacity , sizeof ( * s - > item_table ) )",
         "classification": "host-only",
-        "reason": "Reviewed SS-1 codec lookup scratch, durable origin/frontier authority, bounded restore binding or its declaration; guest payload owners and transactional heap transfer are listed separately."
+        "reason": "Transactional codec owns parse records, validated decoded-limit accounting and visitor-bounded deferred blob storage. All allocations retire with arc_state_end; no live guest state changes before commit."
       },
       {
         "kind": "allocation:region_table_prepare",
@@ -19368,6 +19508,12 @@
         "declaration": "realloc ( state_decode_arena , w - > bytes )",
         "classification": "derived-on-load",
         "reason": "Prepared path change, JFD ownership retirement or bounded codec workspace; commit transfers current bindings and guest bytes, rollback releases only newly prepared resources."
+      },
+      {
+        "kind": "allocation:arc_state_blob",
+        "declaration": "malloc ( r - > bytes )",
+        "classification": "host-only",
+        "reason": "Transactional codec owns parse records, validated decoded-limit accounting and visitor-bounded deferred blob storage. All allocations retire with arc_state_end; no live guest state changes before commit."
       },
       {
         "kind": "allocation:arc_state_action",
@@ -19469,6 +19615,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "ArcState * arc_state_begin_limited ( const void * input , size_t length , size_t decoded_limit ) ;",
+        "classification": "host-only",
+        "reason": "Per-session bounded parser constructor interface; no retained storage in this declaration."
+      },
+      {
+        "kind": "declaration",
         "declaration": "void arc_state_end ( ArcState * state ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -19520,6 +19672,12 @@
         "declaration": "unsigned arc_state_pass ( const ArcState * state ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "size_t arc_state_decoded_limit ( const ArcState * state ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "declaration",
@@ -19685,6 +19843,18 @@
       },
       {
         "kind": "declaration",
+        "declaration": "bool arc_state_measuring ( const ArcState * state ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_state_measure ( ArcState * state , size_t bytes ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
         "declaration": "bool arc_state_commit ( ArcState * state ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -19711,6 +19881,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if defined ( __BYTE_ORDER__ ) & & __BYTE_ORDER__ = = __ORDER_BIG_ENDIAN__",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Bounded codec transaction/index/decompression scratch or current durable-publication authority; these native structures are reconstructed and never copied into a blob."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Bounded codec transaction/index/decompression scratch or current durable-publication authority; these native structures are reconstructed and never copied into a blob."
@@ -19723,9 +19905,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { char path [ 4096 ] , stem [ 4096 ] , identity [ 41 ] ; uint64_t generation ; ArcDigest origin ; unsigned active ; bool failed ; } StateFrontier ;",
+        "declaration": "typedef struct { char path [ 4096 ] , stem [ 4096 ] , identity [ 41 ] ; uint64_t generation ; ArcDigest origin ; unsigned active ; bool failed , lazy , tracking_failed ; uint8_t * untracked ; uint16_t * untracked_index ; size_t untracked_bytes , untracked_count ; uint64_t fingerprint ; } StateFrontier ;",
         "classification": "host-only",
-        "reason": "Reviewed SS-1 codec lookup scratch, durable origin/frontier authority, bounded restore binding or its declaration; guest payload owners and transactional heap transfer are listed separately."
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "declaration",
@@ -19740,10 +19922,22 @@
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
       },
       {
+        "kind": "declaration",
+        "declaration": "static uint64_t state_frontier_revision ;",
+        "classification": "host-only",
+        "reason": "Native registry revision or load-time session capacity/media budget; authoritative host lifetime is never rewound."
+      },
+      {
         "kind": "allocation:arc_state_io_store",
         "declaration": "calloc ( STATE_FRONTIER_HEADER + bytes , 1 )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
+      },
+      {
+        "kind": "allocation:arc_state_io_store_lazy",
+        "declaration": "calloc ( sectors ? sectors : 1u , 3u )",
+        "classification": "derived-on-load",
+        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
       },
       {
         "kind": "allocation:state_frontier_write",
@@ -19845,15 +20039,15 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { struct retro_vfs_file_handle * native ; char path [ 4096 ] ; unsigned mode ; int64_t position , native_position ; bool needs_truncate ; } StateHandle ;",
+        "declaration": "typedef struct { struct retro_vfs_file_handle * native ; char path [ 4096 ] ; unsigned mode ; int64_t position , native_position ; bool needs_truncate ; unsigned frontier_slot ; uint64_t frontier_revision ; } StateHandle ;",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { struct retro_vfs_dir_handle * native ; char path [ 4096 ] , name [ 4096 ] ; bool directory , native_finished ; unsigned next ; } StateDirectory ;",
+        "declaration": "typedef struct { struct retro_vfs_dir_handle * native ; char path [ 4096 ] , name [ 4096 ] ; bool directory , native_finished , name_missing ; unsigned next ; } StateDirectory ;",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "Transient native directory iteration metadata; preserve a native invalid-name entry through the speculative VFS instead of converting it to EOF. Close releases the owner; no emulated or persisted state."
       },
       {
         "kind": "declaration",
@@ -19893,15 +20087,27 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static bool state_frontier_known ( const char * path ) ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+        "declaration": "static void state_frontier_bind ( StateHandle * handle ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static bool state_frontier_known ( StateHandle * handle ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "declaration",
         "declaration": "static int64_t state_frontier_write ( StateHandle * handle , const void * data , size_t bytes ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static void state_frontier_observe ( StateHandle * handle , int64_t at , const void * data , size_t bytes , bool truncate ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "allocation:state_record",
@@ -19971,9 +20177,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { StateFile files [ STATE_IO_FILES ] ; unsigned count , operations ; StateOperation * head , * tail ; size_t operation_bytes ; } StateIoReplacement ;",
+        "declaration": "typedef struct { StateFile files [ STATE_IO_FILES ] ; unsigned count , operations ; StateOperation * head , * tail ; size_t operation_bytes ; size_t view_bytes , view_limit ; } StateIoReplacement ;",
         "classification": "host-only",
-        "reason": "Reviewed run-C state-bound, capacity-trailer or aggregate publication-budget interface/layout. Runtime owners and derived counters are classified explicitly in objects/reachable_storage; declaration changes remain guard-checked."
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
       },
       {
         "kind": "allocation:replacement_views",
@@ -20099,6 +20305,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "bool arc_state_io_store_lazy ( const char * path , const char * identity ) ;",
+        "classification": "host-only",
+        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+      },
+      {
+        "kind": "declaration",
         "declaration": "void arc_state_io_frontiers ( ArcState * state ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -20161,6 +20373,24 @@
       }
     ],
     "libretro/arcdroid_libretro.c": [
+      {
+        "kind": "preprocessor",
+        "declaration": "# ifndef _GNU_SOURCE",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define _GNU_SOURCE 1",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
       {
         "kind": "preprocessor",
         "declaration": "# include \"libretro.h\"",
@@ -20356,6 +20586,42 @@
       {
         "kind": "preprocessor",
         "declaration": "# include < string . h >",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( _WIN32 )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define WIN32_LEAN_AND_MEAN",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < windows . h >",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < dlfcn . h >",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
@@ -20614,6 +20880,18 @@
       {
         "kind": "preprocessor",
         "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
@@ -20913,6 +21191,24 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if defined ( _WIN32 )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_PLANS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -21022,6 +21318,18 @@
       {
         "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if defined ( ARCDROID_SAVE_STATES )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
@@ -22389,15 +22697,21 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static size_t arc_state_capacity ;",
+        "declaration": "static size_t arc_state_capacity , arc_state_media_budget ;",
         "classification": "host-only",
-        "reason": "R-SS4b session-stable bound computed during load from compiled static owners, machine RAM, display and admitted media/publication limits; retained through reset and never imported from a snapshot."
+        "reason": "Native registry revision or load-time session capacity/media budget; authoritative host lifetime is never rewound."
       },
       {
         "kind": "declaration",
-        "declaration": "static bool arc_state_context_supported ;",
+        "declaration": "static bool arc_secondary_instance ;",
         "classification": "host-only",
-        "reason": "Reviewed SS-1 transaction error storage, lookup index, frontier origin or current frontend capability/boundary declaration; guest heap owners and serialized payloads are separately listed."
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static bool arc_state_publication_noticed ;",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
       },
       {
         "kind": "declaration",
@@ -22419,15 +22733,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static retro_input_state_t arc_state_real_input ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
-      },
-      {
-        "kind": "declaration",
-        "declaration": "static bool arc_state_boundary_armed , arc_state_restore_seen , arc_state_uncertain_frame , arc_state_speculative_frame_seen ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+        "declaration": "static bool arc_state_boundary_armed ;",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
       },
       {
         "kind": "declaration",
@@ -22809,12 +23117,6 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static void arc_state_boundary_callback ( void ) ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
-      },
-      {
-        "kind": "declaration",
         "declaration": "static void arc_state_boundary_frame ( void ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -22827,6 +23129,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "static bool arc_state_boundary_finish ( void ) ;",
+        "classification": "host-only",
+        "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
+      },
+      {
+        "kind": "declaration",
         "declaration": "static size_t arc_snapshot_session_bound ( const ArcMachineDescriptor * machine ) ;",
         "classification": "host-only",
         "reason": "Reviewed run-C state-bound, capacity-trailer or aggregate publication-budget interface/layout. Runtime owners and derived counters are classified explicitly in objects/reachable_storage; declaration changes remain guard-checked."
@@ -22836,12 +23144,6 @@
         "declaration": "static void arc_snapshot_static_visit ( ArcState * s ) ;",
         "classification": "host-only",
         "reason": "Reviewed run-C state-bound, capacity-trailer or aggregate publication-budget interface/layout. Runtime owners and derived counters are classified explicitly in objects/reachable_storage; declaration changes remain guard-checked."
-      },
-      {
-        "kind": "declaration",
-        "declaration": "static enum retro_savestate_context arc_state_context ( void ) ;",
-        "classification": "host-only",
-        "reason": "Reviewed SS-1 transaction error storage, lookup index, frontier origin or current frontend capability/boundary declaration; guest heap owners and serialized payloads are separately listed."
       },
       {
         "kind": "allocation:arc_seed_cmos",
@@ -23214,6 +23516,24 @@
         "declaration": "static const char * directions [ ] = { \"RiscPC Up\" , \"RiscPC Down\" , \"RiscPC Left\" , \"RiscPC Right\" } ;",
         "classification": "host-only",
         "reason": "Reviewed R3d-3 RPC-only route, host ownership and compiled frontend labels; individual new static owners are classified in objects. Arculator frame state continues through the existing visitors."
+      },
+      {
+        "kind": "allocation:arc_is_secondary",
+        "declaration": "GetModuleHandleExW ( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT , ( LPCWSTR ) ( uintptr_t ) & arc_is_secondary , & own )",
+        "classification": "derived-on-load",
+        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
+      },
+      {
+        "kind": "allocation:arc_is_secondary",
+        "declaration": "dlopen ( identity . dli_fname , RTLD_LAZY | RTLD_NOLOAD )",
+        "classification": "derived-on-load",
+        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
+      },
+      {
+        "kind": "allocation:arc_is_secondary",
+        "declaration": "dlopen ( primary_path , RTLD_LAZY | RTLD_NOLOAD )",
+        "classification": "derived-on-load",
+        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
       },
       {
         "kind": "local:retro_init",
@@ -33958,6 +34278,13 @@
       "reason": "Immutable source bytes, identities and current path bindings cached by logical media ID. Validate base SHA-1 on load; raw medium bytes are reconstructed from base plus serialized dirty sectors."
     },
     {
+      "source": "libretro/arc_io_state_cache.inc",
+      "symbol": "arc_io_state_files",
+      "type": "ArcIoFile *",
+      "classification": "derived-on-load",
+      "reason": "Intrusive list of live ArcIoFile owners; rebuild on open/restore, unlink on close. Mirrors and dirty indexes are derived from validated immutable sources and serialized medium deltas."
+    },
+    {
       "source": "libretro/arc_lock.c",
       "symbol": "native_backend",
       "type": "const ArcLockBackend",
@@ -34089,6 +34416,13 @@
       "type": "unsigned int",
       "classification": "host-only",
       "reason": "Current host transaction, decode scratch, callback-boundary or durable committed-frontier authority. Guest values are separate explicit records; never rewind host publication authority."
+    },
+    {
+      "source": "libretro/arc_state_frontier.inc",
+      "symbol": "state_frontier_revision",
+      "type": "uint64_t",
+      "classification": "host-only",
+      "reason": "Invalidates native open-handle registry slot caches after admission or eviction; process-local native authority, never rewound."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -35184,10 +35518,24 @@
     },
     {
       "source": "libretro/arcdroid_libretro.c",
-      "symbol": "arc_state_context_supported",
+      "symbol": "arc_state_media_budget",
+      "type": "size_t",
+      "classification": "host-only",
+      "reason": "Actual-media payload budget latched at content admission alongside capacity; larger replacement media keeps running but refuses state operations, never installed from a blob."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_secondary_instance",
       "type": "bool",
       "classification": "host-only",
-      "reason": "Current frontend save-state-context capability governs the run-ahead fallback quirk; never import frontend capability authority from a state."
+      "reason": "Host module identity determined before any frontend registration; copied modules cannot initialize, load, run, persist or register. Never serialized or rewound."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_state_publication_noticed",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "Host publication-error notice deduplication, reset with the session; failure authority remains outside guest state."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -35212,35 +35560,7 @@
     },
     {
       "source": "libretro/arcdroid_libretro.c",
-      "symbol": "arc_state_real_input",
-      "type": "retro_input_state_t",
-      "classification": "host-only",
-      "reason": "Current host transaction, decode scratch, callback-boundary or durable committed-frontier authority. Guest values are separate explicit records; never rewind host publication authority."
-    },
-    {
-      "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_state_boundary_armed",
-      "type": "bool",
-      "classification": "host-only",
-      "reason": "Current host transaction, decode scratch, callback-boundary or durable committed-frontier authority. Guest values are separate explicit records; never rewind host publication authority."
-    },
-    {
-      "source": "libretro/arcdroid_libretro.c",
-      "symbol": "arc_state_restore_seen",
-      "type": "bool",
-      "classification": "host-only",
-      "reason": "Current host transaction, decode scratch, callback-boundary or durable committed-frontier authority. Guest values are separate explicit records; never rewind host publication authority."
-    },
-    {
-      "source": "libretro/arcdroid_libretro.c",
-      "symbol": "arc_state_uncertain_frame",
-      "type": "bool",
-      "classification": "host-only",
-      "reason": "Current host transaction, decode scratch, callback-boundary or durable committed-frontier authority. Guest values are separate explicit records; never rewind host publication authority."
-    },
-    {
-      "source": "libretro/arcdroid_libretro.c",
-      "symbol": "arc_state_speculative_frame_seen",
       "type": "bool",
       "classification": "host-only",
       "reason": "Current host transaction, decode scratch, callback-boundary or durable committed-frontier authority. Guest values are separate explicit records; never rewind host publication authority."
@@ -36764,6 +37084,46 @@
       "extent": "silence_capacity stereo frames",
       "classification": "host-only",
       "reason": "Zero-only frontend PCM scratch allocated for the RPC cadence, replaced on growth and freed with the host. No Arculator emulation state or retained guest samples."
+    },
+    {
+      "source": "libretro/arc_io_state_cache.inc",
+      "path": "ArcIoFile.state_cache -> ArcIoStateCache.data/base/indices",
+      "type": "raw sector capture cache",
+      "extent": "validated raw extent <= 16 MiB; four uint16 indexes per sector",
+      "classification": "derived-on-load",
+      "reason": "Base is borrowed immutable authority; native mirror or borrowed restored view plus dirty/changed indexes derive from source and saved medium bytes. Successful writes mark every open alias; capture refreshes only marked sectors. Close frees owned mirror/index."
+    },
+    {
+      "source": "libretro/arc_io.c",
+      "path": "ArcIoFile.state_next/state_at",
+      "type": "live list and current file cursor",
+      "extent": "one per open ArcIoFile",
+      "classification": "derived-on-load",
+      "reason": "List rebuilt during open/close; cursor mirrors native or restored logical position. Neither is an address supplied by a state."
+    },
+    {
+      "source": "libretro/arc_state_frontier.inc",
+      "path": "StateFrontier.untracked/untracked_index/fingerprint",
+      "type": "pre-snapshot native authority cache",
+      "extent": "validated raw extent <= 16 MiB and 3 bytes per sector",
+      "classification": "host-only",
+      "reason": "Admission reads native committed bytes once; writes mark sectors with no added IO. First-ever state reads only changed native sectors and publishes a durable 168-byte checkpoint. First activation, eviction or forget frees the mirror/index. Prior state history retains eager durable frontier protocol."
+    },
+    {
+      "source": "libretro/arc_state_io.c",
+      "path": "StateHandle.frontier_slot/frontier_revision",
+      "type": "native authority lookup cache",
+      "extent": "one per VFS handle",
+      "classification": "host-only",
+      "reason": "Registry revision invalidates cached slots on registration/eviction, making no-state writes independent of historical registrations. No guest or serialized authority."
+    },
+    {
+      "source": "libretro/arc_state_io.c",
+      "path": "StateIoReplacement.view_bytes/view_limit",
+      "type": "derived namespace allocation budget",
+      "extent": "at most admitted session decoded capacity",
+      "classification": "derived-on-load",
+      "reason": "Track owned file-view bytes from native bases and validated ordered operations; check aggregate growth and rename-copy charges before realloc/malloc. view_limit is current host admission authority, never read from a blob. Rollback frees all prepared views."
     }
   ],
   "allocation_review": [
@@ -37064,13 +37424,6 @@
     {
       "source": "libretro/arc_io.c",
       "owner": "arc_io_state_file",
-      "call": "arc_io_open_file ( arc_io_state_paths [ meta [ 1 ] ] . path , meta [ 2 ] ! = 0 )",
-      "classification": "derived-on-load",
-      "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
-    },
-    {
-      "source": "libretro/arc_io.c",
-      "owner": "arc_io_state_file",
       "call": "malloc ( bytes ? bytes : 1u )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
@@ -37081,6 +37434,20 @@
       "call": "malloc ( sizeof ( * change ) )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
+    },
+    {
+      "source": "libretro/arc_io_state_cache.inc",
+      "owner": "arc_io_state_cache_open",
+      "call": "calloc ( 1 , sizeof ( * c ) + sectors * 8u )",
+      "classification": "derived-on-load",
+      "reason": "Live ArcIoFile owns the admission mirror (or borrows its restored memory) plus four uint16 sector-index arrays, at most 16 MiB / 512 sectors. Open failure and close free owned data/index. Writes only mark sectors; capture refreshes changed sectors."
+    },
+    {
+      "source": "libretro/arc_io_state_cache.inc",
+      "owner": "arc_io_state_cache_open",
+      "call": "malloc ( bytes ? bytes : 1u )",
+      "classification": "derived-on-load",
+      "reason": "Live ArcIoFile owns the admission mirror (or borrows its restored memory) plus four uint16 sector-index arrays, at most 16 MiB / 512 sectors. Open failure and close free owned data/index. Writes only mark sectors; capture refreshes changed sectors."
     },
     {
       "source": "libretro/arc_state.c",
@@ -37119,24 +37486,17 @@
     },
     {
       "source": "libretro/arc_state.c",
-      "owner": "arc_state_begin",
+      "owner": "arc_state_begin_limited",
       "call": "calloc ( 1 , sizeof ( * s ) )",
-      "classification": "derived-on-load",
-      "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
-    },
-    {
-      "source": "libretro/arc_state.c",
-      "owner": "arc_state_begin",
-      "call": "malloc ( r - > bytes )",
       "classification": "host-only",
-      "reason": "Transaction-owned decoded blob buffer, bounded and validated before traversal; freed on transaction completion."
+      "reason": "One transaction and bounded parse index, released by arc_state_end."
     },
     {
       "source": "libretro/arc_state.c",
-      "owner": "arc_state_begin",
+      "owner": "arc_state_begin_limited",
       "call": "calloc ( capacity , sizeof ( * s - > item_table ) )",
       "classification": "host-only",
-      "reason": "Bounded per-load field-index scratch is freed by arc_state_end; no retained guest allocation or publication authority."
+      "reason": "One transaction and bounded parse index, released by arc_state_end."
     },
     {
       "source": "libretro/arc_state.c",
@@ -37175,6 +37535,13 @@
     },
     {
       "source": "libretro/arc_state.c",
+      "owner": "arc_state_blob",
+      "call": "malloc ( r - > bytes )",
+      "classification": "host-only",
+      "reason": "Blob storage allocated only after the owning visitor validates its extent against both the session decode limit and owner maximum; released with its StateItem at arc_state_end."
+    },
+    {
+      "source": "libretro/arc_state.c",
       "owner": "arc_state_action",
       "call": "malloc ( sizeof ( * a ) )",
       "classification": "derived-on-load",
@@ -37207,6 +37574,13 @@
       "call": "calloc ( STATE_FRONTIER_HEADER + bytes , 1 )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
+    },
+    {
+      "source": "libretro/arc_state_frontier.inc",
+      "owner": "arc_state_io_store_lazy",
+      "call": "calloc ( sectors ? sectors : 1u , 3u )",
+      "classification": "host-only",
+      "reason": "Native StateFrontier owns two-byte sector IDs plus one-byte flags, bounded by a validated 16 MiB raw extent. First checkpoint, registry eviction and forget free the allocation. No per-write allocation."
     },
     {
       "source": "libretro/arc_state_frontier.inc",
@@ -37550,6 +37924,27 @@
       "call": "realloc ( arc_osk_surface , needed * sizeof ( * grown ) )",
       "classification": "derived-on-load",
       "reason": "Allocation belongs to the retained ownership graph in reachable_storage (or transfers into it); preserve guest bytes separately and recreate native addresses."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "owner": "arc_is_secondary",
+      "call": "GetModuleHandleExW ( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT , ( LPCWSTR ) ( uintptr_t ) & arc_is_secondary , & own )",
+      "classification": "host-only",
+      "reason": "Borrowed Windows module handle (UNCHANGED_REFCOUNT), or two RTLD_NOLOAD POSIX module references balanced by dlclose. Compare current primary and own private-function module before frontend registrations; no loading or guest-owned state."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "owner": "arc_is_secondary",
+      "call": "dlopen ( identity . dli_fname , RTLD_LAZY | RTLD_NOLOAD )",
+      "classification": "host-only",
+      "reason": "Borrowed Windows module handle (UNCHANGED_REFCOUNT), or two RTLD_NOLOAD POSIX module references balanced by dlclose. Compare current primary and own private-function module before frontend registrations; no loading or guest-owned state."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "owner": "arc_is_secondary",
+      "call": "dlopen ( primary_path , RTLD_LAZY | RTLD_NOLOAD )",
+      "classification": "host-only",
+      "reason": "Borrowed Windows module handle (UNCHANGED_REFCOUNT), or two RTLD_NOLOAD POSIX module references balanced by dlclose. Compare current primary and own private-function module before frontend registrations; no loading or guest-owned state."
     },
     {
       "source": "libretro/arcdroid_libretro.c",

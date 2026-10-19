@@ -522,4 +522,8 @@ void arc_state_visit_engine_arculator_src_disc_adf_extra(ArcState *s) {
 /* ArcDroid modification (2026-10-18): authored in-flight cache delta fixture. */
 void arc_engine_test_seed_raw_cache(void)
 { if(adf[0].f)adf[0].track_data[0][511]^=0x5au; }
+/* ArcDroid modification (2026-10-18): borrowed handle for authored sector-cost probes. */
+void *arc_engine_test_raw_file(unsigned drive)
+{ return drive<4u?adf[drive].f:NULL; }
+
 #endif
