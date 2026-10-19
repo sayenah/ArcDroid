@@ -178,7 +178,11 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/.ccache
+      # Both checkout's Git and MSYS2 Git must preserve the committed bytes.
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
     defaults:
       run:
         shell: msys2 {0}
@@ -353,6 +357,10 @@ jobs:
     if: github.event_name != 'push'
     needs: windows
     runs-on: windows-latest
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Compiler-level adversaries missed by a raw-source call census. GPL-2.0-only."""
-import importlib.util,json,shlex,subprocess,sys,tempfile
+import importlib.util,json,subprocess,sys,tempfile
 from pathlib import Path
 root=Path(__file__).resolve().parent.parent
 spec=importlib.util.spec_from_file_location('lock_guard',root/'tools/check-rpc-lock-object.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
 build=Path(sys.argv[1]);platform=sys.argv[2];nm=sys.argv[3]
 entries=json.loads((build/'compile_commands.json').read_text())
 entry=next(e for e in entries if e['file'].replace('\\','/').endswith('/libretro/arc_lock.c'))
-args=entry.get('arguments') or shlex.split(entry['command']);source=Path(entry['file']).read_text()
+args=guard.compile_arguments(entry,build);source=Path(entry['file']).read_text()
 # Each replacement is injected through a header; real preprocessing determines calls.
 variants={
  'header-data-io':'#define GetLastError() (WriteFile(0,0,0,0,0),0)\n' if platform=='windows' else '#define close(x) (write(x,"x",1),0)\n',
@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='rpc-lock-object-') as temporary:
         if label=='control':assert compiled.returncode==0
         if compiled.returncode:continue # A compiler rejection is also fail-closed.
         (work/'compile_commands.json').write_text(json.dumps([{'directory':entry['directory'],'file':str(mutant),'arguments':changed,'output':str(obj)}]))
-        try:guard.check(work,platform,nm)
+        try:guard.check(work,platform,nm,toolchain=build)
         except (ValueError,subprocess.CalledProcessError):
             if label=='control':raise
         else:

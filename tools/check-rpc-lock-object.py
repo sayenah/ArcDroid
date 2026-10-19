@@ -4,11 +4,46 @@ import argparse
 from collections import Counter
 import importlib.util
 import json
+import ntpath
+import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import ast
+import sys
+sys.dont_write_bytecode=True
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tests'))
+from rpc_ninja_commands import split_command
+
+def build_tools(build):
+    """Use this configuration's tools, independent of the Python process PATH."""
+    build=Path(build)
+    cache=dict(re.findall(r'^([^/#\n:]+):[^=\n]+=(.*)$',
+        (build/'CMakeCache.txt').read_text(),re.M))
+    version='.'.join(cache['CMAKE_CACHE_'+part+'_VERSION'] for part in ('MAJOR','MINOR','PATCH'))
+    record=(build/'CMakeFiles'/version/'CMakeCCompiler.cmake').read_text()
+    compiler=re.search(r'^set\(CMAKE_C_COMPILER "([^"]+)"\)',record,re.M)
+    if not compiler:raise ValueError('CMake did not record its C compiler')
+    return compiler[1],cache
+
+def compile_arguments(entry,build,windows=None):
+    windows=os.name=='nt' if windows is None else windows
+    compiler,cache=build_tools(build)
+    paths=ntpath if windows else os.path
+    if not paths.isabs(compiler):raise ValueError('CMake compiler must be an absolute path')
+    def name(path):
+        value=paths.normcase(paths.basename(path))
+        return value.removesuffix('.exe') if windows else value
+    args=entry.get('arguments') or split_command(entry['command'],windows)
+    # Compilation databases normally omit launchers. A recorded launcher may
+    # precede the compiler; preprocessing does not need its cache process.
+    at=0;launcher=cache.get('CMAKE_C_COMPILER_LAUNCHER','').split(';')
+    if launcher[0] and name(args[0])==name(launcher[0]):
+        if args[1:len(launcher)]!=launcher[1:]:raise ValueError('CMake launcher arguments differ')
+        at=len(launcher)
+    if at>=len(args) or name(args[at])!=name(compiler):
+        raise ValueError('compile command does not name the recorded CMake compiler')
+    return [compiler,*args[at+1:]]
 
 def flag_value(expression):
     expression=re.sub(r'(?<=[0-9a-fA-F])[uUlL]+\b','',expression)
@@ -39,12 +74,14 @@ def expanded_calls(body):
         calls[name]+=1
     return calls
 
-def check(build,platform,nm):
+def check(build,platform,nm=None,toolchain=None):
+    toolchain=build if toolchain is None else toolchain
+    if nm is None:nm=build_tools(toolchain)[1]['CMAKE_NM']
     commands=json.loads((Path(build)/'compile_commands.json').read_text())
     seen=0
     for entry in commands:
         if not entry['file'].replace('\\','/').endswith('/libretro/arc_lock.c'):continue
-        args=entry.get('arguments') or shlex.split(entry['command'])
+        args=compile_arguments(entry,toolchain)
         output=entry.get('output') or args[args.index('-o')+1]
         obj=Path(entry['directory'])/output
         if not obj.exists():continue
@@ -143,4 +180,4 @@ def check(build,platform,nm):
     print(f'RPC lock: {seen} real preprocessed bodies and {platform} objects verified')
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--build',required=True);p.add_argument('--platform',choices=['apple','ofd','windows'],required=True);p.add_argument('--nm',default='nm');a=p.parse_args();check(a.build,a.platform,a.nm)
+    p=argparse.ArgumentParser();p.add_argument('--build',required=True);p.add_argument('--platform',choices=['apple','ofd','windows'],required=True);p.add_argument('--nm');a=p.parse_args();check(a.build,a.platform,a.nm)
