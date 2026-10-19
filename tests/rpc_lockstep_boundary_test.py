@@ -24,7 +24,7 @@ def main():
             for mode,words in cases:
                 data=struct.pack('<'+'I'*len(words),*words);path.write_bytes(data+bytes(2097152-len(data)))
                 for observer in range(4):
-                    r=subprocess.run([harness,core,str(path),str(model),str(RATES[model]),mode,str(observer)],capture_output=True,text=True,timeout=90)
+                    r=subprocess.run([harness,core,str(path),str(model),str(RATES[model]),mode,str(observer)],capture_output=True,text=True,timeout=90, encoding='utf-8')
                     if r.returncode:raise RuntimeError((model,mode,observer,r.returncode,r.stdout,r.stderr))
                     print(model,'observer='+str(observer),r.stdout.strip(),flush=True)
 

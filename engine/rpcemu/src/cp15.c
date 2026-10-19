@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): permission-tagged bounded TLB,
  * complete reset, physical descriptor reads and in-object instruction pointers. */
 /* System coprocessor + MMU emulation*/
@@ -35,6 +37,7 @@
 #include "rpc_observer.h"
 /* ArcDroid modification (2026-10-14, profiling-6b-p0i): scoped fetch sampling. */
 #include "rpc_profile.h"
+#include "rpc_lockstep.h"
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): retain descriptor B/C and connect
  * permission-checked fetch, cache maintenance and SA clock-switch timing. */
@@ -162,6 +165,9 @@ static void cp15_tlb_flush_all(void)
 void
 cp15_write(uint32_t opcode, uint32_t val)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(6,0));
+#endif
     ARC_RPC_PROFILE(side_exit());
 	const uint32_t crn = RN;
 	const uint32_t crm = RM;
@@ -299,6 +305,9 @@ cp15_write(uint32_t opcode, uint32_t val)
 uint32_t
 cp15_read(uint32_t opcode)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(5,0));
+#endif
     ARC_RPC_PROFILE(side_exit());
 	const uint32_t crn = RN;
 
@@ -402,13 +411,25 @@ static inline ArcRpcTlbEntry *checked_translation(uint32_t addr, int rw, int pre
 #endif
     uint32_t domain = 0, fault_code;
     if (!entry->valid || entry->tag != (addr >> 10)) {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(agent(1));
+#endif
         uint32_t fld = mem_phys_read32(cp15.translation_table | ((addr >> 18) & 0x3ffcu));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(agent(0));
+#endif
         domain = (fld >> 5) & 15;
         uint32_t physical, ap, attributes = fld & 12;
         int page = (fld & 3) == 1;
         tlbs++;
         if (page) {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(agent(1));
+#endif
             uint32_t sld = mem_phys_read32((fld & 0xfffffc00u) | ((addr >> 10) & 0x3fcu));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        ARC_RPC_LOCKSTEP(agent(0));
+#endif
             unsigned shift;
             attributes = sld & 12;
             if ((sld & 3) == 1) {
@@ -555,4 +576,8 @@ size_t arc_rpc_inspector_snapshot(void *out,size_t capacity)
     memcpy(p,&arc_rpc_attributes,sizeof(arc_rpc_attributes));p+=sizeof(arc_rpc_attributes);
     memcpy(p,&tlbs,sizeof(tlbs));p+=sizeof(tlbs);memcpy(p,&flushes,sizeof(flushes));return n;
 }
+#endif
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_cp15
 #endif

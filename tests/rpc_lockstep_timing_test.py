@@ -16,7 +16,7 @@ def check(harness,core,folder,model,words,first,last,expected,name):
     path.write_bytes(data+bytes(2097152-len(data)))
     for observer in range(4):
         result=subprocess.run([harness,core,str(path),str(model),str(RATES[model]),str(first),str(last),'0',
-                               str(expected.numerator),str(expected.denominator),str(observer)],capture_output=True,text=True,timeout=30)
+                               str(expected.numerator),str(expected.denominator),str(observer)],capture_output=True,text=True,timeout=30, encoding='utf-8')
         if result.returncode:raise RuntimeError((name,observer,'independent interval disagreement',result.returncode,result.stdout,result.stderr))
         print(name,'observer='+str(observer),result.stdout.strip(),flush=True)
 

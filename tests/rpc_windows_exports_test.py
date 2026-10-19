@@ -11,6 +11,8 @@ required=set()
 for name in ('rpc_timing_test.c','rpc_cmos_plan_test.c','rpc_observers_frontend_test.c'):
     required.update(re.findall(r'LOAD\([^,]+,\s*"([^"]+)"\)',(root/'tests'/name).read_text()))
 required.update({"arc_engine_test_floppy_mount","arc_engine_test_floppy_eject","arc_engine_test_ide_backend","arc_test_plan_hd_stats","arc_test_plan_hd_write","arc_test_plan_hd_cost"})
+required.update({"arc_rpc_test_lockstep_sink","arc_rpc_test_lockstep_status","arc_rpc_test_lockstep_end",
+                 "arc_rpc_observer_complete","arc_rpc_observer_generation"})
 for library in libraries:
     output=subprocess.check_output([objdump,'-p',library],text=True)
     table=output.split('[Ordinal/Name Pointer] Table',1)[1].split('\nThe ',1)[0]

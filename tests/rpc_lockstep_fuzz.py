@@ -14,7 +14,7 @@ def generate(directory, full=False):
     directory.mkdir(parents=True, exist_ok=True)
     (directory/'authored.seed').write_bytes(bytes(256))
     items = directed(directory)
-    for line in Path(__file__).with_name('rpc_lockstep_seeds.txt').read_text().splitlines():
+    for line in Path(__file__).with_name('rpc_lockstep_seeds.txt').read_text(encoding='utf-8').splitlines():
         if not line or line.startswith('#'): continue
         subset, value = line.split()
         if subset != 'ci' and not full: continue

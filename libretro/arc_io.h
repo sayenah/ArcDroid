@@ -10,6 +10,14 @@ typedef bool (*ArcIoVisit)(const char *path, void *opaque);
 typedef bool (*ArcIoDirectoryVisit)(const char *name, bool regular_file,
                                     void *opaque);
 typedef struct ArcIoFile ArcIoFile;
+#if defined(ARCDROID_RPC_LOCKSTEP)
+typedef struct {
+   bool present,writable,external;
+   const uint8_t *memory;
+   size_t memory_size,memory_at;
+} ArcIoLockstepFile;
+void arc_io_lockstep_file(const ArcIoFile *,ArcIoLockstepFile *);
+#endif
 /* Single-threaded scoped census of actual VFS callbacks, including failures.
  * Used only around the indivisible final preparation attachment. Byte counts
  * are requested read/write lengths, including failed or partial transfers. */

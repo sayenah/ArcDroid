@@ -1,4 +1,6 @@
+/* ArcDroid modification (2026-10-18, 6b-m2b Run E): merge launch binding serialization and owner invalidation without changing retirement order. */
 /* R3c-2: policy belongs to ArcDroid, never the imported CPU. GPL-2.0-only. */
+#include "rpc_lockstep.h"
 #include "rpc_observers.h"
 #include "rpc_floppy.h"
 #include "rpc_timing.h"
@@ -47,12 +49,16 @@ static const ArcOutcomeProfile launch_profile={120000000u,false,false,false,true
 static const ArcBootProfile boot_profile={120000000u,250000u,0,true,false,true};
 static void filters(void);
 static const unsigned bits[4]={ARC_RPC_CELL_BOOT,ARC_RPC_CELL_LAUNCH,ARC_RPC_CELL_ERROR,ARC_RPC_CELL_DISC_A|ARC_RPC_CELL_DISC_B};
-static bool user(uint32_t mode) { return mode==0u || mode==16u; }
+static bool user(uint32_t mode) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return mode==0u || mode==16u; }
 bool arc_rpc_observers_capability(unsigned bit)
-{ return state.epoch==arc_rpc_observer_epoch() && (state.cells&bit)==bit; }
-static uint64_t now(void) { return arc_rpc_time_ns()/1000u; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return state.epoch==arc_rpc_observer_epoch() && (state.cells&bit)==bit; }
+static uint64_t now(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return arc_rpc_time_ns()/1000u; }
 void arc_rpc_observers_retire(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(state.binding.attempt && state.binding.attempt->delivery!=ARC_RPC_DELIVERY_INTERRUPTED)
         arc_riscpc_attempt_interrupt(state.binding.attempt,ARC_RPC_INTERRUPT_FAULT);
     memset(&state,0,sizeof(state));
@@ -61,11 +67,13 @@ void arc_rpc_observers_retire(void)
 }
 static void error_loss(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     arc_error_end(&state.error);state.error.modal_unknown=true;state.error_watch=0;
     state.error_return_closes=false;
 }
 static void error_event(void *opaque,const ArcRpcObservation *e)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     (void)opaque;
     if(e->kind==ARC_RPC_OBS_WATCH_LOST || e->kind==ARC_RPC_OBS_CONTINUATION){
         if(e->watch!=state.error_watch)return;
@@ -125,12 +133,14 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
 }
 static void attempt_event(ArcRpcAttemptEvent event)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     ArcRpcLaunchAttempt *a=state.binding.attempt;
     if(a && state.host_ordinal<UINT64_MAX)
         (void)arc_riscpc_attempt_event(a,&a->token,++state.host_ordinal,event);
 }
 static void prompt_end(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     state.boot.pending=false;
     if(state.boot.state==ARC_BOOT_WATCH_ARMED || state.boot.state==ARC_BOOT_WATCH_PROMPT)
         state.boot.state=ARC_BOOT_WATCH_CANCELLED;
@@ -139,6 +149,7 @@ static void prompt_end(void)
 }
 static bool ram(uint32_t at,size_t n,bool privileged)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(n==0 || n>UINT32_MAX-at)return false;
     for(size_t i=0;;i=i+4<n?i+4:n-1){uint32_t pa=0;
         if(!arc_rpc_inspect_translate(at+(uint32_t)i,privileged,&pa))return false;
@@ -150,6 +161,7 @@ static bool ram(uint32_t at,size_t n,bool privileged)
 }
 static bool authored(const ArcRpcObservation *e,uint32_t words[16])
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     const ArcRpcLaunchController *c=state.binding.controller;
     if(!c || e->kind!=ARC_RPC_OBS_SWI || !user(e->mode) || (e->swi&~0x20000u)!=6 ||
         e->registers[0] || e->registers[1]!=1 || e->registers[2] ||
@@ -175,6 +187,7 @@ static bool authored(const ArcRpcObservation *e,uint32_t words[16])
 }
 static void status_event(const ArcRpcObservation *e)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     uint32_t w[16];if(!authored(e,w))return;
     if(w[9]<=state.sequence || w[9]!=state.sequence+1)return;
     ArcRpcLaunchAttempt *a=state.binding.attempt;bool accepted=false;
@@ -215,6 +228,7 @@ static void status_event(const ArcRpcObservation *e)
 }
 static void launch_event(void *opaque,const ArcRpcObservation *e)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     (void)opaque;if(e->kind!=ARC_RPC_OBS_SWI || !user(e->mode))return;
     if(state.binding.attempt){
         if(state.observation_finished){status_event(e);return;}
@@ -234,6 +248,7 @@ static void launch_event(void *opaque,const ArcRpcObservation *e)
 }
 static void boot_event(void *opaque,const ArcRpcObservation *e)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(state.binding.attempt){
         (void)opaque;
         if(e->kind==ARC_RPC_OBS_CONTINUATION || e->kind==ARC_RPC_OBS_WATCH_LOST){
@@ -263,6 +278,7 @@ typedef struct {
 enum { DISC_FOUND=3, DISC_CLEAR=4 };
 static DiscCopy disc_copy(const ArcRpcHostWork *work)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     DiscCopy copy={.continuation=work->continuation,.sp=work->sp,.operation=work->operation,
         .watch=work->watch,.signal=work->kind};
     if(work->size && work->size<=sizeof(copy.object))memcpy(copy.object,work->bytes,work->size);
@@ -270,21 +286,25 @@ static DiscCopy disc_copy(const ArcRpcHostWork *work)
 }
 static bool equal(const char *a,const char *b)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     while(*a && *b){unsigned x=(unsigned char)*a++,y=(unsigned char)*b++;
         if(x>='A'&&x<='Z')x+='a'-'A';if(y>='A'&&y<='Z')y+='a'-'A';if(x!=y)return false;}
     return *a==*b;
 }
 static bool excluded(const char *name)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     char helper[11],hd[11];
     return !arc_rpc_observers_identities(helper,hd) ||
         (helper[0] && equal(name,helper)) || (hd[0] && equal(name,hd)) ||
         equal(name,"ArcDroidHD") || equal(name,"1") || equal(name,"4");
 }
 static bool known_nonmodal(void)
-{ return arc_rpc_observers_capability(ARC_RPC_CELL_ERROR) && !state.error.recognised_open && !state.error.modal_unknown; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return arc_rpc_observers_capability(ARC_RPC_CELL_ERROR) && !state.error.recognised_open && !state.error.modal_unknown; }
 bool arc_rpc_observers_replace(ArcDiscSignal signal)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     unsigned bit=signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_B;
     if(!arc_rpc_observers_capability(bit) || !known_nonmodal() ||
         state.disc_media!=arc_rpc_fdc_media_generation(0) || state.helper_media!=arc_rpc_fdc_media_generation(1))return false;
@@ -293,6 +313,7 @@ bool arc_rpc_observers_replace(ArcDiscSignal signal)
 }
 static bool work_valid(void *opaque,const ArcRpcHostWork *w)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     (void)opaque;
     if(!w->size || w->size>ARC_RPC_COPY_LIMIT || w->bytes[w->size-1])return false;
     DiscCopy copy=disc_copy(w);
@@ -306,6 +327,7 @@ static bool work_valid(void *opaque,const ArcRpcHostWork *w)
 }
 static bool work_resolve(void *opaque,const ArcRpcHostWork *w)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     (void)opaque;DiscCopy copy=disc_copy(w);
     if(copy.signal>=DISC_FOUND)return true;
     if(copy.signal!=ARC_DISC_SIGNAL_B || !state.resolve)return false;
@@ -320,6 +342,7 @@ static bool work_resolve(void *opaque,const ArcRpcHostWork *w)
 }
 static void work_mutate(void *opaque,const ArcRpcHostWork *w)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     (void)opaque;DiscCopy copy=disc_copy(w);
     ArcDiscRequest observation=state.disc;
     if(copy.signal==DISC_CLEAR){
@@ -365,6 +388,7 @@ static void work_mutate(void *opaque,const ArcRpcHostWork *w)
 }
 static void queue_disc(const ArcRpcObservation *e,unsigned kind)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     DiscCopy copy={.continuation=state.disc.continuation,.sp=state.disc.sp,
         .operation=state.disc.operation,.watch=e->watch,.signal=kind};
     size_t length=strlen(state.disc.object);
@@ -395,6 +419,7 @@ static void queue_disc(const ArcRpcObservation *e,unsigned kind)
 }
 static void disc_event(void *opaque,const ArcRpcObservation *e)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     (void)opaque;if(!state.disc_enabled)return;
     if(e->kind==ARC_RPC_OBS_WATCH_LOST){
         if(e->watch!=state.disc_watch)return;
@@ -477,6 +502,7 @@ static const uint32_t error_swis[]={6,0x400df,0x400c7,0x400e1};
 static const uint32_t disc_swis[]={8,13,0x33,0x11,0x40,0x400c7,0x400e1,0x400c0,0x400dd,0x400de};
 static void filters(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     ArcRpcObserveCallback callbacks[]={boot_event,launch_event,error_event,disc_event};
     for(unsigned i=0;i<4;++i){
         ArcRpcObserveFilter filter={.modes=~0u,.kinds=ARC_RPC_OBS_SWI|ARC_RPC_OBS_CONTINUATION|ARC_RPC_OBS_WATCH_LOST,
@@ -492,6 +518,7 @@ static void filters(void)
 }
 void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     arc_rpc_observers_retire();state.epoch=arc_rpc_observer_epoch();state.catalogue=catalogue;state.cpu=cpu;
     state.disc_profile=default_disc_profile;
     state.error_profile=default_error_profile;state.error.profile=&state.error_profile;
@@ -518,39 +545,56 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
 }
 #if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 void arc_rpc_observers_test_status(const ArcRpcObservation *event)
-{ status_event(event); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); status_event(event); }
 void arc_rpc_observers_test_cells(unsigned cells)
-{ state.cells&=cells;filters(); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); state.cells&=cells;filters(); }
+#if defined(ARCDROID_RPC_LOCKSTEP)
+static ArcOutcomeProfile arc_rpc_lockstep_shortened;
+#define shortened arc_rpc_lockstep_shortened
+#endif
 void arc_rpc_observers_test_horizon(unsigned us)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
+#if !defined(ARCDROID_RPC_LOCKSTEP)
     static ArcOutcomeProfile shortened;
+#endif
     shortened=launch_profile;shortened.horizon_us=us;
     state.launch.profile=&shortened;
 }
 void arc_rpc_observers_test_binding(unsigned *catalogue,unsigned *cpu)
-{ *catalogue=state.catalogue;*cpu=state.cpu; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); *catalogue=state.catalogue;*cpu=state.cpu; }
 bool arc_rpc_observers_test_disc_devices(unsigned forms)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!state.overridden || (forms&~3u))return false;
     if(forms!=state.disc_profile.device_forms)arc_rpc_observers_disc_clear();
     state.disc_profile.device_forms=forms;return true;
 }
 void arc_rpc_observers_test_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
-{ state.error_profile.ok_forms=ok;state.error_profile.cancel_forms=cancel;state.error_profile.default_cancel_forms=defaults; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); state.error_profile.ok_forms=ok;state.error_profile.cancel_forms=cancel;state.error_profile.default_cancel_forms=defaults; }
 bool arc_rpc_observers_test_error_numbers(ArcErrorNumberClass numbers)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!state.overridden || (numbers!=ARC_ERROR_NUMBER_ZERO && numbers!=ARC_ERROR_NUMBER_ORDINARY))return false;
     if(numbers!=state.error_profile.numbers && state.error_watch){arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();}
     state.error_profile.numbers=numbers;return true;
 }
 void arc_rpc_observers_test_watch_budget(unsigned attempts)
-{ watch_budget=attempts<=ARC_RPC_WATCH_ATTEMPT_LIMIT?attempts:ARC_RPC_WATCH_ATTEMPT_LIMIT; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); watch_budget=attempts<=ARC_RPC_WATCH_ATTEMPT_LIMIT?attempts:ARC_RPC_WATCH_ATTEMPT_LIMIT; }
 bool arc_rpc_observers_test_retry(ArcRpcHostWork *work)
-{ if(work)*work=state.retry_work;return state.retry_pending; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); if(work)*work=state.retry_work;return state.retry_pending; }
 void arc_rpc_observers_test_disc_state(const ArcDiscRequest *disc)
-{ state.disc=*disc;state.disc.profile=&state.disc_profile; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); state.disc=*disc;state.disc.profile=&state.disc_profile; }
 void arc_rpc_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     state.overridden=true;state.cells=mask&255u;state.epoch=arc_rpc_observer_epoch();
     state.error_profile=(ArcErrorProfile){.contextual=true,.poll_r1=r1,.poll_r2=r2,.poll_modes=(1u<<3)|(1u<<19),.answer_forms=(mask&ARC_RPC_CELL_ANSWER)?forms:0};
     for(unsigned flags=0;flags<32;++flags){
@@ -567,6 +611,7 @@ void arc_rpc_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t f
 #endif
 void arc_rpc_observers_rebase(unsigned actual_cpu)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     /* Hardware reset preserves attached media and host callback leases, but
      * never a pending watch, answer, miss history or launch/prompt arm. */
     unsigned catalogue=state.catalogue,cpu=actual_cpu;
@@ -586,6 +631,7 @@ void arc_rpc_observers_rebase(unsigned actual_cpu)
 }
 void arc_rpc_observers_frame(uint64_t time)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(state.epoch!=arc_rpc_observer_epoch())return;
     if(state.binding.attempt){
         if(state.observation_finished)goto disc_retry;
@@ -629,12 +675,14 @@ disc_retry:
 }
 bool arc_rpc_observers_boundary(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!arc_rpc_observer_boundary_pending)return true;
     arc_rpc_observer_boundary_pending=false;
     return state.binding.boundary && state.binding.boundary(state.binding.opaque);
 }
 bool arc_rpc_observers_attempt(const ArcRpcLaunchBinding *binding)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!binding || !binding->attempt || !binding->controller || !binding->revalidate ||
         state.binding.attempt || binding->attempt->delivery!=ARC_RPC_DELIVERY_PREPARED ||
         !arc_riscpc_attempt_matches(binding->attempt,&binding->attempt->token))return false;
@@ -648,12 +696,14 @@ bool arc_rpc_observers_attempt(const ArcRpcLaunchBinding *binding)
 }
 void arc_rpc_observers_attempt_input(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!state.binding.attempt)return;
     if(state.boot.state==ARC_BOOT_WATCH_PROMPT)state.boot.state=ARC_BOOT_WATCH_CANCELLED;
     /* A hint dismissal is not evidence that the pending read returned. */
 }
 void arc_rpc_observers_attempt_interrupt(ArcRpcAttemptInterrupt reason)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     ArcRpcLaunchBinding old=state.binding;
     if(old.attempt)arc_riscpc_attempt_interrupt(old.attempt,reason);
     state.binding=(ArcRpcLaunchBinding){0};state.prompt_phase=false;state.prompt_watch=0;
@@ -661,35 +711,48 @@ void arc_rpc_observers_attempt_interrupt(ArcRpcAttemptInterrupt reason)
     if(old.aborted)old.aborted(old.opaque,reason);
 }
 void arc_rpc_observers_attempt_media(void)
-{if(state.binding.media_changed)state.binding.media_changed(state.binding.opaque);}
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));if(state.binding.media_changed)state.binding.media_changed(state.binding.opaque);}
 void arc_rpc_observers_error_snapshot(ArcErrorBox *out)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!out)return;*out=state.error;
     if(!arc_rpc_observers_capability(ARC_RPC_CELL_ERROR)){memset(out,0,sizeof(*out));out->modal_unknown=true;}
     out->answer_available=out->answer_available && out->pending==ARC_ERROR_NONE && out->consumed==ARC_ERROR_NONE &&
         arc_rpc_observers_capability(ARC_RPC_CELL_ANSWER);
 }
 bool arc_rpc_observers_answer(ArcErrorAnswer answer)
-{ return arc_rpc_observers_capability(ARC_RPC_CELL_ANSWER) && state.error_watch &&
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return arc_rpc_observers_capability(ARC_RPC_CELL_ANSWER) && state.error_watch &&
     arc_rpc_observer_watch_live(ARC_RPC_OBS_ERROR,state.error_watch) && arc_error_request(&state.error,answer); }
-void arc_rpc_observers_discard(void) { arc_error_discard(&state.error); }
+void arc_rpc_observers_discard(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); arc_error_discard(&state.error); }
 void arc_rpc_observers_boot_arm(void)
-{ if(state.binding.attempt && state.prompt_phase && arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); if(state.binding.attempt && state.prompt_phase && arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))
     arc_boot_watch_arm_profile(&state.boot,now(),&boot_profile); }
-void arc_rpc_observers_boot_cancel(void) { arc_boot_watch_cancel(&state.boot); }
+void arc_rpc_observers_boot_cancel(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); arc_boot_watch_cancel(&state.boot); }
 ArcBootWatchState arc_rpc_observers_boot_state(void)
-{ return arc_rpc_observers_capability(ARC_RPC_CELL_BOOT)?state.boot.state:ARC_BOOT_WATCH_DISABLED; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return arc_rpc_observers_capability(ARC_RPC_CELL_BOOT)?state.boot.state:ARC_BOOT_WATCH_DISABLED; }
 bool arc_rpc_observers_launch_arm(const char *command)
-{ return state.binding.attempt && command && !strcmp(command,state.binding.controller->text) &&
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); return state.binding.attempt && command && !strcmp(command,state.binding.controller->text) &&
     arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH); }
-void arc_rpc_observers_launch_cancel(const char *why) { arc_outcome_cancel(&state.launch,why); }
-void arc_rpc_observers_refused(unsigned drive) { arc_outcome_refused(&state.launch,drive); }
+void arc_rpc_observers_launch_cancel(const char *why) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); arc_outcome_cancel(&state.launch,why); }
+void arc_rpc_observers_refused(unsigned drive) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); arc_outcome_refused(&state.launch,drive); }
 void arc_rpc_observers_launch_snapshot(ArcLaunchOutcome *out)
-{ if(out){*out=state.launch;if(!arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH))memset(out,0,sizeof(*out));} }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); if(out){*out=state.launch;if(!arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH))memset(out,0,sizeof(*out));} }
 void arc_rpc_observers_disc_clear(void)
-{ arc_rpc_observer_cancel(ARC_RPC_OBS_DISC);arc_disc_request_clear(&state.disc);state.disc_watch=0;state.retry_pending=false;state.disc_suppressed=false; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); arc_rpc_observer_cancel(ARC_RPC_OBS_DISC);arc_disc_request_clear(&state.disc);state.disc_watch=0;state.retry_pending=false;state.disc_suppressed=false; }
 void arc_rpc_observers_disc_configure(bool enabled,const char *inserted,ArcDiscResolveCallback resolve,ArcDiscObservationCallback observe,void *opaque)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     arc_rpc_observers_disc_clear();state.disc_enabled=enabled;
     size_t length=inserted?strlen(inserted):0;
     state.inserted[0]=0;if(length<=10 && inserted)memcpy(state.inserted,inserted,length+1);
@@ -697,14 +760,17 @@ void arc_rpc_observers_disc_configure(bool enabled,const char *inserted,ArcDiscR
 }
 void arc_rpc_observers_disc_snapshot(ArcDiscRequest *out)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!out)return;*out=disc_observation?*disc_observation:state.disc;
     if(out->a_active && (state.disc_media!=arc_rpc_fdc_media_generation(0) ||
         state.helper_media!=arc_rpc_fdc_media_generation(1) || excluded(out->a_name)))out->a_active=false;
 }
-void arc_rpc_observers_disc_notified(void) { state.disc.a_notified=true; }
+void arc_rpc_observers_disc_notified(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); state.disc.a_notified=true; }
 
 void arc_rpc_observers_disc_status(ArcRpcDiscStatus *out)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers));
     if(!out)return;
     memset(out,0,sizeof(*out));out->last_signal=state.disc_signal?state.disc_signal:"none";
     out->last_reason=state.disc_reason?state.disc_reason:"waiting-signal";
@@ -731,5 +797,10 @@ void arc_rpc_observers_disc_status(ArcRpcDiscStatus *out)
 
 #if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 void arc_rpc_observers_test_boot_snapshot(ArcBootWatch *out)
-{ if(out){*out=state.boot;if(!arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))memset(out,0,sizeof(*out));} }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_observers)); if(out){*out=state.boot;if(!arc_rpc_observers_capability(ARC_RPC_CELL_BOOT))memset(out,0,sizeof(*out));} }
+#endif
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_observers
 #endif

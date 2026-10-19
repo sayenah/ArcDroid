@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
 
 
@@ -31,6 +33,7 @@
   - OSDev Wiki - http://wiki.osdev.org/%228042%22_PS/2_Controller
 
 */
+#include "rpc_lockstep.h"
 #include <stdint.h>
 #include <stdio.h>
 
@@ -96,6 +99,7 @@ static struct {
 static void
 i8042_irq_update(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	if (i8042.irq_kbd && !(i8042.mode & KBD_MODE_DISABLE_KBD)) {
 		/* Generate keyboard interrupt */
 		superio_smi_setint2(SMI_IRQ2_KINT);
@@ -116,6 +120,7 @@ i8042_irq_update(void)
 void
 i8042_keyboard_irq_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	i8042.irq_kbd = 1;
 	i8042_irq_update();
 }
@@ -123,6 +128,7 @@ i8042_keyboard_irq_raise(void)
 void
 i8042_keyboard_irq_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	i8042.irq_kbd = 0;
 	i8042_irq_update();
 }
@@ -130,6 +136,7 @@ i8042_keyboard_irq_lower(void)
 void
 i8042_mouse_irq_raise(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	i8042.irq_mouse = 1;
 	i8042_irq_update();
 }
@@ -137,6 +144,7 @@ i8042_mouse_irq_raise(void)
 void
 i8042_mouse_irq_lower(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	i8042.irq_mouse = 0;
 	i8042_irq_update();
 }
@@ -144,6 +152,7 @@ i8042_mouse_irq_lower(void)
 uint8_t
 i8042_data_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	uint8_t result;
 
 	if (i8042.irq_kbd) {
@@ -163,6 +172,7 @@ i8042_data_read(void)
 void
 i8042_data_write(uint8_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	switch (i8042.command) {
 	case 0:
 		keyboard_data_write(val);
@@ -183,12 +193,14 @@ i8042_data_write(uint8_t val)
 uint8_t
 i8042_status_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	return i8042.status;
 }
 
 void
 i8042_command_write(uint8_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	switch (val) {
 	case KBD_CCMD_READ_MODE:
 		i8042.out = i8042.mode;
@@ -229,6 +241,7 @@ i8042_command_write(uint8_t val)
 void
 i8042_reset(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_i8042));
 	i8042.status = STAT_CMD;
 	i8042.command = 0;
 	i8042.mode = KBD_MODE_KBD_INT | KBD_MODE_MOUSE_INT;
@@ -236,3 +249,7 @@ i8042_reset(void)
 	i8042.irq_kbd = 0;
 	i8042.irq_mouse = 0;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_i8042
+#endif

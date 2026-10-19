@@ -17,11 +17,7 @@ def target_cases(label, schema, schema_hash):
     p0, p1, p2, p3 = [key(phase=p) for p in range(4)]
     def cp(k=p0, values=None): return w.checkpoint(k, schema, base if values is None else values)
     def stream(records, baseline, spans=(), **kwargs):
-        counts = [sum(r[0] in (1, 2) and struct.unpack_from('<Q', r, 29)[0] == p
-                      for r in records) for p in (0, 2)]
-        return (w.header(schema_hash, baseline, *counts, spans=spans, **kwargs) +
-                b''.join(records) + w.end(sum(r[0] in (1, 2) for r in records),
-                    sum(r[0] == 3 for r in records), sum(r[0] == 4 for r in records)))
+        return w.stream(schema_hash,records,baseline,spans=spans,**kwargs)
     def compare(left, right): return ('compare', (left, right, schema, schema_hash))
     def records(left, right, spans=()):
         return compare(stream(left, True), stream(right, False, spans))
@@ -113,12 +109,14 @@ def target_cases(label, schema, schema_hash):
     good, candidate = stream([cp()], True), stream([cp()], False)
     if label == 'accept-truncation': return [compare(good, candidate[:-1])]
     if label == 'qa-end-counts':
-        return [compare(good[:-24]+bytes(24), candidate[:-24]+bytes(24))]
+        # Change only the aggregate checkpoint count. Phase counts remain
+        # truthful, so their independent v1 check cannot mask this mutant.
+        return [compare(good[:-64]+bytes(8)+good[-56:], candidate[:-64]+bytes(8)+candidate[-56:])]
     if label == 'qa-trailing-bytes': return [compare(good+b'x', candidate+b'x')]
     if label in ('qa-stale-version', 'qa-stale-schema', 'unchecked-sparse-declaration'):
         left, right = bytearray(good), bytearray(candidate)
         if label == 'unchecked-sparse-declaration':
-            for data in (left, right): struct.pack_into('<Q', data, 8+5+148, 2)
+            for data in (left, right): struct.pack_into('<Q', data, len(data)-64+24, 2)
         else:
             offset = 13 if label == 'qa-stale-version' else 17
             left[offset] ^= 1; right[offset] ^= 1
@@ -133,7 +131,7 @@ def mutations():
     yield ('ignore-field', "av, bv = a.value[f['name']], b.value[f['name']]", "av, bv = a.value[f['name']], b.value[f['name']]\n            if f['name'] == 'cpu.reg': continue")
     yield ('align-by-index', "if b.optional(ar): ar = a.next(); continue", "if False: ar = a.next(); continue")
     yield ('drop-phase-condition', "if 'phase' in e:\n        return phase", "if 'phase' in e:\n        return 2")
-    yield ('accept-truncation', "kind, data = self.frame()\n        if kind == 6:", "try: kind, data = self.frame()\n        except Invalid: self.ended = True; return None\n        if kind == 6:")
+    yield ('accept-truncation', "kind, data = self.frame()\n        if kind == 6:", "try: kind, data = self.frame()\n        except Invalid: self.declared=(*self.phase_counts,self.omissions); self.ended = True; return None\n        if kind == 6:")
     yield ('accept-extra-key', "return failure(br.key, 'candidate.key', None, br.key)", "br = b.next(); continue")
     yield ('accept-missing-P1-P3', "if b.optional(ar): ar = a.next(); continue", "if b.optional(ar) or ar.key[3] in (1, 3): ar = a.next(); continue")
     yield ('unchecked-sparse-declaration', "require(tuple(self.phase_counts) == self.declared[:2], 'sparse exit counters mismatch')", "pass # mutant: unchecked exit counters")
@@ -146,7 +144,7 @@ def mutations():
                 if later: result = failure(ar.key, *later)
             return result""")
     yield ('ignore-log-order', "elif a.value != b.value:", "elif a.value != b.value and a.kind != 3:")
-    yield ('pass-non-reproducing-rerun', "return bool(not original.get('ok') and not rerun.get('ok') and", "return bool(True or not original.get('ok') and not rerun.get('ok') and")
+    yield ('pass-non-reproducing-rerun', "if original.get('ok') or rerun.get('ok') or original.get('key')!=rerun.get('key'):return False", "if False:return False")
     anchor = "bool(evaluate(f['condition'], values, phase, index))"
     fields = ('tlb.physical', 'fast.memo_line', 'memory.finish', 'memory.active.kind',
               'scheduler.deadlines', 'observer.watches.pc', 'observer.owners.value', 'observer.work.ns', 'observer.work.bytes', 'cpu.reg',
@@ -164,7 +162,7 @@ def mutations():
         yield ('ignore-event-'+label, 'elif a.value != b.value:',
                'elif a.value != b.value and not (a.kind == 3 and '+comparison+'):')
     for label,anchor in (
-        ('end-counts',"require(len(data) == 24 and struct.unpack('<3Q', data) == tuple(self.counts), 'end counts mismatch')"),
+        ('end-counts',"require(totals[:3] == tuple(self.counts), 'end counts mismatch')"),
         ('trailing-bytes',"require(not self.stream.read(1), 'trailing bytes after stream end')"),
         ('event-sequence',"require(seq == expected, 'event sequence discontinuity')"),
         ('after-fatal',"require(not self.fatal, 'records after fatal')"),
@@ -181,6 +179,6 @@ def mutations():
     yield ('qa-compact-later-groups','elif a.value != b.value:',
            'elif a.value != b.value and not (a.kind == 2 and a.value[0] == b.value[0]):')
 
-    for label,check in (('version','sh == schema_hash'),('schema','version == 0')):
-        yield ('qa-stale-'+label,"require(version == 0 and sh == schema_hash, 'version/schema hash mismatch')",
+    for label,check in (('version','sh == schema_hash'),('schema','version == 1')):
+        yield ('qa-stale-'+label,"require(version == 1 and sh == schema_hash, 'version/schema hash mismatch')",
                "require("+check+", 'version/schema hash mismatch')")

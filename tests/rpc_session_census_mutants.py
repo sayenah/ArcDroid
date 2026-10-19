@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='arc-census-mutants-') as directory:
     temp = Path(directory)
     source = root / 'libretro/rpc_preparation.c'
     original = source.read_text()
-    anchor = 'bool arc_riscpc_preparation_free_stats(ArcRpcPreparation *p,char *e,size_t n,ArcRpcPreparationStats *stats)\n{\n    if(!p)return true;'
+    anchor = 'bool arc_riscpc_preparation_free_stats(ArcRpcPreparation *p,char *e,size_t n,ArcRpcPreparationStats *stats)\n{\n    ARC_RPC_PREPARATION_DIRTY();\n    if(!p)return true;'
     if original.count(anchor) != 1:
         raise RuntimeError('preparation teardown anchor changed')
     cc, link = rebuild_commands(commands, source, 'arcdroid_session_census_libretro', build, os.name == 'nt')
@@ -60,11 +60,13 @@ with tempfile.TemporaryDirectory(prefix='arc-census-mutants-') as directory:
                 '\n   static char *volatile planted_leak;\n   planted_leak = realpath("/", NULL);\n   (void)planted_leak;'), 0, False))
     ram_source = root / 'engine/rpcemu/src/mem.c'
     ram_original = ram_source.read_text()
-    ram_anchor = 'free(ram01);'
+    # M2b has a separate lockstep allocation-shift branch. Mutate only the
+    # ordinary census teardown, with one complete, unambiguous anchor.
+    ram_anchor = '    free(rom); free(vram); free(ram00); free(ram01); free(ram1);'
     if ram_original.count(ram_anchor) != 1:
         raise RuntimeError('ram01 teardown anchor changed')
     variants.append(('dropped free(ram01)', ram_source, 'arcdroid_session_census_libretro_rpc',
-                     ram_original.replace(ram_anchor, ''), 32 * 1024 * 1024, True))
+                     ram_original.replace(ram_anchor, '    free(rom); free(vram); free(ram00); free(ram1);'), 32 * 1024 * 1024, True))
     for allocator, source, target, content, bytes_per_cycle, rpc_leak in variants:
         cc, link = rebuild_commands(commands, source, target, build, os.name == 'nt')
         mutated = temp / source.name

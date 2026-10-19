@@ -1,6 +1,12 @@
 /* The production host owns preparation, arbitration and bounded measurement.
  * No ordinary-load caller is enabled here. GPL-2.0-only. */
 #include "rpc_preparation_host.h"
+#include "../engine/rpc/rpc_lockstep.h"
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#define ARC_RPC_HOST_DIRTY() arc_riscpc_preparation_lockstep_dirty()
+#else
+#define ARC_RPC_HOST_DIRTY() ((void)0)
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +74,7 @@ static void hold_begin(ArcRpcFrontendHost *h)
 }
 static void module_notice(void *opaque,const char *text,ArcRpcNotice event)
 {
+    ARC_RPC_HOST_DIRTY();
     ArcRpcFrontendHost *h=opaque;
     bool lost=!strcmp(event.id,"N-18");
     if(lost && h->unloading){
@@ -96,10 +103,12 @@ static void module_notice(void *opaque,const char *text,ArcRpcNotice event)
     display(h,text,ARC_RPC_NOTICE_TERMINAL);
 }
 static void module_log(void *opaque,const char *text)
-{ArcRpcFrontendHost *h=opaque;if(h->ops.log)h->ops.log(h->ops.module.opaque,RETRO_LOG_INFO,text);}
+{
+    ARC_RPC_HOST_DIRTY();ArcRpcFrontendHost *h=opaque;if(h->ops.log)h->ops.log(h->ops.module.opaque,RETRO_LOG_INFO,text);}
 static uint64_t module_clock(void *opaque){return now(opaque);}
 static bool module_attach(void *opaque,char *error,size_t n)
 {
+    ARC_RPC_HOST_DIRTY();
     ArcRpcFrontendHost *h=opaque;
     bool ok=!h->ops.module.attach || h->ops.module.attach(h->ops.module.opaque,error,n);
 #if defined(ARCDROID_TEST_PLANS)
@@ -109,6 +118,7 @@ static bool module_attach(void *opaque,char *error,size_t n)
 }
 static void module_started(void *opaque,bool factory)
 {
+    ARC_RPC_HOST_DIRTY();
     ArcRpcFrontendHost *h=opaque;(void)h;(void)factory;
 #if defined(ARCDROID_TEST_PLANS)
     if(h->extension.started_after)h->extension.started_after(h->extension.opaque,factory);
@@ -116,6 +126,7 @@ static void module_started(void *opaque,bool factory)
 }
 static void module_diagnostics(void *opaque)
 {
+    ARC_RPC_HOST_DIRTY();
     ArcRpcFrontendHost *h=opaque;
     if(h->ops.module.diagnostics)h->ops.module.diagnostics(h->ops.module.opaque);
 #if defined(ARCDROID_TEST_PLANS)
@@ -124,6 +135,7 @@ static void module_diagnostics(void *opaque)
 }
 static void module_attached(void *opaque)
 {
+    ARC_RPC_HOST_DIRTY();
     ArcRpcFrontendHost *h=opaque;
     if(h->ops.module.attached)h->ops.module.attached(h->ops.module.opaque);
 #if defined(ARCDROID_TEST_PLANS)
@@ -138,6 +150,7 @@ HOST_BOOL_CALLBACK(restage_stopped)
 #undef HOST_BOOL_CALLBACK
 static bool module_reset_rebind(void *opaque,char *error,size_t n)
 {
+    ARC_RPC_HOST_DIRTY();
     ArcRpcFrontendHost *h=opaque;
     bool ok=!h->ops.module.reset_rebind || h->ops.module.reset_rebind(h->ops.module.opaque,error,n);
 #if defined(ARCDROID_TEST_PLANS)
@@ -163,6 +176,7 @@ static ArcRpcPreparationHost callbacks(ArcRpcFrontendHost *h)
 }
 void arc_riscpc_host_load_failure(const ArcRpcFrontendOps *ops,const char *id,const char *redacted)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!ops)return;
     /* Frontend lifecycle calls are serialized. Keep the bounded histogram
      * scratch off the already-large load stack, and retain no borrowed ops. */
@@ -172,7 +186,8 @@ void arc_riscpc_host_load_failure(const ArcRpcFrontendOps *ops,const char *id,co
     summary(&h,"pending-failed");summary(&h,"live-release");
     memset(&h,0,sizeof(h));
 }
-void arc_riscpc_host_diagnostics(ArcRpcFrontendHost *h){if(h)module_diagnostics(h);}
+void arc_riscpc_host_diagnostics(ArcRpcFrontendHost *h){
+    ARC_RPC_HOST_DIRTY();if(h)module_diagnostics(h);}
 ArcRpcFrontendHost *arc_riscpc_host_begin(const ArcRpcPreparationRequest *request,const ArcRpcFrontendOps *ops,char *error,size_t n)
 {
     ArcRpcFrontendHost *h=allocate(ops);if(!h)return NULL;
@@ -242,6 +257,7 @@ static void summary(ArcRpcFrontendHost *h,const char *phase)
 }
 void arc_riscpc_host_frame_begin(ArcRpcFrontendHost *h)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return;
     ArcRpcPreparationState state=arc_riscpc_preparation_state(h->preparation);
     h->phase=state==ARC_RPC_PREP_GENERATE?1u:state==ARC_RPC_PREP_START?2u:state==ARC_RPC_PREP_RUNNING?3u:arc_riscpc_preparation_draining(h->preparation)?4u:0u;
@@ -260,6 +276,7 @@ void arc_riscpc_host_frame_begin(ArcRpcFrontendHost *h)
 }
 void arc_riscpc_host_frame_end(ArcRpcFrontendHost *h)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return;
     uint64_t current=now(h),duration=current>=h->frame_ns?current-h->frame_ns:0;
     HostPhase *p=&h->phases[h->phase];++p->runs[bucket(duration,h->rate)];if(duration>p->run_max)p->run_max=duration;
@@ -270,6 +287,7 @@ void arc_riscpc_host_frame_end(ArcRpcFrontendHost *h)
 }
 void arc_riscpc_host_pending_frame(ArcRpcFrontendHost *h)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return;uint64_t start=now(h);
     if(arc_riscpc_preparation_draining(h->preparation))arc_riscpc_preparation_failed_frame(h->preparation);
     else (void)arc_riscpc_preparation_frame(h->preparation);
@@ -279,6 +297,7 @@ void arc_riscpc_host_pending_frame(ArcRpcFrontendHost *h)
 }
 void arc_riscpc_host_maintenance(ArcRpcFrontendHost *h)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h || arc_riscpc_host_pending(h))return;
     ArcRpcHdStats hd={0};ArcRpcHdStore *disc=arc_riscpc_preparation_disc(h->preparation);if(disc)arc_riscpc_hd_stats(disc,&hd);
     uint64_t start=now(h);arc_riscpc_preparation_maintenance(h->preparation);uint64_t end=now(h),cost=end>=start?end-start:0;
@@ -300,11 +319,13 @@ const int16_t *arc_riscpc_host_silence(ArcRpcFrontendHost *h,size_t frames)
 }
 void arc_riscpc_host_clear(ArcRpcFrontendHost *h)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return;h->hold=h->stopping=h->drain_replaced=false;h->advisory_frames=h->terminal_frames=0;
     *h->progress=*h->terminal=*h->advisory=*h->logged_progress=0;display(h,"",ARC_RPC_NOTICE_CLEAR);
 }
 bool arc_riscpc_host_reset(ArcRpcFrontendHost *h)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return false;
     if(arc_riscpc_preparation_draining(h->preparation)){h->queued_reset=true;return true;}
     arc_riscpc_host_clear(h);char error[256]={0};
@@ -330,20 +351,25 @@ static uint64_t hold_bound(ArcRpcFrontendHost *h)
 }
 void arc_riscpc_host_guest_time(ArcRpcFrontendHost *h,uint64_t us)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return;h->guest_us=us;
     if(h->hold && us>=h->hold_start && us-h->hold_start>=hold_bound(h)){h->hold=false;*h->progress=0;if(!*h->terminal && !h->advisory_frames)display(h,"",ARC_RPC_NOTICE_CLEAR);}
 }
 void arc_riscpc_host_first_field(ArcRpcFrontendHost *h,unsigned width,unsigned height,double rate,bool issued)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return;h->rate=rate;
     if(h->first_field)return;h->first_field=true;h->first_field_ns=now(h);
     char text[192];snprintf(text,sizeof(text),"width=%u height=%u rate=%.6f av_issued=%u frame=%u",width,height,rate,issued,h->frame);log_line(h,RETRO_LOG_INFO,"status first-field",text);
 }
-void arc_riscpc_host_av_change(ArcRpcFrontendHost *h,bool guest){if(h){if(guest)++h->guest_av;else ++h->frontend_av;}}
+void arc_riscpc_host_av_change(ArcRpcFrontendHost *h,bool guest){
+    ARC_RPC_HOST_DIRTY();if(h){if(guest)++h->guest_av;else ++h->frontend_av;}}
 void arc_riscpc_host_advisory(ArcRpcFrontendHost *h,const char *id,const char *text)
-{if(h)module_notice(h,text,(ArcRpcNotice){ARC_RPC_NOTICE_ADVISORY,id,false,false});}
+{
+    ARC_RPC_HOST_DIRTY();if(h)module_notice(h,text,(ArcRpcNotice){ARC_RPC_NOTICE_ADVISORY,id,false,false});}
 bool arc_riscpc_host_free(ArcRpcFrontendHost *h,char *error,size_t n)
 {
+    ARC_RPC_HOST_DIRTY();
     if(!h)return true;
     /* A completed drain may replace its fault terminal. Finish that outcome
      * before the unload clear; only unload failure advisories follow it. */
@@ -361,4 +387,19 @@ bool arc_riscpc_host_free(ArcRpcFrontendHost *h,char *error,size_t n)
 
 #if defined(ARCDROID_TEST_FAULTS)
 bool arc_riscpc_host_terminal(const ArcRpcFrontendHost *h){return h && *h->terminal;}
+#endif
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+/* Recognize only this host's callback context; no foreign opaque is dereferenced. */
+uint64_t arc_riscpc_host_lockstep_value(const void *opaque,uint64_t (*clock)(void *),unsigned field)
+{
+    if(!opaque || clock!=module_clock)return 0;
+    const ArcRpcFrontendHost *h=opaque;
+    switch(field){
+    case 0:return h->queued_reset;
+    case 1:return h->released;
+    case 2:return h->unloading;
+    default:return 0;
+    }
+}
 #endif

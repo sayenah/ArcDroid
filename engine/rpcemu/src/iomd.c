@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-07): model-specific ROMCR reset and
  * ARM7500 DRAMWID readback/width timing state. */
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
@@ -26,6 +28,7 @@
 /* ArcDroid modification (2026-10-07): hardware VIDCR readback for VRAM scroll. */
 
 /* IOMD emulation */
+#include "rpc_lockstep.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -221,6 +224,7 @@ extern bool arc_rpc_cpu_idle;
 void
 updateirqs(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
 	if ((iomd.irqa.status & iomd.irqa.mask) ||
 	    (iomd.irqb.status & iomd.irqb.mask) ||
 	    (iomd.irqd.status & iomd.irqd.mask) ||
@@ -239,28 +243,33 @@ updateirqs(void)
 
 static unsigned timer_period(unsigned timer)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     unsigned latch = timer ? iomd.t1.in_latch : iomd.t0.in_latch;
     return latch + 1u; /* IOMD specification section 4: (latch+1)/2 MHz. */
 }
 static void timer_go(unsigned timer)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     timer_due[timer] = arc_rpc_time_ns() + (uint64_t)timer_period(timer) * 500u;
     arc_rpc_event_after(timer ? ARC_RPC_EVENT_TIMER1 : ARC_RPC_EVENT_TIMER0,
         (uint64_t)timer_period(timer) * 500u);
 }
 static unsigned timer_count(unsigned timer)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     uint64_t now = arc_rpc_time_ns();
     return timer_due[timer] > now ? (unsigned)((timer_due[timer] - now - 1u) / 500u) : 0;
 }
 void arc_rpc_iomd_timer_event(unsigned timer)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     iomd.irqa.status |= timer ? IOMD_IRQA_TIMER_1 : IOMD_IRQA_TIMER_0;
     updateirqs();
     timer_go(timer);
 }
 /* Legacy periodic poll is no longer a clock owner. */
-void gentimerirq(uint64_t nsec_timer) { (void)nsec_timer; }
+void gentimerirq(uint64_t nsec_timer) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd)); (void)nsec_timer; }
 
 /**
  * Handle writes to the IOMD memory space
@@ -271,6 +280,7 @@ void gentimerirq(uint64_t nsec_timer) { (void)nsec_timer; }
 void
 iomd_write(uint32_t addr, uint32_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
 	uint32_t reg;
 
 	if (iomd_type == IOMDType_IOMD2) {
@@ -569,6 +579,7 @@ iomd_write(uint32_t addr, uint32_t val)
 uint32_t
 iomd_read(uint32_t addr)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
 	uint32_t reg;
 
 	if (iomd_type == IOMDType_IOMD2) {
@@ -807,12 +818,14 @@ iomd_read(uint32_t addr)
 void
 iomd_mouse_buttons_write(uint32_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
     iomd.cmos_gate = (uint8_t)(val & 0x80u);
 }
 
 uint32_t
 iomd_mouse_buttons_read(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
         uint32_t temp = 0;
 
 	int mouse_buttons = mouse_buttons_get();
@@ -860,6 +873,7 @@ iomd_mouse_buttons_read(void)
 void
 iomd_reset(IOMDType type)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
 	if (type != IOMDType_IOMD && type != IOMDType_ARM7500) fatal("Unsupported IOMD configuration");
 	memset(&iomd, 0, sizeof(iomd));
 	memset(timer_due, 0, sizeof(timer_due));
@@ -926,6 +940,7 @@ iomd_reset(IOMDType type)
 void
 iomd_end(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
 }
 
 /**
@@ -936,6 +951,7 @@ iomd_end(void)
 void
 iomd_flyback(int flyback_new)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_iomd));
 	flyback = flyback_new;
 
 	if (flyback) {
@@ -943,3 +959,7 @@ iomd_flyback(int flyback_new)
 		updateirqs();
 	}
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_iomd
+#endif

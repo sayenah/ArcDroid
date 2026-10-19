@@ -1873,3 +1873,9 @@ bool arc_riscpc_hd_next_namespace(const ArcRpcHdStore *s, unsigned operation)
     if (operation == 4) return s->seal_at > 504 || (s->seal_at == 504 && s->seal_step);
     return s->publish_step == 4;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+/* Pure ownership-role read; never inspect a native descriptor or path. */
+bool arc_riscpc_hd_lockstep_owner(const void *store,const void *owner)
+{return store && ((const ArcRpcHdStore *)store)->owner==owner;}
+#endif
