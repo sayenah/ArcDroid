@@ -39,6 +39,7 @@ def kill(name,content,target='rpc_l1_directed_test',field=None):
         if field and field not in r.stderr:raise RuntimeError((name,'missing field',r.stderr))
         print(name+': killed',flush=True)
 mutants=[
+ ('linear-maintains-hints','if (!side->gate || side->gate == 3) return;','if (side->gate == 3) return;'),
  ('unconditional-hint-store','if (side->hints[index] != way) L1_HINT_WRITE(side,index,way);','L1_HINT_WRITE(side,index,way);'),
  ('hit-no-hint-refresh','        if (result) hint_store(side,index,(uint8_t)((unsigned)(result-c->tags) & side->way_mask));','        /* mutant: omit post-hit hint refresh */'),
  ('always-linear','    } else if (side->gate) {','    } else if (false) {'),

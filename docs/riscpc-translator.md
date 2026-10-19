@@ -547,6 +547,12 @@ searches the remainder from way 1, using linear search for gate 3 and the mirror
 for gate 4. Gates 1 and 2 search from way 0. Recheck failures are structural zeros
 with the exact mirror; their diagnostic increment is tested by explicit white-box
 corruption.
+Run F leaves linear-gate side arrays at their bind-cleared values. Way0-hint
+also leaves its unread mirror dormant and learns hints only from hits beyond
+way 0; streaming misses and fills do not write either side array. Unknown hints
+skip hinted-tag reads and use the same linear remainder. Counter meanings and
+the revision-3 ABI are unchanged; acceptance counts reflect the new hit-only
+learning policy.
 Empty returns do not enter any L1 mechanism. Reference probe counts derive from
 the returned slot, never the hint. The scalar name order is append-only; both
 histogram offsets and sizeof(ArcRpcExercise) move when scalars are appended.

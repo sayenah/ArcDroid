@@ -635,3 +635,35 @@ Odin3, L1 off (every cache linear) against the way0-hint core (run C variant cor
 | ldm-stm8 | −1.70 % / −1.77 % | −1.94 % / −1.76 % | 0.50 % / 0.50 % | no regression |
 
 **Outcome by the frozen rule: not confirmed** (regressions on stream-sa110 and stream-arm710 in both orders; hot to be retested). L1 does not merge at this head. **Fable's ruling (run F):** the cost is consistent with QA S-2 (hint and mirror maintenance on every fill and invalidate for gates that never read them) and with the hint check after a way-0 miss on miss-heavy streams. Run F removes all hint and mirror maintenance for linear gates (ARM710, ARM7500, and any linear SA-110 configuration), keeps exactness, and minimises the way-0-miss path cost on SA-110 without changing its lookup order; then a fresh rule-4 confirmation run on all six workloads (the frozen rule and bands unchanged; this run's data is not reused).
+
+### Run F implementation note (Sol, 2026-10-19; before code)
+
+Linear gates keep the bind-cleared sentinel keys and unknown hint bytes untouched
+through lookup, fill and invalidation. Canonical set/way arithmetic on lookup
+and allocation uses the cache geometry directly, without hint-side metadata.
+The gate check remains the dispatch between the existing search mechanisms.
+
+For way0-hint (gate 3), the unread mirror also stays at its bind sentinel and
+fills do not seed hints. Only a successful lookup beyond way 0 learns a hint,
+through the conditional writer; an unknown byte (255) skips hinted-tag reads
+and falls through to the linear remainder. A miss never updates a hint. Stale
+positive hints remain subject to the same bounds/valid/VA checks. This amends
+R-L1-5's fill-update policy for gate 3 under Fable's Run F optimisation ruling;
+it introduces no negative result reuse. Gates 1/2/4 retain their existing fill
+hint policy, and mirror gates 2/4 retain their exact sentinel mirror. Canonical
+state, snapshots, first-match order, counters and their ABI do not change.
+
+No new side-state fields or statics are needed. Integrity tests distinguish
+maintained mirrors from deliberately dormant keys and require linear side state
+to remain byte-identical, including full/single invalidation and lookup. A mutant
+restores linear maintenance. The existing hit-refresh and ordering mutants stay
+load-bearing. A repeatable authored lookup/fill stream micro-benchmark compares
+this head with the immediate predecessor; device benefit remains Fable's fresh
+confirmation decision under the unchanged frozen rule.
+
+Run F code-generation refinement: the tag writer is forced inline on the
+supported GCC/Clang toolchains, so a linear fill does not call a generic writer.
+Full invalidation selects the dormant-side path once, outside a canonical
+valid/dirty clear loop; it performs no per-slot hint/gate bookkeeping. All
+maintained mirrors still go through the writer. Correctness does not depend
+on inlining; the cross-check and canonical layout contracts stay unchanged.

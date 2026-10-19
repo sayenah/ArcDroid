@@ -21,7 +21,8 @@ static void integrity(Cache *c)
 {
     unsigned live=0;
     for(unsigned i=0;i<c->sets*c->ways;++i){
-        assert(side_state(c)->keys[i]==(c->tags[i].valid?c->tags[i].va:UINT32_MAX));
+        unsigned gate=side_state(c)->gate;
+        assert(side_state(c)->keys[i]==(gate && gate!=3 && c->tags[i].valid?c->tags[i].va:UINT32_MAX));
         if(!c->tags[i].valid)continue;
         ++live;
         for(unsigned j=i+1;j<(i/c->ways+1)*c->ways;++j)
@@ -93,6 +94,36 @@ static void fill_set(Cache *c,unsigned set,unsigned way,unsigned n)
 }
 static void fill_slot(Cache *c,unsigned way,unsigned n)
 { fill_set(c,0,way,n); }
+/* Streaming lookup/fill and every invalidation leave linear side state
+ * untouched. Gate 3 learns only from hits, never a streaming miss/fill. */
+static void dormant_streams(void)
+{
+    for(unsigned gate=0;gate<=3;gate+=3)for(unsigned model=0;model<4;++model)
+    for(unsigned data=0;data<(model==2?2u:1u);++data){
+#if defined(ARCDROID_RPC_L1_POISON)
+        if(gate)continue; /* Poison intentionally writes the gated hint. */
+#endif
+        bind_model(model,gate);Cache *c=data?&m.data:&m.instruction;
+        LookupSide before=*side_state(c);unsigned writes=test_hint_writes;
+        for(unsigned n=0;n<c->ways*3;++n){
+            uint32_t va=address_set(c,n,c->sets-1);
+            unchanged(c,va,-1);
+            arc_rpc_mem_fast.recording=true;arc_rpc_mem_fast.opcode=0xe5900000;
+            arc_rpc_mem_access(va,va,4,false,!data,8,true);drain();
+            assert(!memcmp(&before,side_state(c),sizeof(before)));
+            assert(test_hint_writes==writes);
+        }
+        if(!gate){
+            uint32_t va=address_set(c,c->ways*3-1,c->sets-1);
+            unchanged(c,va,(int)((c->sets-1)*c->ways+c->ways-1));
+            if(model==2 && data){arc_rpc_mem_fast.recording=true;
+                arc_rpc_mem_maintenance(7,1,6,va);drain();}
+            assert(!memcmp(&before,side_state(c),sizeof(before)));
+        }
+        invalidate(c);assert(!memcmp(&before,side_state(c),sizeof(before)));
+        assert(test_hint_writes==writes);integrity(c);
+    }
+}
 static void unchanged(Cache *c,uint32_t va,int expected)
 {
     Cache before=*c;ArcRpcMemStats stats=m.stats;ArcRpcMemFast fast=arc_rpc_mem_fast;
@@ -382,6 +413,7 @@ static void way0_priority(unsigned model,bool data,unsigned gate)
 int main(void)
 {
     geometry_and_stores();
+    dormant_streams();
     reference_isolation();
     for(unsigned gate=3;gate<5;++gate)for(unsigned cpu=0;cpu<4;++cpu){
         way0_priority(cpu,false,gate);if(cpu==2)way0_priority(cpu,true,gate);

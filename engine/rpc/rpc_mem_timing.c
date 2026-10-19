@@ -119,12 +119,15 @@ static void lookup_reset(void)
     l1_poison_state = 0x61a20001u;
 #endif
 }
-/* Tag writers update the exact mirror. Dirty-only changes preserve the key.
+/* Only maintained gates update derived state. Dirty-only changes preserve it.
  * Arbitrary-slot tests use this same path, without advancing a victim. */
-static void tag_write(Cache *c, unsigned slot, Tag tag)
+static inline __attribute__((always_inline)) void tag_write(Cache *c, unsigned slot, Tag tag)
 {
     c->tags[slot] = tag;
     LookupSide *side = lookup_side(c);
+    /* Run F: linear and way0-hint never read mirror keys. Way0-hint learns
+     * from hits only, keeping streaming fills off both side-state arrays. */
+    if (!side->gate || side->gate == 3) return;
     side->keys[slot] = tag.valid ? tag.va : UINT32_MAX;
     if (tag.valid) hint_store(side,hint_index(c,tag.va),(uint8_t)(slot & side->way_mask));
 }
@@ -132,7 +135,8 @@ static void tag_write(Cache *c, unsigned slot, Tag tag)
 static void lookup_integrity(Cache *c, unsigned first, unsigned count)
 {
     for (unsigned i=first;i<first+count;++i)
-        if (lookup_side(c)->keys[i] != (c->tags[i].valid ? c->tags[i].va : UINT32_MAX))
+        if (lookup_side(c)->keys[i] !=
+            (lookup_side(c)->gate && lookup_side(c)->gate != 3 && c->tags[i].valid ? c->tags[i].va : UINT32_MAX))
             fatal("RPC L1 mirror integrity");
 }
 /* Independent retained pre-L1 scan, deliberately without lookup_count calls. */
@@ -411,7 +415,7 @@ static Tag *lookup(Cache *c, uint32_t va
     }
     uint32_t line = va >> c->shift;
     LookupSide *side = lookup_side(c);
-    unsigned base = (line & side->set_mask) << side->way_shift;
+    unsigned base = (line & (c->sets-1u)) * c->ways;
     unsigned index = 0;
     unsigned start = side->gate >= 3 ? 1u : 0u;
     Tag *result = NULL;
@@ -705,9 +709,8 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
     else
         allocate = allocate && (m.control & 5) == 5 && (attributes & 8);
     if (allocate) {
-        LookupSide *side = lookup_side(c);
-        unsigned set = line & side->set_mask, way = c->victim[set];
-        unsigned base = set << side->way_shift;
+        unsigned set = line & (c->sets-1u), way = c->victim[set];
+        unsigned base = set * c->ways;
         t = &c->tags[base + way];
         if (m.model == 2 && !fetch && t->valid) castout(t);
         if (!t->valid) ++c->populated;
@@ -723,7 +726,7 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
 #if defined(ARCDROID_RPC_CROSSCHECK)
         lookup_integrity(c,base+way,1);
 #endif
-        c->victim[set] = (uint8_t)((way + 1) & side->way_mask);
+        c->victim[set] = (uint8_t)((way + 1) & (c->ways-1u));
         Packet *p = append(DEMAND); p->fill = true; p->fetch = fetch;
         for (unsigned n = 0; n < (1u << c->shift) / 4; ++n) word(p, t->physical + n * 4, 4, false);
         ++m.stats.fills; ARC_RPC_PROFILE(fill());
@@ -769,7 +772,10 @@ arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes, bool write, b
 #endif
 static void invalidate(Cache *c)
 {
-    for (unsigned i = 0; i < c->sets * c->ways; ++i) {
+    if (!lookup_side(c)->gate || lookup_side(c)->gate == 3) {
+        for (unsigned i = 0; i < c->sets * c->ways; ++i)
+            c->tags[i].valid = c->tags[i].dirty = 0;
+    } else for (unsigned i = 0; i < c->sets * c->ways; ++i) {
         Tag tag=c->tags[i]; tag.valid=tag.dirty=0;
         tag_write(c,i,tag);
     }
