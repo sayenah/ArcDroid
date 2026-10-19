@@ -88,6 +88,16 @@ struct ArcIoFile {
    size_t memory_size;
    size_t memory_at;
 };
+#if defined(ARCDROID_RPC_LOCKSTEP)
+void arc_io_lockstep_file(const ArcIoFile *file,ArcIoLockstepFile *out)
+{
+   _Static_assert(sizeof((ArcIoFile){NULL,false,NULL,NULL,0,0})==sizeof(ArcIoFile),
+                  "classified VFS file members");
+   *out=(ArcIoLockstepFile){0};
+   if(file)*out=(ArcIoLockstepFile){true,file->writable,file->handle!=NULL,
+      file->memory,file->memory_size,file->memory_at};
+}
+#endif
 
 typedef struct { const uint8_t *data; size_t size; } ArcMemorySource;
 static ArcMemorySource arc_memory[2];
@@ -275,7 +285,11 @@ bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
    memcpy(prefix, path, at); prefix[at] = 0;
    if (!arc_io_is_directory_counted(prefix, operations)) {
       ++*operations; ++*namespace_operations;
-      if (arc_io_vfs->mkdir(prefix) != 0) return false;
+      int made=arc_io_vfs->mkdir(prefix);
+      if(made!=0){
+         if(made!=-2)return false;
+         if(!arc_io_is_directory_counted(prefix,operations))return false;
+      }
    }
    *cursor = at + 1; *done = at == length; return true;
 }

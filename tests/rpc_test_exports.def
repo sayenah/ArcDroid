@@ -1,8 +1,15 @@
 ; Non-installed test DLL seams only. GPL-2.0-only.
 EXPORTS
+  arc_rpc_test_lockstep_sink
+  arc_rpc_test_lockstep_status
+  arc_rpc_test_lockstep_end
+  arc_rpc_observer_complete
+  arc_rpc_observer_generation
   arc_rpc_session_test_rate
   arc_engine_test_cmos_write
   arc_engine_test_cmos_image
+  arc_engine_test_fail_rpc_mount
+  arc_riscpc_test_fail_helper
   arc_engine_test_floppy_mount
   arc_engine_test_floppy_eject
   arc_engine_test_ide_backend
@@ -16,6 +23,7 @@ EXPORTS
   arc_libretro_test_content_id
   arc_libretro_test_cmos_path
   arc_libretro_test_staged_path
+  arc_libretro_test_jfd_commit
 
   ; R3c-2 frontend arbitration probe (no shipping export).
   arc_libretro_test_pad_source_level

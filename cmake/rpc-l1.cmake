@@ -97,5 +97,5 @@ if(TARGET rpc_l1_crosscheck_test AND CMAKE_GENERATOR STREQUAL "Ninja" AND NOT AN
   # Run B's five configurations: local 2492 s / sanitizer subset sum 2558.37 s.
   # Run C adds two gates and their poison legs (nine configurations); scale
   # the established twice-observed allowance. Native Windows awaits CI.
-  set_tests_properties(rpc-l1-corpus PROPERTIES TIMEOUT 12960 RUN_SERIAL TRUE)
+  set_tests_properties(rpc-l1-corpus PROPERTIES TIMEOUT 12960 RUN_SERIAL TRUE LABELS slow)
 endif()

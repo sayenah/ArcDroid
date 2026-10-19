@@ -123,6 +123,10 @@ static ArcIoFile *open_record(ArcRpcCmosStore *s, const char *p, bool create) {
     s->stats.metadata += s->stats.operations - before;
     return f;
 }
+static bool held(ArcRpcCmosStore *s)
+{ return s && arc_lock_held(s->owner); }
+static bool owned(ArcRpcCmosStore *s)
+{ return s && arc_lock_held(s->owner) && arc_lock_verify(s->owner)==ARC_LOCK_HELD; }
 static bool close_record(ArcRpcCmosStore *s, ArcIoFile *f) {
     meta(s);
     return arc_io_close_file(f);
@@ -176,12 +180,14 @@ static void retry(ArcRpcCmosStore *s, char *e, size_t n) {
 }
 ArcRpcCmosResult arc_riscpc_cmos_store_begin(ArcRpcCmosStore *s,
                                              const char *save,
-                                             const ArcRpcCmosKey *k, char *e,
+                                             const ArcRpcCmosKey *k, ArcLock *owner, char *e,
                                              size_t n) {
+    if(!s)return ARC_RPC_CMOS_REFUSED;
     memset(s, 0, sizeof(*s));
+    s->owner=owner;
     if (e && n)
         *e = 0;
-    if (!k) {
+    if (!k || !arc_lock_held(owner)) {
         s->refused = s->reconciled = true;
         fail(e, n, "invalid key");
         return ARC_RPC_CMOS_REFUSED;
@@ -218,6 +224,7 @@ invalid:
 }
 ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *s, char *e,
                                             size_t n) {
+    if(!held(s)){fail(e,n,"RiscPC settings ownership unavailable");return ARC_RPC_CMOS_UNAVAILABLE;}
     if (s->reconciled || s->exhausted || s->putting) {
         begin_count(s);
         end_count(s);
@@ -238,8 +245,9 @@ ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *s, char *e,
             retry(s, e, n);
             s->phase = 0;
             s->path_cursor = 0;
-        } else if (done)
-            s->phase = 1;
+        } else if (done){
+            (void)arc_riscpc_cmos_store_unsaved(s);s->phase = 1;
+        }
         break;
     }
     case 1:
@@ -344,9 +352,9 @@ ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *s, char *e,
 }
 ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *s,
                                             const char *save,
-                                            const ArcRpcCmosKey *k, char *e,
+                                            const ArcRpcCmosKey *k, ArcLock *owner, char *e,
                                             size_t n) {
-    ArcRpcCmosResult r = arc_riscpc_cmos_store_begin(s, save, k, e, n);
+    ArcRpcCmosResult r = arc_riscpc_cmos_store_begin(s, save, k, owner, e, n);
     while (r == ARC_RPC_CMOS_INSPECTING)
         r = arc_riscpc_cmos_store_step(s, e, n);
     return r;
@@ -355,13 +363,13 @@ bool arc_riscpc_cmos_store_put_begin(ArcRpcCmosStore *s,
                                      const uint8_t payload[240],
                                      const ArcRpcCmosEvidence *e, char *error,
                                      size_t n) {
-    if (s->refused || !s->reconciled || s->publication_pending || s->putting ||
+    if (!owned(s) || s->refused || !s->reconciled || s->publication_pending || s->putting ||
         s->generation == UINT64_MAX)
         return fail(error, n,
                     "publication refused while inspection is incomplete or "
                     "data is refused");
     if (s->present && !memcmp(s->payload, payload, 240)) {
-        s->phase = 100;
+        s->putting=s->marker_present;s->phase=s->marker_present?17:100;
         return true;
     }
     if (s->key.defaults &&
@@ -375,6 +383,7 @@ bool arc_riscpc_cmos_store_put_begin(ArcRpcCmosStore *s,
 bool arc_riscpc_cmos_store_put_step(ArcRpcCmosStore *s, bool *done, char *e,
                                     size_t n) {
     *done = false;
+    if(!held(s))return fail(e,n,"RiscPC settings ownership unavailable");
     if (s->phase == 100) {
         begin_count(s);
         end_count(s);
@@ -466,15 +475,22 @@ bool arc_riscpc_cmos_store_put_step(ArcRpcCmosStore *s, bool *done, char *e,
             if (ok) {
                 ++s->generation;
                 s->present = true;
-                s->publication_pending = s->putting = false;
+                s->publication_pending = false;
                 memcpy(s->payload, s->candidate + 104, 240);
                 s->evidence = evidence;
-                s->phase = 100;
-                *done = true;
+                s->phase = 17;
             }
         } else
             fail(e, n, "published-slot verification failed");
         break;
+    case 17: {
+        char marker[1040];path(s,".unsaved",marker);
+        if(arc_riscpc_cmos_store_unsaved(s)){
+            meta(s);++s->stats.namespace_operations;ok=arc_io_remove(marker);
+        }
+        if(ok){s->marker_present=false;s->putting=false;s->phase=100;*done=true;}
+        break;
+    }
     default:
         ok = false;
         break;
@@ -513,4 +529,25 @@ bool arc_riscpc_cmos_store_seed(ArcRpcCmosStore *s, const uint8_t payload[240],
     if (!s->reconciled || s->present || s->refused || s->publication_pending)
         return fail(e, n, "seed requires verified record absence");
     return arc_riscpc_cmos_store_put(s, payload, NULL, e, n);
+}
+
+bool arc_riscpc_cmos_store_unsaved(ArcRpcCmosStore *s)
+{
+    if(!s || s->key.defaults)return false;
+    if(!s->marker_checked){
+        char marker[1040];size_t bytes;meta(s);
+        s->marker_present=path(s,".unsaved",marker) && arc_io_metadata(marker,&bytes)==ARC_IO_METADATA_FILE && bytes==0;
+        s->marker_checked=true;
+    }
+    return s->marker_present;
+}
+bool arc_riscpc_cmos_store_mark_unsaved(ArcRpcCmosStore *s)
+{
+    if(!owned(s) || s->key.defaults || s->refused)return false;
+    char marker[1040];if(!path(s,".unsaved",marker))return false;
+    ArcIoFile *file=arc_io_create_file(marker);if(!file)return false;
+    bool ok=arc_io_flush_file(file);bool closed=arc_io_close_file(file);
+    if(ok&&closed){s->marker_checked=s->marker_present=true;}
+    else if(owned(s)){(void)arc_io_remove(marker);s->marker_checked=true;s->marker_present=false;}
+    return ok&&closed;
 }

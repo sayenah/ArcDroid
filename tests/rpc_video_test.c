@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rpc_lockstep_test_sink.h"
 #ifdef _WIN32
 #include <windows.h>
 static HMODULE library;
@@ -364,6 +365,7 @@ int main(int argc,char **argv)
     assert(library);
     void *reference=symbol("arc_rpc_crosscheck_status");
     if(reference)memcpy(&reference_status,&reference,sizeof(reference_status));
+    rpc_golden_begin(symbol,model);
     LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
@@ -382,6 +384,7 @@ int main(int argc,char **argv)
         while(api->run_frame(&input,&f))assert(++attempts<=16);
         assert(api->faulted(NULL));api->stop();fail_alloc(0);
     }
+    rpc_golden_finish();
 #ifdef _WIN32
     FreeLibrary(library);
 #else

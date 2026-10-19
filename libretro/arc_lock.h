@@ -28,11 +28,15 @@ typedef struct {
 } ArcLockBackend;
 
 /* Owned, non-copyable token. Initialize before use; release before reinitializing.
- * Fields are private to arc_lock.c; exposed only to allow caller-owned storage. */
+ * Native fields are private to arc_lock.c; exposed for caller-owned storage.
+ * The owner may configure the optional identity measurement hook after init;
+ * it receives only before/after state, and must not perform store/lock work. */
 typedef struct {
     const ArcLockBackend *backend;
     void *opaque;
     intptr_t handle;
+    void (*identity_observer)(void *, bool); /* Optional measurement: before/after native identity. */
+    void *identity_opaque;
     char path[4096];
     size_t directory_length, cursor;
     bool valid, opened, held, lost, parents_done;

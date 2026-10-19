@@ -296,6 +296,12 @@ int main(int argc,char **argv)
                 assert(!s.engine_rpc && !s.fault && !s.fault_text);
             }}
             if(scenario==0){uint64_t kept=h_state().id;h_reset();assert(h_state().id==kept);h_run();}
+            if(scenario==4){
+                /* The host owns terminal retention now. Restart must erase
+                 * the retained slot before a fresh pending presentation. */
+                for(unsigned i=0;i<65;++i)h_run();h_reset();
+                assert(phase()==1 && !terminal_active && !(h_state().retained&32u));
+            }
             if(scenario==0||scenario==7){
                 h_keyboard.callback(true,RETROK_a,0,0);h_pad=1;h_run();
                 h_l3=true;h_run();h_l3=false;
@@ -323,6 +329,7 @@ int main(int argc,char **argv)
             struct retro_game_info g=h_game(path);h_refusal_logs=h_refusal_notices=h_storage_notices=h_flush_failures=0;
             assert(h_load(&g));settle(h_run);uint32_t marker=0;
             for(unsigned i=0;!h_refusal_notices;++i){assert(i<200);h_run();}
+            if(h_refusal_logs!=1 || h_refusal_notices!=1 || h_storage_notices)fprintf(stderr,"refusal counters: logs=%u notices=%u storage=%u\n",h_refusal_logs,h_refusal_notices,h_storage_notices);
             assert(h_refusal_logs==1&&h_refusal_notices==1&&!h_storage_notices);
             unsigned refusal_frames=0;
             while(marker!=3){assert(refusal_frames++<200);h_run();assert(h_ram(0x20000,&marker));

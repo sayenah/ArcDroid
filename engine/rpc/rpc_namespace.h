@@ -5,6 +5,11 @@
 #ifndef ARC_RPC_NAMESPACE_H
 #define ARC_RPC_NAMESPACE_H
 
+#if defined(ARCDROID_RPC_LOCKSTEP) && (defined(ARCDROID_RPC_MEASUREMENT) || \
+    !defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_RPC_PROFILE) || defined(ARCDROID_RPC_CROSSCHECK))
+#error "ARCDROID_RPC_LOCKSTEP requires hot test hooks without measurement/profile/crosscheck"
+#endif
+
 /* API-only measurement RPC objects retain shipping hot preprocessing. */
 #if defined(ARCDROID_RPC_MEASUREMENT)
 #define ARCDROID_TEST_API 1

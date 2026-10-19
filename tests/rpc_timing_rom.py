@@ -225,5 +225,5 @@ def main(path):
         rows.append('{"%s",%d,%d,rpc_timing_words_%d,%d,%d,%d,%d,%d,%d}' %
                     (c['name'],c['model'],c['rate'],i,len(w),first,last,t.numerator,t.denominator,int(c.get('drained',c.get('wb',False)))))
     out.append('static const RpcTimingCase rpc_timing_cases[]={'+',\n'.join(rows)+'};')
-    Path(path).write_text('\n'.join(out)+'\n')
+    Path(path).write_text('\n'.join(out)+'\n', encoding='utf-8')
 if __name__=='__main__':main(sys.argv[1])

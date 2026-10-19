@@ -384,3 +384,19 @@ Thread `01a13e62-8e2e-7f10-b35a-de57821ce0e7` (the 6b thread), report `.work/s67
 - **A-32 (A-11 at this head).** The plan core refuses guest-RAM reads after a fatal (`engine/rpc/rpc_session.c:598`), and M2a may not edit sources. The fatal items keep their register and terminal-fault expectations; their committed-RAM expectation is labelled **awaiting emitter**. M2b's fatal record carries the RAM page hashes and the committed write and MMIO logs up to the fatal (A-11), and M2c owns reload after fatal.
 - **A-33 (AC-7 on fatal frames, Q-9).** On a frame that ends in an E8 fatal, the runner's frame instruction count (`cpu=`) depends on the quota, because `arc_rpc_executed` is updated only when a batch returns and the fatal unwind skips that accounting. That count is post-fatal diagnostic state, outside equivalence under Q-9. The cross-quota comparison mode (A-25(b)) therefore excludes the frame instruction count on the first frame whose `fault=1` appears, by a named schema rule citing Q-9. Strict same-quota comparison keeps it, and every other field of that frame and every non-fatal frame stays compared. A comparator test shows the rule applies only to that frame and field. M2b defines the executed count at a fatal exactly (A-29).
 - **A-34 (inventory classes).** `arc_rpc_jump` (the host continuation used only to unwind a fatal), `arc_rpc_logger` and `arc_rpc_logger_opaque` (the frontend's log callback and its context) are **host-only, excluded**: they hold no guest-visible state, their values are host addresses that legitimately differ between processes, and they are rebound by the frontend at session start. The inventory records each with this reason.
+
+## M2b citation refresh (S67, merge-base `0966af3`)
+
+This refresh locates the existing obligations after the 1a-0 macro split;
+A-1 through A-34 remain binding. The shared loop starts at `arm.c:572`, P0
+precedes `:592`, instruction end is `:1963`, and the wrapper is `:2057`.
+The accessors are `mem.c:704,713,722,731`; CP15 write/read are
+`cp15.c:163,300`, successful translation attributes are assigned at `:449`,
+and the generic fetch implementation starts at `:494`. Timing access is
+`rpc_mem_timing.c:498`, flush `:644`, ready `:886`, and continuation/service
+`:901`. Session fatal is `rpc_session.c:117`, successful generation update
+`:283`, reset `:321`, instruction budget `:430`, and test-rate rebind `:633`.
+Request/packet budgets are `rpc_mem_timing.c:333,344`, and time-overflow checks
+are `:211,217`. These are pinned merge-base citations, rather than line numbers
+in the changing emitter working tree. The v1 points and projections are in
+`riscpc-lockstep-harness.md`; H-2 consumption remains deferred to B-0 per M12.

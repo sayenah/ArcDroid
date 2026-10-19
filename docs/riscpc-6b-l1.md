@@ -590,3 +590,33 @@ mutants skip the first check or move it behind hint validation. Separately named
 SA-only measurement targets preserve the production SA linear default pending
 Fable's selection run 3. The resolved incoming-main tree is the Run C identity
 baseline, so R3c-3b and W8/W9 changes are present on both sides of that comparison.
+
+## SA-110 selection run 3 (Fable, S68)
+
+Run C's variant cores (way0-hint, way0-mirror), the same procedure, workloads and D-201 bands; 72 runs, all rc 0; device at normal speed throughout (battery 87 % to 55 % with the S68 battery guard, no pause). p50 change against linear, per order:
+
+| Workload | way0-hint | way0-mirror | Band₅₀ / band₉₅ |
+|---|---|---|---|
+| 031 (deciding) | −11.89 % / −12.60 % (p95 −11.55 % / −12.41 %) | −11.85 % / −11.74 % (p95 −11.66 % / −11.46 %) | 0.80 % / 0.62 % |
+| warm (guard) | −0.90 % / −2.29 % | −2.15 % / −1.88 % | 0.50 % / 0.50 % |
+| ldm-stm8 (guard) | −2.96 % / −2.27 % | −2.00 % / −2.30 % | 0.50 % / 0.50 % |
+
+Both candidates qualify (031 gain beyond band in both orders; no guard regression — both guards now improve). The 031 gains lie within each other's band₅₀, so the tie rule selects **way0-hint** (fewer mechanisms). **SA-110 gate: way0-hint.** The rule-4 confirmation run (L1 off against the way0-hint core on hot, warm, stream-sa110, stream-arm710, ldm-stm8 and 031) started on the Odin3 at 21:40 on 2026-10-18.
+
+### Run D implementation note (Sol, 2026-10-18)
+
+Before code: selection run 3 above fixes the production SA-110 I/D gate to
+way0-hint (gate 3), derived from the bound 16-set/32-way geometry. ARM610
+remains hint plus mirror; ARM710/ARM7500 remain linear. All six named
+measurement variants remain available, including all-geometries forced-off.
+M2b's owning-TU timing and session serializers coexist with the L1 lifecycle
+accessors. Canonical fields retain main's generated emitter and policy. Only
+the fifteen individual derived L1 leaves retain D-200(6)'s exclusions, with
+explicit C member/capacity probes and per-field reviewed reasons; no canonical
+cache, packet, timing or session field is excluded for L1. Their metadata
+does not change v1 compatibility. Immediate-predecessor lockstep uses main's
+runner/core pair and this tree's pair. Actual H-2 block exits remain deferred
+to B-0 by M2b's binding M12 ruling; quota schedules are separate evidence.
+W10/D-209 applies: affected local tests, the non-slow lockstep subset, and
+explicitly slow-labelled L1 corpus/mutant matrices; full-suite CI and private
+device confirmation remain Fable's legs.

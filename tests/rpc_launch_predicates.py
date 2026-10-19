@@ -26,6 +26,7 @@ SCOPE={
  'core/rpc_launch_helper.c':('carrier',{'arc_riscpc_helper_carrier'}),
  'engine/arcdroid_engine.c':('engine',{'arc_engine_rpc_launch_bind','arc_engine_rpc_launch_input','arc_engine_rpc_launch_interrupt','arc_engine_rpc_launch_media_changed'}),
 }
+SCOPE['libretro/rpc_preparation_host.c']=('host',None)
 SCOPE['libretro/arcdroid_libretro.c'][1].update({'arc_disk_rpc_pending','arc_rpc_plan_restage_drive0','arc_rpc_plan_drive1_view','arc_rpc_plan_drive1_writable'})
 
 def masked(text):
@@ -158,7 +159,7 @@ def main():
  parsed=[split_command(s,os.name=='nt') for c in commands for s in c.split('&&') if ' -o ' in s]
  suffix='.dll' if os.name=='nt' else '.dylib' if sys.platform=='darwin' else '.so'
  exe_suffix='.exe' if os.name=='nt' else ''
- targets={'attempt':'rpc_launch_test','record':'rpc_launch_test','controller':'rpc_launch_controller_test','carrier':'rpc_launch_controller_test','publisher':'rpc_launch_record_store_test','cmos':'rpc_cmos_store_test','boot':'boot_watch_test','outcome':'launch_outcome_test','adapter':'rpc_observers_test','product':'rpc_launch_product_test','filecore':'rpc_launch_product_test','preparation':'rpc_orchestration_test','frontend':'arcdroid_rpcplan_libretro','binding':'arcdroid_rpcplan_libretro','engine':'arcdroid_rpcplan_libretro','generation':'arcdroid_rpcplan_libretro'}
+ targets={'attempt':'rpc_launch_test','record':'rpc_launch_test','controller':'rpc_launch_controller_test','carrier':'rpc_launch_controller_test','publisher':'rpc_launch_record_store_test','cmos':'rpc_cmos_store_test','boot':'boot_watch_test','outcome':'launch_outcome_test','adapter':'rpc_observers_test','product':'rpc_launch_product_test','filecore':'rpc_launch_product_test','preparation':'rpc_orchestration_test','host':'rpc_orchestration_test','frontend':'arcdroid_rpcplan_libretro','binding':'arcdroid_rpcplan_libretro','engine':'arcdroid_rpcplan_libretro','generation':'arcdroid_rpcplan_libretro'}
  results=[];baselines=set()
  with tempfile.TemporaryDirectory(prefix='arc-predicate-') as tmp:
   tmp=Path(tmp)
@@ -309,6 +310,7 @@ static bool arc_predicate_refresh(ArcMediaEntry *,ArcDiskWriteMode,ArcJfdWritePo
    if group in ('attempt','record'):command += [group,str(fixtures)]
    if group=='product':command += []
    if group=='boot':command += [str(fixtures)]
+   if group=='host':command=[sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(binary),str(fixtures),'host-b']
    if group=='preparation':command=[sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(binary),str(fixtures),'launch']
    if group in ('frontend','binding','engine'):command=[sys.executable,'-B',str(root/'tests/rpc_launch_publication_test.py'),str(build/('rpc_runner'+exe_suffix)),str(binary),str(build/('rpc_launch_controller_test'+exe_suffix)),str(fixtures)]
    if group=='generation':command=[sys.executable,'-B',str(root/'tests/rpc_cmos_plan_test.py'),str(build/('rpc_cmos_plan_test'+exe_suffix)),str(binary),str(build/('rpc_runner'+exe_suffix)),str(build/('arcdroid_libretro'+suffix)),str(fixtures),'0','full','full']

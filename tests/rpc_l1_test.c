@@ -178,8 +178,8 @@ static void directed(unsigned model,bool data,unsigned gate)
     for(unsigned i=0;i<512;++i){assert(l1_instruction.keys[i]==UINT32_MAX && l1_data.keys[i]==UINT32_MAX);
         assert(l1_instruction.hints[i]==255 && l1_data.hints[i]==255);}
     arc_rpc_mem_bind(&test_clock,(model+1)%4,100);
-    assert(l1_instruction.gate==((model+1)%4==0?2u:0u));
-    assert(l1_data.gate==0);integrity(&m.instruction);integrity(&m.data);
+    assert(l1_instruction.gate==((model+1)%4==0?2u:((model+1)%4==2?3u:0u)));
+    assert(l1_data.gate==3); /* Bound SA D geometry, unused by unified models. */integrity(&m.instruction);integrity(&m.data);
 }
 /* Own types and algorithms: no lookup/tag_write/cache_for helper shared with
  * the candidate. Invalid VA/physical are excluded, dirty is always checked. */

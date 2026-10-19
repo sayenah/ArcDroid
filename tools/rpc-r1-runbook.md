@@ -712,7 +712,7 @@ Select exact recorded frame bounds within that workload's measured window for
 
 Configure a separate Release tree with `-DARCDROID_RPC_L1_VARIANTS=ON`.
 The default measurement core retains the shipping gates: ARM610 hint+mirror,
-ARM710/ARM7500 linear, SA-110 linear until Fable records its selection.
+ARM710/ARM7500 linear, SA-110 way0-hint (selection run 3, S68).
 These separately named measurement targets retain shipping-shaped flags and
 carry no counters, hint poison or cross-check. Their gate macro survives the
 measurement core's TEST_FAULTS undefinition:
@@ -725,6 +725,8 @@ cmake --build /private/tmp/arcdroid-l1-measure-host -j3 --target rpc_runner \
   arcdroid_rpcmeasure_l1_sa_linear_libretro \
   arcdroid_rpcmeasure_l1_sa_hint_libretro \
   arcdroid_rpcmeasure_l1_sa_mirror_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_hint_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_mirror_libretro \
   arcdroid_rpcmeasure_l1_off_libretro
 ```
 
@@ -745,10 +747,12 @@ cmake --build /private/tmp/arcdroid-l1-measure-android -j3 --target rpc_runner \
   arcdroid_rpcmeasure_l1_sa_linear_libretro \
   arcdroid_rpcmeasure_l1_sa_hint_libretro \
   arcdroid_rpcmeasure_l1_sa_mirror_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_hint_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_mirror_libretro \
   arcdroid_rpcmeasure_l1_off_libretro
 ```
 
-`sa_linear`, `sa_hint` and `sa_mirror` set both SA caches to 0/1/2 while keeping
+`sa_linear`, `sa_hint`, `sa_mirror`, `sa_way0_hint` and `sa_way0_mirror` set both SA caches to 0/1/2/3/4 while keeping
 the other frozen gates. `off` forces every cache linear for CG-10. Files use
 those target names plus the platform library suffix (Android additionally
 `_android.so`). Run each with the runner from this revision and the unchanged
@@ -761,10 +765,10 @@ arguments. A runner/core pair must come from one revision; compare the base
 with its own runner and the candidate with its own runner. JSON remains schema
 2 with scalar names appended and histogram offsets changed in the binary ABI.
 
-For local correctness, `ARCDROID_RPC_L1_TEST_GATE=0|1|2` changes test cores only;
+For local correctness, `ARCDROID_RPC_L1_TEST_GATE=0|1|2|3|4` changes test cores only;
 `ARCDROID_RPC_L1_POISON=ON` poisons test hints only. Default measurement and
 shipping cores ignore both options. `rpc-l1-corpus` constructs isolated test
-cores for default/linear/hint/mirror/poison, with the retained reference enabled,
+cores for default/linear/hint/mirror/way0-hint/way0-mirror and hint-poison variants, with the retained reference enabled,
 and runs 25 immutable goldens, all calibration intervals and observation plans.
 `tests/rpc_l1_corpus_test.py BUILD --variants 2 poison` selects a smaller rerun.
 
@@ -775,3 +779,57 @@ preprocessor, ABI and sanitizer flag and all assertions. This supplies a second
 optimization level while avoiding five repetitions of the 485-million-attempt
 Debug SA calibration. These temporary correctness cores are never measurement
 cores and never decide benefit.
+
+## M2b lockstep core and v1 driver
+
+The opt-in `ARCDROID_RPC_LOCKSTEP=ON` builds the non-installed host core
+`arcdroid_rpclockstep_libretro`; Android never builds it. It has capability bit
+32. All other test cores export explicit refusing sink/status/End stubs, with
+bit 32 absent. Shipping exports no lockstep API. R-M2b-S1's measurement exception
+is confined to the enumerated session stubs; the named hot objects stay equal.
+
+```sh
+cmake -S . -B /private/tmp/arcdroid-m2b-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DARCDROID_RPC_LOCKSTEP=ON \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build /private/tmp/arcdroid-m2b-host -j3
+ctest --test-dir /private/tmp/arcdroid-m2b-host -R '^rpc-lockstep-' --output-on-failure -j3
+python3 -B tools/rpc_lockstep_run.py \
+  --baseline-runner /private/tmp/arcdroid-m2b-host/rpc_runner \
+  --baseline-core /private/tmp/arcdroid-m2b-host/arcdroid_rpclockstep_libretro.dylib \
+  --candidate-runner /private/tmp/arcdroid-m2b-host/rpc_runner \
+  --candidate-core /private/tmp/arcdroid-m2b-host/arcdroid_rpclockstep_libretro.dylib \
+  --plan /private/tmp/arcdroid-m2b-host/generated/rpc-lockstep/ac-h2-0.arcplan \
+  --system /private/tmp/arcdroid-m2b-host/generated/rpc-lockstep \
+  --model 0 --mode strict --density every-instruction --frames 1
+```
+
+Supply schedule/configuration SHA-256 inputs with `--schedule-hash` and
+`--configuration-hash`; these must identify the complete agreed input set.
+The default plan hash is SHA-256 of the plan bytes. For two revisions, supply
+two explicit runner/core pairs. Cross-quota and observer modes require the
+reviewed v1 projections; a discovered oracle disagreement is reported under
+AC-8, never silently suppressed. `--hash-only` limits reports to hashes.
+
+The runner also accepts `--lockstep-stream`, `--lockstep-role`,
+`--lockstep-density`, `--lockstep-mode`, `--lockstep-p1`, `--lockstep-detail A:B`,
+`--lockstep-stop-after K`, `--lockstep-key-context GENERATION:EPOCH`, and the
+explicit plan/schedule/configuration hashes. A:B and K are emitter instruction
+ordinals; stop-after ends after the containing frame. Context zero is a
+wildcard. The driver carries the original generation and epoch into a rerun,
+retains its compact prefix and requests detail only at the mismatching attempt.
+Each peer has a separate mutable save directory. The header model defaults to
+the plan model; `--model` explicitly overrides it.
+The driver uses POSIX FIFOs and bounded Windows temporary files, closes its
+readers and terminates only its own child handles on failure. A detail rerun
+must reproduce the original compact groups and matching prefix before its leaf
+finding is accepted. Changed or earlier divergence is `non-deterministic`.
+
+Full audit checks all fixed 64 MiB RAM plus up to 2 MiB VRAM at P3 against an
+independent log-applied shadow. It cannot establish a write-and-restore between
+P3s. R-M2b-S2 budget-fatal probes are **injected**, only in the lockstep class;
+bad-mode is guest-reachable, and clock-time overflow remains unexercised.
+All stream scratch is deleted after a run. Private-title streams contain data
+values: keep them in private scratch, delete them, and never upload them.
+Generated tables and authored fixture bytes belong in build trees, never git.
+Delete `/private/tmp/arcdroid-m2b-*` intermediate trees when finished.

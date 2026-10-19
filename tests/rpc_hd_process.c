@@ -3,6 +3,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #endif
+#include "rpc_native_store_owner.h"
 #include "rpc_hd_store.h"
 #include "arc_io.h"
 #include <assert.h>
@@ -109,12 +110,20 @@ static void idle(ArcRpcHdStore *s)
 {ArcRpcHdStats a;for(unsigned n=0;n<4096;++n){arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(!a.read_only);if(a.state==ARC_RPC_HD_IDLE)return;}assert(0);}
 static const char *id="0123456789012345678901234567890123456789";
 static ArcRpcHdStore *open_store(bool blank)
-{char error[256];observed_store=NULL;ArcRpcHdStore *s=arc_riscpc_hd_open(save_directory,id,blank,error,sizeof(error));if(!s)fprintf(stderr,"open: %s\n",error);assert(s);observed_store=s;return s;}
+{char error[256];observed_store=NULL;ArcRpcHdStore *s=arc_riscpc_hd_open(save_directory,id,blank,rpc_native_test_owner(save_directory,id),error,sizeof(error));if(!s)fprintf(stderr,"open: %s\n",error);assert(s);observed_store=s;return s;}
 static void sector(ArcRpcHdStore *s,unsigned lba,unsigned value)
 {uint8_t p[512];assert(arc_riscpc_hd_read(s,lba,1,p));for(unsigned i=0;i<512;++i)assert(p[i]==value);}
 int main(int argc,char **argv)
 {
     assert(argc==5);assert(canonical(argv[1],save_directory));arc_io_set_vfs(&vfs);vfs.readdir=no_listing;
+    if(!strcmp(argv[2],"ownership-hold") || !strcmp(argv[2],"ownership-try")){
+        ArcLock owner;assert(arc_lock_content(&owner,save_directory,argv[3],NULL,NULL)==ARC_LOCK_TRANSIENT);
+        ArcLockResult result;unsigned attempts=0;
+        do{result=arc_lock_acquire(&owner);assert(++attempts<32);}while(result==ARC_LOCK_TRANSIENT);
+        if(!strcmp(argv[2],"ownership-try")){assert(result==ARC_LOCK_CONTENDED);puts("contended");}
+        else{assert(result==ARC_LOCK_HELD);puts("held");fflush(stdout);char command[32];assert(fgets(command,sizeof(command),stdin));}
+        arc_lock_release(&owner);vfs_assert_no_open_handles();return 0;
+    }
     vfs.open=observed_open;vfs.close=observed_close;vfs.size=observed_size;vfs.seek=observed_seek;vfs.tell=observed_tell;
     vfs.read=observed_read;vfs.write=observed_write;vfs.flush=observed_flush;vfs.stat=observed_stat;
     vfs.remove=observed_remove;vfs.rename=observed_rename;
@@ -123,22 +132,22 @@ int main(int argc,char **argv)
         if(!strcmp(mode,"write")){
             boundary=0;trace_active=true;cut=(unsigned)strtoul(argv[4],NULL,10);
             ArcRpcHdStore *s=open_store(true);idle(s);
-            printf("boundaries=%u\n",boundary);arc_riscpc_hd_close(s);return 0;
+            printf("boundaries=%u\n",boundary);arc_riscpc_hd_close(s,false);return 0;
         }
         assert(!strcmp(mode,"verify"));
         ArcRpcHdStore *s=open_store(false);ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);
         uint8_t p[512];
         if(a.published)assert(arc_riscpc_hd_read(s,6,1,p)&&p[3]==0x20);
         else assert(!arc_riscpc_hd_read(s,6,1,p));
-        arc_riscpc_hd_close(s);s=open_store(true);idle(s);arc_riscpc_hd_stats(s,&a);
+        arc_riscpc_hd_close(s,false);s=open_store(true);idle(s);arc_riscpc_hd_stats(s,&a);
         assert(a.published&&arc_riscpc_hd_read(s,6,1,p)&&p[3]==0x20);
-        arc_riscpc_hd_close(s);return 0;
+        arc_riscpc_hd_close(s,false);return 0;
     }
     if(!strcmp(mode,"prepare")){
         ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072];memset(p,0x31,sizeof(p));
         assert(arc_riscpc_hd_population_begin(s));for(unsigned i=0;i<3;++i)assert(arc_riscpc_hd_population_write(s,2048+i*512,256,p));
         assert(arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s));idle(s);
-        memset(p,0x73,512);assert(arc_riscpc_hd_write(s,70000,1,p));arc_riscpc_hd_close(s);return 0;
+        memset(p,0x73,512);assert(arc_riscpc_hd_write(s,70000,1,p));arc_riscpc_hd_close(s,false);return 0;
     }
     if(!strcmp(mode,"verify")){
         ArcRpcHdStore *s=open_store(false);ArcRpcHdStats recovered;arc_riscpc_hd_stats(s,&recovered);
@@ -156,7 +165,7 @@ int main(int argc,char **argv)
                 for(unsigned j=0;j<512;++j)assert(p[j]==value);}
         }
         ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.chunk_files<=1008&&a.journal_high<=8388608);
-        assert(a.max_tick_operations<=4096);arc_riscpc_hd_close(s);return 0;
+        assert(a.max_tick_operations<=4096);arc_riscpc_hd_close(s,false);return 0;
     }
     ArcRpcHdStore *s=open_store(false);idle(s);boundary=0;trace_active=true;cut=(unsigned)strtoul(argv[4],NULL,10);
     uint8_t p[131072];memset(p,0x42,sizeof(p));
@@ -186,5 +195,5 @@ int main(int argc,char **argv)
     }else{
         for(unsigned cycle=0;cycle<2;++cycle){for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,2048+(i%3)*512,256,p));idle(s);}
     }
-    printf("boundaries=%u\n",boundary);arc_riscpc_hd_close(s);return 0;
+    printf("boundaries=%u\n",boundary);arc_riscpc_hd_close(s,false);return 0;
 }

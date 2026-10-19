@@ -18,12 +18,15 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): owned configuration-sized memory,
  * checked translations and in-object pointers; no desktop allocations. */
 /* Memory handling */
 #include "rpc_memory.h"
 /* ArcDroid modification (2026-10-14, profiling-6b-p0i): backing writes/MMIO. */
 #include "rpc_profile.h"
+#include "rpc_lockstep.h"
 #include "rpc_observer.h"
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): charge successful CPU attempts only;
@@ -82,7 +85,11 @@ void arc_rpc_memory_close(void)
 #if defined(ARCDROID_TEST_FAULTS)
     (void)arc_rpc_test_prefix_arm(0);
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    arc_rpc_lockstep_free(rom);arc_rpc_lockstep_free(vram);arc_rpc_lockstep_free(ram00);arc_rpc_lockstep_free(ram01);arc_rpc_lockstep_free(ram1);
+#else
     free(rom); free(vram); free(ram00); free(ram01); free(ram1);
+#endif
     rom = vram = ram00 = ram01 = ram1 = NULL;
     romb = ramb00 = ramb01 = ramb1 = vramb = NULL;
     mem_rammask = mem_vrammask = phys_space_mask = 0;
@@ -190,6 +197,11 @@ const uint32_t *arc_rpc_phys_page(uint32_t addr)
 #undef mem_phys_read32
 #define mem_phys_read32 arc_rpc_mem_phys_read32_profile_body
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_read32
+#define mem_phys_read32 arc_rpc_lockstep_body_mem_phys_read32
+static
+#endif
 uint32_t
 mem_phys_read32(uint32_t addr)
 {
@@ -291,6 +303,19 @@ mem_phys_read32(uint32_t addr)
     return result;
 }
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_read32
+#define mem_phys_read32 arc_rpc_mem_phys_read32
+uint32_t mem_phys_read32(uint32_t addr)
+{
+    uint32_t result=arc_rpc_lockstep_body_mem_phys_read32(addr);
+    uint32_t pa=addr&0x1fffffffu;
+    if((pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u))
+        arc_rpc_lockstep_mmio(pa,4,false,result);
+    return result;
+}
+#endif
+
 
 /**
  * Read a byte from a physical address.
@@ -300,6 +325,10 @@ mem_phys_read32(uint32_t addr)
  */
 #if defined(ARCDROID_RPC_PROFILE)
 #define mem_phys_read8 mem_phys_read8_profile_body
+#endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_read8
+#define mem_phys_read8 arc_rpc_lockstep_body_mem_phys_read8
 #endif
 static uint32_t
 mem_phys_read8(uint32_t addr)
@@ -419,6 +448,18 @@ mem_phys_read8(uint32_t addr)
     return result;
 }
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_read8
+static uint32_t mem_phys_read8(uint32_t addr)
+{
+    uint32_t result=arc_rpc_lockstep_body_mem_phys_read8(addr);
+    uint32_t pa=addr&0x1fffffffu;
+    if((pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u))
+        arc_rpc_lockstep_mmio(pa,1,false,result);
+    return result;
+}
+#endif
+
 
 /**
  * Write a 32-bit word to a physical address.
@@ -428,6 +469,10 @@ mem_phys_read8(uint32_t addr)
  */
 #if defined(ARCDROID_RPC_PROFILE)
 #define mem_phys_write32 mem_phys_write32_profile_body
+#endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_write32
+#define mem_phys_write32 arc_rpc_lockstep_body_mem_phys_write32
 #endif
 static void
 mem_phys_write32(uint32_t addr, uint32_t val)
@@ -445,6 +490,9 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 			return;
 		vram[(addr & mem_vrammask) >> 2] = val;
     ARC_RPC_PROFILE(store(vram,addr&mem_vrammask));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(ram_write(addr,4,val));
+#endif
 		dirtybuffer[(addr & mem_vrammask) >> 12] = 1;
 		break;
 
@@ -510,6 +558,9 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x13000000:
 		ram00[(addr & mem_rammask) >> 2] = val;
     ARC_RPC_PROFILE(store(ram00,addr&mem_rammask));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(ram_write(addr,4,val));
+#endif
 		/* In 0MB VRAM modes allow up to 4MB of writes to DRAM video data to update the dirty buffer */
 		if ((mem_vrammask == 0) && ((addr & 0xffc00000) == (iomd.vidstart & 0xffc00000))) {
 			dirtybuffer[(addr & 0x3fffffu) >> 12] = 1;
@@ -522,6 +573,9 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x17000000:
 		ram01[(addr & mem_rammask) >> 2] = val;
     ARC_RPC_PROFILE(store(ram01,addr&mem_rammask));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(ram_write(addr,4,val));
+#endif
 		return;
 
 	case 0x18000000: /* SIMM 1 bank 0 */
@@ -553,6 +607,18 @@ mem_phys_write32(uint32_t addr, uint32_t val)
     arc_rpc_profile_leave(previous);
 }
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_write32
+static void mem_phys_write32(uint32_t addr, uint32_t val)
+{
+    arc_rpc_lockstep_body_mem_phys_write32(addr,val);
+    uint32_t pa=addr&0x1fffffffu;
+    if((pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u))
+        arc_rpc_lockstep_mmio(pa,4,true,val);
+
+}
+#endif
+
 
 /**
  * Write a byte to a physical address.
@@ -562,6 +628,10 @@ mem_phys_write32(uint32_t addr, uint32_t val)
  */
 #if defined(ARCDROID_RPC_PROFILE)
 #define mem_phys_write8 mem_phys_write8_profile_body
+#endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_write8
+#define mem_phys_write8 arc_rpc_lockstep_body_mem_phys_write8
 #endif
 static void
 mem_phys_write8(uint32_t addr, uint8_t val)
@@ -582,6 +652,9 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 #endif
 		vramb[addr & mem_vrammask] = val;
     ARC_RPC_PROFILE(store(vram,addr&mem_vrammask));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(ram_write(addr,1,val));
+#endif
 		dirtybuffer[(addr & mem_vrammask) >> 12] = 1;
 		return;
 
@@ -649,6 +722,9 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 #endif
 		ramb00[addr & mem_rammask] = val;
     ARC_RPC_PROFILE(store(ram00,addr&mem_rammask));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(ram_write(addr,1,val));
+#endif
 		/* In 0MB VRAM modes allow up to 4MB of writes to DRAM video data to update the dirty buffer */
 		if ((mem_vrammask == 0) && ((addr & 0xffc00000) == (iomd.vidstart & 0xffc00000))) {
 			dirtybuffer[(addr & 0x3fffffu) >> 12] = 1;
@@ -664,6 +740,9 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 #endif
 		ramb01[addr & mem_rammask] = val;
     ARC_RPC_PROFILE(store(ram01,addr&mem_rammask));
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(ram_write(addr,1,val));
+#endif
 		return;
 
 	case 0x18000000: /* SIMM 1 bank 0 */
@@ -698,44 +777,98 @@ mem_phys_write8(uint32_t addr, uint8_t val)
     arc_rpc_profile_leave(previous);
 }
 #endif
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#undef mem_phys_write8
+static void mem_phys_write8(uint32_t addr, uint8_t val)
+{
+    arc_rpc_lockstep_body_mem_phys_write8(addr,val);
+    uint32_t pa=addr&0x1fffffffu;
+    if((pa>=0x03000000u && pa<0x04000000u) || (pa>=0x08000000u && pa<0x10000000u))
+        arc_rpc_lockstep_mmio(pa,1,true,val);
+
+}
+#endif
+
 
 /* Every data path, including LDRT/STRT, checks tagged permissions before
  * touching the physical bus. No privilege-dependent host-pointer cache. */
 uint32_t readmemfl(uint32_t addr)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(2,1));
+#endif
     uint32_t physical = mmu ? translateaddress(addr, 0, 0) : addr;
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    if (arm.event & 0x40) { ARC_RPC_LOCKSTEP(p1(2,2));return 0; }
+#else
     if (arm.event & 0x40) return 0;
+#endif
     ARC_RPC_PROFILE(access(physical,false));
     arc_rpc_mem_access(addr, physical, 4, false, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    uint32_t result=mem_phys_read32(physical);arc_rpc_lockstep_p1(2,2);return result;
+#else
     return mem_phys_read32(physical);
+#endif
 }
 uint32_t readmemfb(uint32_t addr)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(2,1));
+#endif
     uint32_t physical = mmu ? translateaddress(addr, 0, 0) : addr;
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    if (arm.event & 0x40) { ARC_RPC_LOCKSTEP(p1(2,2));return 0; }
+#else
     if (arm.event & 0x40) return 0;
+#endif
     ARC_RPC_PROFILE(access(physical,false));
     arc_rpc_mem_access(addr, physical, 1, false, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    uint32_t result=mem_phys_read8(physical);arc_rpc_lockstep_p1(2,2);return result;
+#else
     return mem_phys_read8(physical);
+#endif
 }
 void writememfl(uint32_t addr, uint32_t val)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(3,1));
+#endif
     uint32_t physical = mmu ? translateaddress(addr, 1, 0) : addr;
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    if (arm.event & 0x40) { ARC_RPC_LOCKSTEP(p1(3,2));return; }
+#else
     if (arm.event & 0x40) return;
+#endif
     ARC_RPC_PROFILE(access(physical,true));
     arc_rpc_mem_access(addr, physical, 4, true, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     mem_phys_write32(physical, val);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(3,2));
+#endif
 }
 void writememfb(uint32_t addr, uint8_t val)
 {
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(3,1));
+#endif
     uint32_t physical = mmu ? translateaddress(addr, 1, 0) : addr;
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    if (arm.event & 0x40) { ARC_RPC_LOCKSTEP(p1(3,2));return; }
+#else
     if (arm.event & 0x40) return;
+#endif
     ARC_RPC_PROFILE(access(physical,true));
     arc_rpc_mem_access(addr, physical, 1, true, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     mem_phys_write8(physical, val);
+#if defined(ARCDROID_RPC_LOCKSTEP)
+    ARC_RPC_LOCKSTEP(p1(3,2));
+#endif
 }
 
 /* ArcDroid modification (2026-10-13, observation-r3c1): allocated backing
@@ -757,3 +890,7 @@ bool arc_rpc_inspect_physical(uint32_t address,uint8_t *out)
     if(!base)return false;
     *out=(uint8_t)(base[offset>>2]>>((offset&3)*8));return true;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_mem
+#endif

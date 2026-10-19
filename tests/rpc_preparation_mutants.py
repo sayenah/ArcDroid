@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='arc-r3b2a-mutants-') as tmp:
             source=tmp/(name+'.c');source.write_text(text);binary=tmp/'test'
             test='rpc_preparation_test' if kind=='hd' else 'rpc_cmos_store_test'
             extra=[str(root/'libretro/install_store.c'),core] if kind=='hd' else [str(root/'core/hash.c')]
-            cmd=[compiler,'-std=c11','-O2','-UNDEBUG',*[f'-I{root/p}' for p in ('core','engine','libretro','libretro/include','tests')],str(root/f'tests/{test}.c'),str(source),str(root/'libretro/arc_io.c'),*extra,'-o',str(binary)]
+            cmd=[compiler,'-std=c11','-O2','-UNDEBUG',*[f'-I{root/p}' for p in ('core','engine','libretro','libretro/include','tests')],str(root/f'tests/{test}.c'),str(source),str(root/'libretro/arc_io.c'),str(root/'libretro/arc_lock.c'),*extra,'-o',str(binary)]
             compiled=subprocess.run(cmd,capture_output=True,text=True,timeout=90)
             assert compiled.returncode==0,(label,compiled.stderr)
             run=subprocess.run([str(binary)],capture_output=True,text=True,timeout=10)

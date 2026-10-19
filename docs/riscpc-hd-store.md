@@ -13,8 +13,9 @@ The content session owns one store at
 `<save>/arcdroid/hd-riscpc/<content_id>/`. The ID is D-029's frozen 40-character
 lowercase SHA-1 identity; swaps, disk-control edits and resets never rekey it.
 CPU model and firmware are absent from this key. Only one process/handle may
-write this directory at once. Cross-process locking remains an explicit
-unimplemented assumption; run B must not imply concurrent-writer safety.
+write this directory at once. Run B originally carried this as an external
+single-writer assumption. R3d-3 enforces it with a mandatory bound content token;
+see the dated ownership-enforcement amendment below and D-208's residuals.
 
 Geometry is 512-byte sectors, 63 sectors/track, 16 heads, 256 cylinders:
 258,048 sectors = 132,120,576 bytes = **126 MiB**. Last LBA is 258,047.
@@ -1178,3 +1179,26 @@ overlapping journal reconstruction and checkpoint writes, and cancellation
 before and after every publication step. The larger package's sanitizer profile
 executes the whole workload at quantum 8; the host profile compares owned bytes
 at 1, 8 and 32. The existing long fault profiles remain unchanged.
+
+## R3d-3 ownership enforcement (2026-10-18)
+
+R3d-3 replaces the external single-writer precondition for RiscPC stores with
+mandatory token binding at HD open and CMOS/launch-record begin. Every recovery
+or publication step and every namespace mutation requires the bound, held token
+and verifies its identity. The preparation module acquires content ownership
+before recovery and retains it through reset, FAILED, fault drain, final persist
+and HD close. Defaults use a separate pair/procedure/timing token only while
+reading or generating the shared defaults. Store callers migrate together.
+
+HD close reports flush and close failures. Discard close performs no namespace
+mutation or explicit flush, including after held-lock identity loss. Writable
+units finish their writes, flush and close before yielding; the only retained
+writer is empty. A CMOS publication-only unload failure can leave the token-bound
+zero-byte `.unsaved` marker; successful persistence removes it separately. Native
+zero-byte ownership sentinels remain on disk across release. They are not HD,
+CMOS or observation payloads and are never deleted as recovery cleanup.
+
+The platform and same-UID rename-over residuals, unsupported-storage refusal,
+root requirements and private P10b expectations remain in
+`docs/riscpc-session-preparation.md`'s ownership section (D-208). The synchronous
+Arculator directory helper and Arculator persistence are unchanged.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""12a must remain dormant until atomic store migration in 12b. GPL-2.0-only."""
+"""12b confines ownership to preparation and the three token-bound stores. GPL-2.0-only."""
 from pathlib import Path
 import re
 import sys
@@ -8,6 +8,11 @@ import tempfile
 root = Path(sys.argv[1]).resolve()
 
 
+allowed = {'libretro/rpc_preparation.c','libretro/rpc_preparation.h',
+           'libretro/rpc_hd_store.c','libretro/rpc_hd_store.h',
+           'libretro/rpc_cmos_store.c','libretro/rpc_cmos_store.h',
+           'libretro/rpc_launch_record_store.c','libretro/rpc_launch_record_store.h'}
+
 def check(sources):
     errors = []
     for name, text in sources.items():
@@ -15,7 +20,7 @@ def check(sources):
         name = name.replace('\\', '/')
         if name in ('libretro/arc_lock.c', 'libretro/arc_lock.h'):
             continue
-        if re.search(r'\barc_lock_\w+|\b(?i:arc_lock\.h)\b|\bArcLock\w*\b', text):
+        if name not in allowed and re.search(r'\barc_lock_\w+|\b(?i:arc_lock\.h)\b|\bArcLock\w*\b', text):
             errors.append(f'{name}: dormant lock referenced by shipping source')
         if name not in ('libretro/arc_io.c', 'libretro/arc_io.h') and re.search(r'\barc_io_mkdir\s*\(', text):
             errors.append(f'{name}: lock-only mkdir migrated to another shipping caller')
@@ -49,8 +54,7 @@ for windows_paths in (False, True):
         errors = check(variant)
         if errors:
             raise SystemExit('\n'.join(errors))
-        for name in ('libretro/rpc_preparation.c', 'libretro/rpc_hd_store.c', 'libretro/rpc_cmos_store.c',
-                     'libretro/rpc_launch_record_store.c', 'libretro/arcdroid_libretro.c',
+        for name in ('libretro/arcdroid_libretro.c',
                      'libretro/arc_io.c', 'libretro/arc_io.h', 'core/probe.c',
                      'engine/nested/probe.h', 'platform/probe.c'):
             path = name.replace('/', '\\') if windows_paths else name
@@ -72,6 +76,10 @@ for windows_paths in (False, True):
                 if not check({path: variant.get(path, '') + injected}):
                     raise SystemExit(f'dormancy mutant survived: {path}')
                 rejected += 1
-print('rpc-lock-dormancy: no shipping caller or store enforcement; '
+for stem in ('rpc_hd_store','rpc_cmos_store','rpc_launch_record_store'):
+    source=sources['libretro/'+stem+'.c'];header=sources['libretro/'+stem+'.h']
+    if 'ArcLock *owner' not in header or 'arc_lock_verify(' not in source or 'arc_lock_held(' not in source:
+        raise SystemExit(stem+': mandatory ownership missing')
+print('rpc-lock-enforcement: token-bound stores and preparation only; '
       f'{rejected} migration, type, arc_io, source-tree and documentary negative checks '
       'in POSIX/Windows path forms and LF/CRLF text')

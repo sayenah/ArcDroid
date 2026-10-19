@@ -3,6 +3,7 @@
  * Functional transfers happen atomically in the interpreter, never here. */
 #include "rpc_mem_timing.h"
 #include "rpc_profile.h"
+#include "rpc_lockstep.h"
 #if defined(ARCDROID_RPC_CROSSCHECK)
 #include "rpc_crosscheck.h"
 #endif
@@ -96,7 +97,8 @@ static void hint_store(LookupSide *side, unsigned index, uint8_t way)
 static unsigned lookup_gate(const Cache *c)
 {
     unsigned gate = c->ways >= 64 ? 2u : 0u;
-    /* Frozen SA fallback is linear until Fable records selection. */
+    /* S68 selection run 3: way0-hint for both bound SA caches. */
+    if (c->sets == 16 && c->ways == 32) gate = 3u;
 #if defined(ARCDROID_RPC_L1_SA_GATE)
     if (c->sets == 16 && c->ways == 32) gate = ARCDROID_RPC_L1_SA_GATE;
 #endif
@@ -476,7 +478,11 @@ static Tag *lookup(Cache *c, uint32_t va
 static Packet *append(unsigned kind)
 {
     arc_rpc_mem_fast.pending = true;
-    if (m.count == COMMANDS) fatal("RPC memory request budget exceeded");
+    if (m.count == COMMANDS
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        || arc_rpc_lockstep_inject(1)
+#endif
+    ) fatal("RPC memory request budget exceeded");
     Packet *p = &m.command[(m.head + m.count++) % COMMANDS];
     /* word() initializes exactly the populated lanes. Stale unused lanes
      * never participate in a cycle, so avoid clearing two whole lane arrays
@@ -487,7 +493,11 @@ static Packet *append(unsigned kind)
 }
 static void word(Packet *p, uint32_t address, unsigned width, bool write)
 {
-    if (p->count == WORDS) fatal("RPC memory packet budget exceeded");
+    if (p->count == WORDS
+#if defined(ARCDROID_RPC_LOCKSTEP)
+        || arc_rpc_lockstep_inject(2)
+#endif
+    ) fatal("RPC memory packet budget exceeded");
     /* ARM word transfers address the aligned external word; unaligned LDR
      * rotation remains functional interpreter work. Bytes retain their lane. */
     p->address[p->count] = address & (width == 4 ? 0x1ffffffcu : 0x1fffffffu);
@@ -1221,4 +1231,8 @@ bool arc_rpc_mem_l1_state(bool seed_hint)
            l1_instruction.hints[i]!=255 || l1_data.hints[i]!=255)return false;
     return true;
 }
+#endif
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_mem_timing
 #endif

@@ -6,6 +6,10 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+  # Scheduled and manually dispatched runs use the full nightly tier.
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
   pull_request:
     paths-ignore:
       - 'docs/**'
@@ -28,7 +32,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache llvm
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -42,13 +46,15 @@ jobs:
       - name: Asset guard
         run: tools/check-assets.sh
       - name: Configure
-        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ON' || 'OFF' }}
       - name: Build
         run: cmake --build build/host --verbose
       - name: Shipping source I/O guard self-test
         run: tools/check-shipping-io.sh --self-test
       - name: Unit tests and harness
-        run: ctest --test-dir build/host --output-on-failure
+        run: ctest -j "$(nproc)" --test-dir build/host --output-on-failure -LE '${{ github.event_name == 'push' && '^rpc-lockstep-emitter-ci$|slow' || '^rpc-lockstep-emitter-ci$' }}'
+      - name: Lockstep emitter CI subset
+        run: ctest -j "$(nproc)" --test-dir build/host --output-on-failure -L '^rpc-lockstep-emitter-ci$' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
       - name: Export guard
         run: tools/check-exports.sh build/host/arcdroid_libretro.so
       - name: Configure profiling test build
@@ -56,7 +62,7 @@ jobs:
       - name: Build profiling tests
         run: cmake --build build/profile --target rpc-profile-tests
       - name: Profiling counts, transparency and mutants
-        run: ctest --test-dir build/profile --output-on-failure -R '^rpc-profile-'
+        run: ctest -j "$(nproc)" --test-dir build/profile --output-on-failure -R '^rpc-profile-' ${{ github.event_name == 'push' && '-LE slow' || '' }}
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -90,7 +96,7 @@ jobs:
       - name: Shipping source I/O guard self-test
         run: tools/check-shipping-io.sh --self-test
       - name: Unit tests and harness
-        run: ctest --test-dir build/host --output-on-failure
+        run: ctest -j "$(nproc)" --test-dir build/host --output-on-failure ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
       - name: Export guard
         run: tools/check-exports.sh build/host/arcdroid_libretro.so
       - name: Configure profiling test build
@@ -98,7 +104,7 @@ jobs:
       - name: Build profiling tests
         run: cmake --build build/profile --target rpc-profile-tests
       - name: Profiling counts, transparency and mutants
-        run: ctest --test-dir build/profile --output-on-failure -R '^rpc-profile-'
+        run: ctest -j "$(nproc)" --test-dir build/profile --output-on-failure -R '^rpc-profile-' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -127,7 +133,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build/sanitize --output-on-failure -R '^(rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
+        run: ctest -j "$(nproc)" --test-dir build/sanitize --output-on-failure -R '${{ github.event_name != 'pull_request' && '.*' || '^(rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$' }}' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -168,10 +174,10 @@ jobs:
         timeout-minutes: 10
         run: |
           set -e -o pipefail
-          ctest --test-dir build/windows --output-on-failure -R '^rpc-windows-crash-(locator|stderr)$' 2>&1 | tee build/windows/rpc-repeat.log
-          ctest --test-dir build/windows --output-on-failure --repeat until-fail:50 -R '^rpc-cpu-(mmu-memory|trace)$' 2>&1 | tee -a build/windows/rpc-repeat.log
+          ctest -j "$NUMBER_OF_PROCESSORS" --test-dir build/windows --output-on-failure -R '^rpc-windows-crash-(locator|stderr)$' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }} 2>&1 | tee build/windows/rpc-repeat.log
+          ctest -j "$NUMBER_OF_PROCESSORS" --test-dir build/windows --output-on-failure --repeat until-fail:50 -R '^rpc-cpu-(mmu-memory|trace)$' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }} 2>&1 | tee -a build/windows/rpc-repeat.log
       - name: Tests
-        run: ctest --test-dir build/windows --output-on-failure
+        run: ctest -j "$NUMBER_OF_PROCESSORS" --test-dir build/windows --output-on-failure ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
       - name: Visible x86 hash identity and dispatch
         run: build/windows/hash_accel_test.exe --require-x86
       - name: Windows import and export guard
@@ -291,6 +297,9 @@ jobs:
         run: ccache -s
 
   windows-retroarch:
+    # Native frontend sessions remain on PRs and the full nightly tier.
+    # The merge tier is builds, guards and the non-slow CTest selection.
+    if: github.event_name != 'push'
     needs: windows
     runs-on: windows-latest
     steps:
@@ -301,14 +310,16 @@ jobs:
         with:
           name: arcdroid-windows-retroarch-input
           path: build/retroarch-input
-      - name: Parse Windows RetroArch script
+      - name: Parse Windows RetroArch scripts
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path tools/test-retroarch-windows.ps1).Path, [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
-      - name: RetroArch 1.22.2 native load, power-on Shift, screenshot, and reloads
+          foreach ($script in @('tools/test-retroarch-windows.ps1', 'tools/test-retroarch-rpc-privacy.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }
+      - name: RetroArch 1.22.2 native load, power-on Shift, screenshot, reloads, and RPC notice privacy
         shell: pwsh
         run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native
       - name: Slice 28 guarded old-map JFD persistence and refusal

@@ -6,6 +6,12 @@
 #include <stdint.h>
 #include "rpc_audio.h"
 #include "libretro.h"
+#include "rpc_lockstep.h"
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
+RETRO_API bool arc_rpc_test_lockstep_sink(ArcRpcLockstepSink, void *, const ArcRpcLockstepConfig *);
+RETRO_API const char *arc_rpc_test_lockstep_status(void);
+RETRO_API bool arc_rpc_test_lockstep_end(void);
+#endif
 #include "arcdroid_core.h"
 typedef enum { ARC_RPC_ARM610, ARC_RPC_ARM710, ARC_RPC_SA110, ARC_RPC_ARM7500,
     ARC_RPC_MODEL_COUNT } ArcRpcModel;
@@ -32,7 +38,8 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
 #if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 void arc_rpc_session_test_rate(unsigned rate);
 enum { ARC_RPC_TEST_TRACE=1u, ARC_RPC_TEST_HOT=2u, ARC_RPC_TEST_RANKING=4u,
-    ARC_RPC_TEST_EVENT_DIAGNOSTICS=8u, ARC_RPC_TEST_FRAME_TIMER=16u };
+    ARC_RPC_TEST_EVENT_DIAGNOSTICS=8u, ARC_RPC_TEST_FRAME_TIMER=16u,
+    ARC_RPC_TEST_LOCKSTEP=32u };
 RETRO_API unsigned arc_rpc_test_capabilities(void);
 RETRO_API const char *arc_rpc_test_refusal(void);
 bool arc_rpc_test_refuse(const char *facility);

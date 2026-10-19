@@ -24,10 +24,20 @@ typedef enum {
     ARC_RPC_PREP_CANCELLED
 } ArcRpcPreparationState;
 #define ARC_RPC_PREP_PRODUCT_KIND (ARC_RPC_PREP_CANCELLED+(ARC_RPC_BOOT_CANCELLED+1)*ARC_RPC_BOOT_WORK_COUNT)
-#define ARC_RPC_PREP_COST_KINDS (ARC_RPC_PREP_PRODUCT_KIND+1)
+#define ARC_RPC_PREP_LOCK_KIND (ARC_RPC_PREP_PRODUCT_KIND+1)
+#define ARC_RPC_PREP_COST_KINDS (ARC_RPC_PREP_LOCK_KIND+1)
+typedef enum {
+    ARC_RPC_NOTICE_PROGRESS, ARC_RPC_NOTICE_TERMINAL,
+    ARC_RPC_NOTICE_ADVISORY, ARC_RPC_NOTICE_CLEAR
+} ArcRpcNoticeSeverity;
+typedef struct {
+    ArcRpcNoticeSeverity severity;
+    const char *id; /* Fixed catalogue ID/family, selected at the producer. */
+    bool stopping, drain_outcome;
+} ArcRpcNotice;
 typedef struct {
     uint64_t (*clock)(void *);
-    void (*notice)(void *, const char *, bool terminal);
+    void (*notice)(void *, const char *, ArcRpcNotice);
     void (*log)(void *, const char *);
     /* Final media preparation/attachment, no guest execution. Backing stays
      * frontend-owned through engine stop. Optional rate seam stays in client. */
@@ -39,9 +49,12 @@ typedef struct {
      * first re-stages drive 0 only; the second resets/rebinds observers/input. */
     bool (*restage_drive0)(void *,char *,size_t);
     bool (*reset_rebind)(void *,char *,size_t);
+    bool (*restage_stopped)(void *,char *,size_t);
     /* Exact ordered media/policy lease: no I/O/allocation; <=32768 metadata bytes.
      * False refuses observation publication, never command delivery. */
     bool (*media_identity)(void *,uint8_t[32]);
+    const ArcLockBackend *lock_backend; /* NULL: native sentinel backend. */
+    void *lock_opaque;
     void *opaque;
 } ArcRpcPreparationHost;
 typedef struct {
@@ -62,6 +75,9 @@ typedef struct {
 typedef struct ArcRpcPreparation ArcRpcPreparation;
 typedef struct {
     uint64_t frames, elapsed_ns, max_frame_ns, reserved_ns, namespace_attempts;
+    uint64_t lock_attempts,lock_wait_frames,identity_checks,identity_max_ns,lock_max_ns;
+    uint64_t namespace_exceptions,checkpoint_exceptions,rollback_exceptions,rollback_max_ns;
+    uint64_t restart_record_exceptions,restart_record_max_ns,restart_defaults_exceptions,restart_defaults_max_ns;
     uint64_t budget_ns, attachment_operations, attachment_bytes, attachment_namespace;
     /* Last estimate and kind: state, or CANCELLED + boot phase * WORK_COUNT
      * + work. Boot DONE groups low-level blank/import units without a boot
@@ -96,11 +112,25 @@ bool arc_riscpc_preparation_helper_override(ArcRpcPreparation *,const ArcEngineM
 bool arc_riscpc_preparation_helper_write_policy(ArcRpcPreparation *,bool);
 bool arc_riscpc_preparation_reset(ArcRpcPreparation *);
 void arc_riscpc_preparation_cancel(ArcRpcPreparation *);
+/* Borrowed ownership diagnostics; no caller may release these tokens. */
+void arc_riscpc_preparation_pair(const ArcRpcPreparation *,unsigned *model,unsigned *os);
+bool arc_riscpc_preparation_owned(const ArcRpcPreparation *);
+unsigned arc_riscpc_preparation_catalogue(const ArcRpcPreparation *);
+bool arc_riscpc_preparation_replace_media(ArcRpcPreparation *,const ArcEngineMedia *);
+bool arc_riscpc_preparation_complete_publication(ArcRpcPreparation *,char *,size_t);
+bool arc_riscpc_preparation_draining(const ArcRpcPreparation *);
+void arc_riscpc_preparation_failed_frame(ArcRpcPreparation *);
+bool arc_riscpc_preparation_hd_close_ok(const ArcRpcPreparation *);
+bool arc_riscpc_preparation_take_hd_close(ArcRpcPreparation *); /* Consume this lifecycle event once. */
 /* Running schedule: exactly one HD tick + eager persistence, no batching clock. */
 void arc_riscpc_preparation_maintenance(ArcRpcPreparation *);
 bool arc_riscpc_preparation_persist(ArcRpcPreparation *, char *, size_t);
 /* Persist latest snapshot on normal unload, then detach/free even on failure. */
+bool arc_riscpc_preparation_free_stats(ArcRpcPreparation *,char *,size_t,ArcRpcPreparationStats *);
 bool arc_riscpc_preparation_free(ArcRpcPreparation *, char *, size_t);
 bool arc_riscpc_preparation_pacing(ArcRpcPreparation *, unsigned);
 uint64_t arc_riscpc_preparation_clock(void *);
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API void arc_riscpc_test_fail_helper(void);
+#endif
 #endif

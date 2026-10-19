@@ -242,11 +242,17 @@ The draft table retains its explicitly labelled `7b11b47` prototype locations
 and results. For follow-on work use the current definitions below, refreshed
 at the L1 implementation (2026-10-17); S1 will shift them again.
 
+Rows marked Run D identify the integrated definitions (2026-10-18); the other
+rows retain main's historical M2b anchors.
+
 | Candidate | Current reference path |
 |---|---|
-| L1 | `engine/rpc/rpc_mem_timing.c:391` (lookup), `engine/rpc/rpc_mem_timing.c:679` (access caller), `engine/rpc/rpc_mem_timing.c:783` (maintenance caller) |
-| S1 / B2 | `engine/rpc/rpc_mem_timing.c:1081` (service), `engine/rpc/rpc_mem_timing.c:955` (commands), `engine/rpc/rpc_mem_timing.c:989` (resumable run) |
-| B3 | `engine/rpc/rpc_mem_timing.c:847`, `engine/rpc/rpc_mem_timing.c:1130`, `engine/rpc/rpc_mem_timing.c:1151` |
+| L1 | M2b merge-base `0966af3`: `engine/rpc/rpc_mem_timing.c:300` (lookup), `:498` (access entry), `:603` (maintenance entry) |
+| S1 / B2 | M2b merge-base `0966af3`: `engine/rpc/rpc_mem_timing.c:901` (service), `:775` (commands), `:809` (resumable run) |
+| B3 | `engine/rpc/rpc_mem_timing.c:660`, `engine/rpc/rpc_mem_timing.c:943`, `engine/rpc/rpc_mem_timing.c:964` |
+| L1 (Run D) | `engine/rpc/rpc_mem_timing.c:393` (lookup), `engine/rpc/rpc_mem_timing.c:689` (access caller), `engine/rpc/rpc_mem_timing.c:793` (maintenance caller) |
+| S1 / B2 (Run D) | `engine/rpc/rpc_mem_timing.c:1091` (service), `engine/rpc/rpc_mem_timing.c:965` (commands), `engine/rpc/rpc_mem_timing.c:999` (resumable run) |
+| B3 (Run D) | `engine/rpc/rpc_mem_timing.c:857`, `engine/rpc/rpc_mem_timing.c:1140`, `engine/rpc/rpc_mem_timing.c:1161` |
 | A1 / F1 | `engine/rpcemu/src/cp15.c:390`, `engine/rpcemu/src/cp15.c:471` |
 | A1 accesses | `engine/rpcemu/src/mem.c:704`, `engine/rpcemu/src/mem.c:722` |
 | D1 / D2 | `engine/rpcemu/src/arm.c:619`, `engine/rpcemu/src/arm.c:620` |
