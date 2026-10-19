@@ -44,6 +44,7 @@ static struct retro_vfs_interface *state_io_native,state_io_proxy;
 static StateFile state_io_files[STATE_IO_FILES];
 static unsigned state_io_file_count,state_io_operation_count;
 static size_t state_io_operation_bytes;
+static size_t state_io_wire_limit=STATE_IO_BYTES;
 static StateOperation *state_io_head,*state_io_tail;
 static bool state_io_speculating,state_io_failed;
 static void state_frontier_bind(StateHandle *handle);
@@ -306,7 +307,7 @@ void arc_state_io_clear(void)
 }
 struct retro_vfs_interface *arc_state_io_attach(struct retro_vfs_interface *vfs)
 {
-   arc_state_io_clear();state_io_native=vfs;if(!vfs)return NULL;state_io_proxy=*vfs;
+   arc_state_io_clear();state_io_wire_limit=STATE_IO_BYTES;state_io_native=vfs;if(!vfs)return NULL;state_io_proxy=*vfs;
 #define ARC_STATE_WRAP(member,fn) if(vfs->member)state_io_proxy.member=fn
    ARC_STATE_WRAP(get_path,state_get_path);ARC_STATE_WRAP(open,state_open);ARC_STATE_WRAP(close,state_close);
    ARC_STATE_WRAP(size,state_size);ARC_STATE_WRAP(tell,state_tell);ARC_STATE_WRAP(seek,state_seek);
@@ -491,10 +492,10 @@ void arc_state_io_snapshot(ArcState *s)
          if(op->kind==5)state_wire_path(&w,op->target);
          state_wire_u64(&w,op->bytes);state_wire_write(&w,op->data,op->bytes);
       }
-      if(w.failed){free(w.data);arc_state_fail(s,"pending store bounds");return;}
+      if(w.failed||w.size>state_io_wire_limit){free(w.data);arc_state_fail(s,"pending store bounds");return;}
    }
    size_t bytes=0;
-   const void *payload=arc_state_blob(s,"stores.pending",w.data,w.size,STATE_IO_BYTES,&bytes);
+   const void *payload=arc_state_blob(s,"stores.pending",w.data,w.size,state_io_wire_limit,&bytes);
    free(w.data);
    if(!arc_state_loading(s)||arc_state_error(s))return;
    w=(StateIoWire){.data=(uint8_t*)payload,.size=bytes};
@@ -527,7 +528,22 @@ void arc_state_io_snapshot(ArcState *s)
 
 #include "arc_state_frontier.inc"
 
-/* Aggregate log ownership is bounded by the same 32 MiB limit as each
- * speculative file view. Packed paths/headers fit within charged operation
- * storage, so this also bounds the serialized log, including its header. */
-size_t arc_state_io_pending_bound(void) { return STATE_IO_BYTES; }
+/* Account for the actual producers' maximum write payload and logical paths.
+ * A write uses 40+path+payload wire bytes, a rename 48+2*path. Native queue
+ * ownership charges sizeof(StateOperation)+payload+32 for either. The largest
+ * wire/ownership ratio bounds the sum, independent of how many speculative
+ * frames a frontend requests. There is no assumed one-frame publication
+ * window or menu-only run-ahead limit. Eager IO and queue exhaustion do not
+ * change. The schema refuses an out-of-contract pending blob at capture/load. */
+size_t arc_state_io_session_bound(size_t maximum_write,size_t maximum_path)
+{
+   if(maximum_write>STATE_IO_BYTES||!maximum_path||maximum_path>4096u)return 0;
+   uint64_t cost=sizeof(StateOperation)+32u;
+   uint64_t numerator=40u+maximum_path+maximum_write,denominator=cost+maximum_write;
+   uint64_t rename=48u+2u*maximum_path;
+   if(rename*denominator>numerator*cost){numerator=rename;denominator=cost;}
+   uint64_t bound=16u+(STATE_IO_BYTES-16u)*numerator/denominator;
+   state_io_wire_limit=bound<STATE_IO_BYTES?(size_t)bound:STATE_IO_BYTES;
+   return state_io_wire_limit;
+}
+size_t arc_state_io_pending_bound(void) { return state_io_wire_limit; }

@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 typedef struct ArcState ArcState;
+/* writevidc: ten-bit horizontal total; slow pixels expand fourfold.
+ * vidc_poll: 1,024 scanlines, two independently retained interlace fields.
+ * These describe the Arculator producer, not libretro maximum geometry. */
+#define ARC_STATE_VIDC_WIDTH ((1u << 10u) * 4u)
+#define ARC_STATE_VIDC_HEIGHT ((1u << 10u) * 2u)
 typedef void (*ArcStateVisit)(ArcState *);
 /* Registration precedes field traversal. Native pointers are encoded as
  * region identities and bounded offsets, never as process addresses. */

@@ -152,4 +152,8 @@ void arc_state_visit_engine_arculator_src_vidc(ArcState *s)
    arc_state_value(s,&(monolook),sizeof(monolook));
    arc_state_object(s,"engine/arculator/src/vidc.c:hirescurcol");
    arc_state_value(s,&(hirescurcol),sizeof(hirescurcol));
+   /* No shipping control changes the host black-level setting. Historical
+    * colours use the admitted session's RGB444 producer, not a blob-selected
+    * colour transform. Guest palette writes remain fully serialized. */
+   if(arc_state_loading(s))ARC_STATE_MATCH(s,video_black_level);
 }

@@ -2,7 +2,7 @@
   "license": "GPL-2.0-only",
   "version": 1,
   "grounding_commit": "0aa4c93eaec4",
-  "status": "SS-1 run H partial: reviewed dirty-sector caches, decoded/view budgets, native loader services and boundary authority. M2 bound/exact-work and legacy Android aliased-module lifecycle remain release blockers.",
+  "status": "SS-1 run H continuation: reviewed packed-colour/backward-row raster recipes, session pending-wire budget and numeric refusals. The 16 MiB/minimum-bound proof and R-SS3g integration remain open.",
   "cmake_source_commands": [
     "add_library ( arcdroid_sanitizer_compile INTERFACE )",
     "add_library ( arcdroid_sanitizer_link INTERFACE )",
@@ -19427,9 +19427,15 @@
       },
       {
         "kind": "declaration",
-        "declaration": "struct ArcState { StateView * views ; size_t view_count , view_capacity ; StateTarget * targets ; size_t target_count , target_capacity ; StateAction * actions ; StateScratch * scratch ; StateText * texts ; bool loading , committed , registering , measuring ; uint64_t drop_owner ; bool drop_done ; unsigned pass ; const char * error ; char error_text [ 128 ] ; StateItem * items ; uint32_t * item_table ; size_t item_table_size ; size_t count , capacity ; StateRegion * regions ; size_t region_count , region_capacity ; StateWrite * writes ; uint32_t * write_table ; size_t write_table_size ; size_t write_count , write_capacity ; uint32_t * region_table ; size_t region_table_size ; StateRegion * * addresses ; size_t address_count ; StateRegion * object ; size_t output_size , heap_bytes , decoded_limit ; } ;",
+        "declaration": "struct StateRaster ;",
         "classification": "host-only",
-        "reason": "Native registry revision or load-time session capacity/media budget; authoritative host lifetime is never rewound."
+        "reason": "Forward declaration of the transaction-local raster recipe index; no retained storage."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "struct ArcState { struct StateRaster * rasters ; StateView * views ; size_t view_count , view_capacity ; StateTarget * targets ; size_t target_count , target_capacity ; StateAction * actions ; StateScratch * scratch ; StateText * texts ; bool loading , committed , registering , measuring ; uint64_t drop_owner ; bool drop_done ; unsigned pass ; const char * error ; char error_text [ 128 ] ; StateItem * items ; uint32_t * item_table ; size_t item_table_size ; size_t count , capacity ; StateRegion * regions ; size_t region_count , region_capacity ; StateWrite * writes ; uint32_t * write_table ; size_t write_table_size ; size_t write_count , write_capacity ; uint32_t * region_table ; size_t region_table_size ; StateRegion * * addresses ; size_t address_count ; StateRegion * object ; size_t output_size , heap_bytes , decoded_limit ; } ;",
+        "classification": "host-only",
+        "reason": "The new rasters link indexes transaction-owned validated row recipes; scratch lifetime ends with the codec. Existing graph, writes, identities and decoded bounds unchanged."
       },
       {
         "kind": "allocation:compress_words",
@@ -19570,6 +19576,18 @@
         "declaration": "# include < stdint . h >",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_STATE_VIDC_WIDTH ( ( 1u < < 10u ) * 4u )",
+        "classification": "host-only",
+        "reason": "Producer extent: ten-bit VIDC horizontal total, fourfold slow pixel expansion; writevidc/recalcse/vidc_poll."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_STATE_VIDC_HEIGHT ( ( 1u < < 10u ) * 2u )",
+        "classification": "host-only",
+        "reason": "Producer extent: 1,024 scanlines and two independently retained interlace fields in vidc_poll; independent of frontend geometry."
       },
       {
         "kind": "preprocessor",
@@ -20075,6 +20093,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "static size_t state_io_wire_limit = STATE_IO_BYTES ;",
+        "classification": "host-only",
+        "reason": "Load-time session encoded queue capacity from producer write/path limits and unchanged queue ownership budget. Never rewound or imported from state."
+      },
+      {
+        "kind": "declaration",
         "declaration": "static StateOperation * state_io_head , * state_io_tail ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -20335,6 +20359,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "size_t arc_state_io_session_bound ( size_t maximum_write , size_t maximum_path ) ;",
+        "classification": "host-only",
+        "reason": "Session bound configuration API; no retained emulated state or native IO side effect."
+      },
+      {
+        "kind": "declaration",
         "declaration": "bool arc_state_io_recover_original ( const char * path ) ;",
         "classification": "host-only",
         "reason": "Reviewed SS-1 codec lookup scratch, durable origin/frontier authority, bounded restore binding or its declaration; guest payload owners and transactional heap transfer are listed separately."
@@ -20361,15 +20391,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { uint32_t * pixels ; size_t pitch ; uint16_t ( * rows ) [ 2 ] ; const uint8_t * wire ; size_t bytes ; } StateRasterRestore ;",
-        "classification": "host-only",
-        "reason": "Reviewed build/API or aggregate layout contract for compact state codec; actual storage ownership is classified by named roots, reachable members and allocation sites. Macro/include arms are guarded before optimization."
-      },
-      {
-        "kind": "allocation:arc_state_raster",
-        "declaration": "malloc ( sizeof ( * r ) )",
-        "classification": "host-only",
-        "reason": "Prepared span installation action; owns no pixels, references transaction-owned validated bytes, freed on commit or rollback."
+        "declaration": "typedef struct StateRaster { struct StateRaster * previous ; uint32_t * pixels ; size_t pitch ; uint16_t ( * rows ) [ 2 ] ; const uint8_t * wire ; size_t bytes ; bool restored , omitted ; size_t offsets [ 2048 ] ; uint32_t hashes [ 2048 ] ; } StateRaster ;",
+        "classification": "derived-on-load",
+        "reason": "Transaction-owned raster recipe/index: wire bytes serialize historical pixels and backward row copies; offsets/hashes derive from validated rows. Native pixels/pitch/row tracker bind current surfaces. Scratch is freed by arc_state_end on commit or refusal. The restored latch avoids duplicate commit work; omitted is only the existing field-drop probe, never state input."
       }
     ],
     "libretro/arcdroid_libretro.c": [
@@ -34356,6 +34380,13 @@
     },
     {
       "source": "libretro/arc_state_io.c",
+      "symbol": "state_io_wire_limit",
+      "type": "size_t",
+      "classification": "host-only",
+      "reason": "Load-time session encoded queue capacity from producer write/path limits and unchanged queue ownership budget. Never rewound or imported from state."
+    },
+    {
+      "source": "libretro/arc_state_io.c",
       "symbol": "state_io_head",
       "type": "StateOperation *",
       "classification": "serialized",
@@ -37672,13 +37703,6 @@
       "call": "calloc ( 1 , sizeof ( * op ) + ( size_t ) n )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
-    },
-    {
-      "source": "libretro/arc_state_raster.inc",
-      "owner": "arc_state_raster",
-      "call": "malloc ( sizeof ( * r ) )",
-      "classification": "host-only",
-      "reason": "Prepared span installation action; owns no pixels, references transaction-owned validated bytes, freed on commit or rollback."
     },
     {
       "source": "libretro/arcdroid_libretro.c",

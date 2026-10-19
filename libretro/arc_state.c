@@ -41,7 +41,9 @@ static StateText *state_text_pool; /* Host ownership; values are explicit string
 typedef struct StateAction { struct StateAction *next; void (*commit)(void *),(*rollback)(void *); void *opaque; } StateAction;
 typedef struct {uint64_t key;const void *data;size_t bytes;} StateView;
 typedef struct {void *address;size_t bytes;ArcStateReferenceKind kind;} StateTarget;
+struct StateRaster;
 struct ArcState {
+   struct StateRaster *rasters;
    StateView *views;size_t view_count,view_capacity;
    StateTarget *targets;
    size_t target_count,target_capacity;

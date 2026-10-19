@@ -19,6 +19,9 @@ void arc_state_io_frontiers(ArcState *state);
 void arc_state_io_forget_stores(void);
 bool arc_state_io_pending(void);
 size_t arc_state_io_pending_bound(void);
+/* Configure a session's largest protocol write and logical store path.
+ * Queue ownership and publication order retain their existing limits. */
+size_t arc_state_io_session_bound(size_t maximum_write,size_t maximum_path);
 bool arc_state_io_recover_original(const char *path);
 bool arc_state_io_original(const char *path, ArcDigest *identity);
 

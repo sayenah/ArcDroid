@@ -3,9 +3,10 @@
 # SS-1: Arculator state and publication design
 
 Order: [SS-1](handoff.md), D-011, D-210, R-SS3a and run-H adjudication.
-Run H is not acceptance-complete: the 16 MiB session-bound gate remains unmet,
-and the module guard cannot distinguish a legacy Android loader aliasing the
-secondary copy to the primary module. Compatibility is the
+Run H is not acceptance-complete: the 16 MiB/minimum-bound gate remains unmet.
+R-SS3g defers universal secondary isolation to integration with R3d-4's R-1a;
+the current module guard alone cannot distinguish a legacy Android loader
+aliasing the secondary copy to the primary module. Compatibility is the
 same core build, platform, firmware, machine, prepared media and options.
 RiscPC serialization remains unavailable. Capability advertising is the last
 acceptance gate. The committed [state harnesses](../tests/arculator_state_matrix.py)
@@ -117,15 +118,16 @@ load, while save and load themselves return false until the engine is running.
 The AC-6 harness retains its original fixed buffers throughout the session.
 
 **Remaining M-2 gate:** the current authored read-only ADF bound is
-143,758,088 bytes. Three maximal retained rasters account for 100,712,448 bytes;
-pending ordered-operation ownership reserves another 33,554,432 bytes. Measuring
-only admitted media and actual field encodings does not meet 16 MiB. No proof
-currently permits discarding these histories at every incomplete/interlaced
-frame boundary. No smaller bound is advertised without that proof. Default
-20 MiB RetroArch rewind memory therefore still cannot hold a state. The format
+93,152,803 bytes. Producer-derived packed raster reservation accounts for
+50,429,952 bytes; the session's pending wire bound accounts for 33,231,643 bytes.
+The remaining 9,491,208 bytes cover 4 MiB RAM, measured fields, references,
+identities and framing. This is a smaller conservative upper bound, **not a
+proof of the smallest possible bound**. Default 20 MiB RetroArch rewind memory
+still cannot hold it. Further joint-history derivation remains necessary to
+satisfy the 16 MiB/minimum-bound gate. The format
 continues to zero spare output bytes so the original full-buffer AC-2 byte
-identity holds with arbitrary caller allocations. Consequently save work also
-still includes the bound; M-2's exact-work requirement is not claimed complete.
+identity holds with arbitrary caller allocations. R-SS4d permits that clearing
+and replaces the proportional-work rule with measured save/load targets.
 
 Source caches are primed during validated load preparation, so the first public
 state load does not pay immutable-media hashing costs. Size queries are constant
@@ -135,6 +137,16 @@ The VIDC bitmap, platform framebuffer and frontend presentation history can
 contain pixels that are read before a complete redraw. They remain serialized,
 with per-row spans marked at every producer write. Encoding trims zero edges
 and retains all interior pixels; zero pixels outside those spans are derived.
+VIDC rows pack exact RGB444 channel codes, including the 13 Acorn black-level
+levels per channel in `vidc_make_colour`. RGB888 UI rows and full native test
+pixels retain their exact values. Uniform rows store one colour. Identical
+rows within or across surfaces store backward row-copy recipes instead of
+another pixel payload. Validation checks row order, extents, reference ancestry,
+channel codes and padding before any installation. Referenced surfaces restore
+once before their dependants, and row copies use those restored pixels. The
+save-time index addresses transaction-owned raw recipes even when the container
+compresses the blob. Regression tests cover that distinction, odd spans,
+all 13 Acorn levels, UI colours and malformed/cyclic/forward copy attempts.
 Load clears the previous spans, installs the new spans and rebuilds the marking
 metadata. This preserves old pixels, interlace history, dupe frames and compact
 OSK pitches without copying three 32 MiB buffers. The OSK surface itself is
@@ -232,8 +244,9 @@ init, load, run, reset, cheat, unload and deinit boundaries: no guest, stores,
 registrations or persistence. Missing primary-path support leaves ordinary
 non-copy frontends usable; an ambiguous probe after a supplied path fails closed.
 The distinct-module assumption does not hold on Android API 21–22, whose
-loader resolves matching basenames to the existing primary module; that
-aliased-lifecycle case remains an explicit release blocker.
+loader resolves matching basenames to the existing primary module. R-SS3g
+leaves this implementation unchanged and assigns alias-safe protection to the
+R3d-4 integration described below.
 Neither init nor the size getter queries GET_SAVESTATE_CONTEXT. Tests cover
 copied modules reached by default run-ahead, cheats and failed-preempt routes,
 including RiscPC and preservation of primary Disc Control callbacks.
@@ -275,12 +288,24 @@ Fixtures are authored; no ROM, title or private library bytes are included.
 
 ## Publication resource limits and frontend compatibility
 
-The ordered speculative operation log now has an aggregate ownership ceiling
-of 32 MiB, matching the existing per-file speculative-view ceiling. Each operation
+The ordered speculative operation log retains its aggregate ownership ceiling
+of 32 MiB and existing per-file speculative-view ceiling. Each operation
 is charged its native allocation, payload and sufficient packed-wire overhead;
-the container header is reserved too. Thus both queue ownership and its encoded
-blob fit a known bound. Restore validates this budget before allocating each
-operation and reconstructs its exact remaining capacity. Exhaustion follows the
+the container header is reserved too. The serialized reservation additionally
+derives from the session's largest protocol write: admitted raw extents,
+helper/carrier extents, the JFD store's 9 MiB snapshot cap when present, and the
+native IDE image when attached. Generated logical store paths fit 256 bytes.
+For ownership charge `C = sizeof(StateOperation) + 32`, write limit `W` and
+path limit `P`, the maximum wire/ownership ratio is the larger of
+`(40+P+W)/(C+W)` and `(48+2*P)/C` (rename). Applying it to the unchanged queue
+ceiling and adding the 16-byte log header yields the session wire bound, capped
+by the existing 32 MiB limit. Capture and restore enforce that bound. It survives
+publication and root rebinding; a new session configures its own bound.
+Restore validates the ownership budget before allocating each operation and
+reconstructs its exact remaining capacity. This does not assume a one-frame
+publication window: a frontend can request arbitrarily many speculative frames
+before restoring the real poll callback. Per-frame limits alone cannot bound
+that lifetime. Exhaustion follows the
 existing staged-I/O failure path: no speculative native write, a refused
 snapshot, and safe cleanup or restoration of a valid earlier queue. The unit
 fills the budget twice around a restore and proves identical exhaustion points,
@@ -338,7 +363,7 @@ heap while the intercepted live census stayed zero. This diagnoses allocator
 retention; local Mac evidence cannot claim a native Linux re-test. See the
 [glibc tunable contract](https://sourceware.org/glibc/manual/2.30/html_node/Memory-Allocation-Tunables.html).
 
-### R-SS3f verification stop (Android API 21–22)
+### R-SS3g integration dependency (replaces R-SS3f)
 
 A runtime size-zero switch alone cannot supply the required aliased-module
 protection in RetroArch 1.22.2. Its tagged
@@ -356,15 +381,21 @@ runahead_create does reject size zero, but that does not guard these independent
 entry points.
 
 On API 21–22 the loader may alias the same-basename copied library to the primary
-module. The existing distinct-module check cannot detect that alias. Per the
-Founder's conditional instruction, R-SS3f is stopped: no system-property runtime
-gate or claim that size zero protects the primary is shipped here. The modern
-module check remains. Native copied-module RPC tests already exercise a primary
+module. The existing distinct-module check cannot detect that alias. R-SS3g
+replaces the API-level switch: **no Android API-level switch is added**.
+Fable reports that R3d-4's R-1a has passed QA: it refuses a load over a live
+session before effects and suppresses nested lifecycle calls when a different
+environment callback arrives during that session, consuming the matching
+deinit. After R3d-4 merges, SS-1 must extend that same guard to both gate states
+and every Archimedes load. It must not copy or reimplement the guard ahead of
+that integration. Existing distinct-module handling remains unchanged here.
+Native copied-module RPC tests already exercise a primary
 whose actual retro_serialize_size is zero, followed by secondary lifecycle entry;
 only distinct-module rejection prevents its side effects. The earlier same-handle
 native diagnostic remains a failing registration check, not an acceptance pass.
-A core-only API-size switch is insufficient; a frontend fix or an additional
-reviewed aliased-lifecycle protocol is needed for those legacy Android routes.
+The future R-1a integration, rather than size zero or an Android version policy,
+must close those legacy Android routes. Its QA result is attributed to Fable;
+this continuation does not claim a local test of unmerged R3d-4 code.
 
 The Founder adopted the raw-frontier interpretation: stores with no state
 history use the native main IO path until their first capture. Canonical spare
@@ -396,14 +427,16 @@ itself reaches the same order of storage:
   three arrays are not three independent full screens in ordinary frames, but
   neither are they unconditionally functions of the current VIDC registers/RAM.
 
-A fast interlaced retained raster alone needs about 16 MiB in the current
+A fast interlaced retained raster alone needed about 16 MiB in the former
 32-bit literal-span representation, before 4 MiB RAM, framing, dirty media or
 pending effects. This is a lower reservation for **that representation**, not
 an information-theoretic lower bound for a redesigned palette/history codec.
-The current 137.10 MiB bound is therefore not fixed by substituting ordinary
-640x480 geometry, and an arbitrary 16 MiB cap would lose state. No smaller bound
-has been installed without proof. R-SS4d remains unfinished: derive retained
-platform/presentation copies from an explicit last-copy/overlay recipe, compact
-non-derived VIDC history, and derive a pending-effect bound from actual session
-producers and their publication window. The fixed 32 MiB log allowance has not
-been presented as such a derivation. The target has not been declared impossible.
+The former 137.10 MiB bound is therefore not fixed by substituting ordinary
+640x480 geometry, and an arbitrary 16 MiB cap would lose state. The new codec
+packs historical colours and derives identical rows, reducing the read-only ADF
+reservation to 88.84 MiB. The pending reservation now accounts for session
+protocol writes and existing queue ownership, without inventing a finite
+speculative-frame window. This still does not establish a minimum joint bound
+for all retained images. R-SS4d's remaining work is stronger platform/presentation
+derivation (including crop/overlay history) and a minimum-bound proof or a
+representation that meets 16 MiB. The target has not been declared impossible.

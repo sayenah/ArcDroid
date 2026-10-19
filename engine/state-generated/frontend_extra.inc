@@ -222,6 +222,15 @@ static void arc_state_frontend_extra(ArcState *s)
          pixels*4u!=arc_state_heap_size(s,"video.osk.pixels"))arc_state_fail(s,"presentation extent");
       double rate;arc_state_project(s,&rate,&arc_video_rate,sizeof(rate));
       if(!(rate>0&&rate<=1000.0))arc_state_fail(s,"frame rate");
+      /* Frame-boundary accumulators are remainders, not arbitrary floating
+       * values. Ordered comparisons also reject NaNs and infinities before
+       * any live write or subsequent floating-to-integer conversion. */
+      long double audio,x,y;
+      arc_state_project(s,&audio,&arc_audio_fraction,sizeof(audio));
+      arc_state_project(s,&x,&arc_stick_fraction_x,sizeof(x));
+      arc_state_project(s,&y,&arc_stick_fraction_y,sizeof(y));
+      if(!(audio>=0&&audio<1)||!(x>-1&&x<1)||!(y>-1&&y<1))
+         arc_state_fail(s,"frontend remainders");
       ARC_STATE_BOUND(s,arc_inputs.fifo_count,0,ARC_INPUT_FIFO_CAPACITY);
       ArcInputState input;arc_state_project(s,&input,&arc_inputs,sizeof(input));
       for(unsigned i=0;i<input.fifo_count&&i<ARC_INPUT_FIFO_CAPACITY;++i) {

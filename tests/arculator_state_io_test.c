@@ -22,6 +22,8 @@ static uint8_t codec_base[4096],codec_current[4096];
 static uint32_t *codec_pixels;
 static uint16_t codec_rows[2048][2];
 static unsigned codec_forge;
+static uint32_t *copy_pixels;
+static uint16_t copy_rows[2048][2];
 static void codec_u64(uint8_t *p,uint64_t n)
 {for(unsigned i=0;i<8u;++i)p[i]=(uint8_t)(n>>(i*8u));}
 static void codec_visit(ArcState *s)
@@ -38,10 +40,18 @@ static void codec_visit(ArcState *s)
       const void *next=arc_state_delta(s,"fixture.delta",codec_current,codec_base,sizeof(codec_base));
       if(arc_state_loading(s)&&next)arc_state_stage(s,codec_current,next,sizeof(codec_current));
    }
-   if(codec_forge==3u) {
-      uint8_t bad[12]={0};size_t n;codec_u64(bad,UINT64_C(2048)|(UINT64_C(1)<<32u));
-      (void)arc_state_blob(s,"fixture.raster",bad,sizeof(bad),sizeof(bad),&n);
+   if(codec_forge>=3u) {
+      uint8_t bad[20]={0};size_t n,bytes=sizeof(bad);
+      if(codec_forge==3u)codec_u64(bad,UINT64_C(2048)|(UINT64_C(1)<<32u)|(UINT64_C(1)<<48u));
+      else if(codec_forge<6u) {
+         codec_u64(bad,(UINT64_C(1)<<32u)|(UINT64_C(5)<<48u));
+         codec_u64(bad+8,codec_forge==4u?0u:UINT64_C(1)<<32u);bytes=16u;
+      } else {
+         codec_u64(bad,(UINT64_C(1)<<32u)|(UINT64_C(6)<<48u));bad[16]=14u;bytes=18u;
+      }
+      (void)arc_state_blob(s,"fixture.raster",bad,bytes,bytes,&n);
    } else arc_state_raster(s,"fixture.raster",codec_pixels,4096u,codec_rows);
+   if(copy_pixels)arc_state_raster(s,"fixture.copy",copy_pixels,4096u,copy_rows);
 }
 static void bounded_blob_visit(ArcState *s)
 {
@@ -103,7 +113,7 @@ static void test_compact_codec(void)
    assert(codec_pixels[2u*4096u+7u]==0x12345678u&&!codec_pixels[4u*4096u+8u]&&codec_pixels[4096u*2048u-1u]==0x23456789u);
    uint8_t *again=capture_visit(codec_visit,&n);assert(n==bytes&&!memcmp(saved,again,n));free(again);
    uint8_t before[4096];memcpy(before,codec_current,sizeof(before));
-   for(codec_forge=1u;codec_forge<=3u;++codec_forge) {
+   for(codec_forge=1u;codec_forge<=6u;++codec_forge) {
       uint8_t *bad=capture_visit(codec_visit,&n);unsigned mode=codec_forge;codec_forge=0;
       assert(!restore_visit(codec_visit,bad,n)&&!memcmp(before,codec_current,sizeof(before)));
       assert(codec_pixels[2u*4096u+7u]==0x12345678u&&codec_pixels[4096u*2048u-1u]==0x23456789u);
@@ -120,7 +130,40 @@ static void test_compact_codec(void)
    codec_forge=0;codec_base[0]^=1u;
    assert(!restore_visit(codec_visit,saved,bytes)&&!memcmp(before,codec_current,sizeof(before)));
    codec_base[0]^=1u;free(saved);free(codec_pixels);codec_pixels=NULL;
-   puts("compact codec: sector deltas, retained spans, canonical bytes and four malformed/base refusals passed");
+   puts("compact codec: sector deltas, retained spans, canonical bytes, copy ordering and seven malformed/base refusals passed");
+}
+static void test_raster_copies(void)
+{
+   codec_pixels=calloc(4096u*2048u,4u);copy_pixels=calloc(4096u*2048u,4u);assert(codec_pixels&&copy_pixels);
+   memset(codec_rows,0,sizeof(codec_rows));memset(copy_rows,0,sizeof(copy_rows));
+   /* An odd RGB444 row, an RGB888 UI row and a full-width alternating row.
+    * Later rows and the second surface must derive their copies from the
+    * saved rows, even when every live source has been overwritten. */
+   for(unsigned x=0;x<4096u;++x)codec_pixels[4096u+x]=x&1u?0x00ff11eeu:0x0011ee22u;
+   codec_pixels[2u*4096u+3u]=0x00aa33eeu;codec_pixels[2u*4096u+4u]=0x00cc44ffu;
+   codec_pixels[2u*4096u+5u]=0x00ee5500u;
+   codec_pixels[3u*4096u+3u]=0x00123456u;codec_pixels[3u*4096u+4u]=0x00789abcu;
+   for(unsigned x=0;x<13u;++x)codec_pixels[5u*4096u+x]=((x*255u/12u)<<16u)|(21u<<8u)|42u;
+   /* Large zero interiors compress the blob itself. A later surface's row
+    * index must still address the uncompressed recipes, not packed bytes. */
+   codec_pixels[6u*4096u]=0x003377bbu;codec_pixels[7u*4096u]=0x00ff11eeu;
+   codec_pixels[7u*4096u-1u]=codec_pixels[8u*4096u-1u]=0x004488aau;
+   memcpy(codec_pixels+4u*4096u,codec_pixels+4096u,4096u*4u);
+   arc_state_raster_mark(codec_rows,1,0,4096);arc_state_raster_mark(codec_rows,2,3,3);
+   arc_state_raster_mark(codec_rows,3,3,2);arc_state_raster_mark(codec_rows,4,0,4096);
+   arc_state_raster_mark(codec_rows,5,0,13);
+   arc_state_raster_mark(codec_rows,6,0,4096);arc_state_raster_mark(codec_rows,7,0,4096);
+   memcpy(copy_pixels,codec_pixels,4096u*2048u*4u);memcpy(copy_rows,codec_rows,sizeof(copy_rows));
+   size_t bytes,n;uint8_t *saved=capture_visit(codec_visit,&bytes);assert(bytes<8000u);
+   memset(codec_pixels,0,8u*4096u*4u);memset(copy_pixels,0,8u*4096u*4u);
+   assert(restore_visit(codec_visit,saved,bytes));
+   assert(codec_pixels[4097]==0x00ff11eeu&&codec_pixels[2u*4096u+5u]==0x00ee5500u);
+   assert(codec_pixels[3u*4096u+4u]==0x00789abcu&&codec_pixels[4u*4096u+1u]==0x00ff11eeu);
+   for(unsigned x=0;x<13u;++x)assert(codec_pixels[5u*4096u+x]==(((x*255u/12u)<<16u)|(21u<<8u)|42u));
+   assert(!memcmp(codec_pixels,copy_pixels,4096u*2048u*4u));
+   uint8_t *again=capture_visit(codec_visit,&n);assert(n==bytes&&!memcmp(saved,again,n));
+   free(again);free(saved);free(codec_pixels);free(copy_pixels);codec_pixels=copy_pixels=NULL;
+   puts("raster recipes: odd RGB444, UI RGB888, full-width row copies and cross-surface reconstruction passed");
 }
 static struct retro_vfs_interface *io_proxy;
 static void setup(void)
@@ -254,11 +297,33 @@ static void test_pending_budget(void)
    assert(!arc_state_io_pending()&&mutations==before);clear_files();
    puts("pending budget: bounded ownership, failed snapshot, zero native mutations and cleanup passed");
 }
+static void test_pending_wire_bound(void)
+{
+   clear_files();setup();uint8_t sector[1024]={0};
+   add_file("media","raw.adf",sector,sizeof(sector));unsigned before=mutations;
+   size_t old=arc_state_io_pending_bound(),small=arc_state_io_session_bound(1024u,256u);
+   assert(small&&small<old/4u&&arc_state_io_pending_bound()==small);
+   arc_state_io_root("save");assert(arc_state_io_pending_bound()==small);
+   assert(!arc_state_io_session_bound(SIZE_MAX,256u)&&arc_state_io_pending_bound()==small);
+   arc_state_io_speculate(true);ArcIoFile *f=arc_io_open_file("media/raw.adf",true);assert(f);
+   for(unsigned i=0;i<300u;++i) {
+      sector[0]=(uint8_t)i;
+      assert(!arc_io_seek_file(f,0,RETRO_VFS_SEEK_POSITION_START));
+      assert(arc_io_write_file(f,sector,sizeof(sector))==sizeof(sector)&&arc_io_flush_file(f));
+   }
+   size_t n;uint8_t *saved=capture(&n);assert(n<=small&&mutations==before);
+   assert(restore(saved,n)&&arc_state_io_pending_bound()==small&&mutations==before);
+   arc_state_io_clear();assert(arc_state_io_pending_bound()==small);free(saved);
+   assert(arc_io_close_file(f));arc_state_io_forget_stores();clear_files();
+   puts("pending wire bound: session producer limits, 300 ordered writes, restore and clear preserve capacity without native effects");
+}
 int main(void)
 {
    test_declared_decode_limit();
+   test_raster_copies();
    test_compact_codec();
    test_pending_budget();
+   test_pending_wire_bound();
    test_failed_publication_order();
    test_dirty_media_index();
    test_lazy_raw_frontier();

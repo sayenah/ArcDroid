@@ -4,13 +4,16 @@
 
 Run H is not acceptance-complete: its 16 MiB session-bound target and default
 20 MiB rewind-buffer gate remain unmet. The copied-module isolation proof also
-does not cover Android API 21–22 loaders that alias the copy to the primary. The authored read-only ADF bound is
-143,758,088 bytes. Do not interpret native functional tests as approval to ship.
+does not cover Android API 21–22 loaders that alias the copy to the primary.
+The authored read-only ADF bound is
+93,152,803 bytes (88.84 MiB). This is a conservative upper bound, not an
+established minimum. Do not interpret functional tests as approval to ship.
 
-Save states, rewind and run-ahead require Android 6.0 (API 23) or newer.
-The intended API-21/22 runtime disable is blocked: RetroArch 1.22.2 cheat
-routes can create a secondary even after size zero. This unapproved run-H
-implementation must not be released as enforcing that requirement.
+R-SS3g replaces the proposed Android version restriction; no API-level switch
+is added. After R3d-4 merges, its R-1a guard must extend to both gate states and
+every Archimedes load. That guard refuses loads over a live session and ignores
+nested secondary lifecycle calls, including aliased legacy Android modules.
+Current distinct-module handling remains unchanged until that integration.
 
 Arculator save/load and single-instance run-ahead use a fixed session buffer.
 RiscPC states remain unavailable. The launch chooser reports the admitted bound
@@ -41,5 +44,5 @@ stable identities across acknowledged writes; external edits establish a newer
 frontier and identity.
 
 The original full-buffer save/load/save byte identity remains required; output
-spare capacity is zeroed. The Founder permits this clearing under R-SS4d. The remaining bound gate
-is independent of exact-payload work.
+spare capacity is zeroed. The Founder permits this clearing under R-SS4d.
+The remaining bound gate is independent of exact-payload work.

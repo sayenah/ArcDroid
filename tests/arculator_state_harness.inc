@@ -1,5 +1,11 @@
 /* ArcDroid authored save-state differential matrix. GPL-2.0-only. */
 if(ss1_mode) {
+   unsigned ss1_cost_samples=3u;
+   const char *ss1_sample_text=getenv("ARCDROID_SS1_COST_SAMPLES");
+   if(ss1_sample_text) {
+      char *end;unsigned long n=strtoul(ss1_sample_text,&end,10);
+      assert(!*end&&n&&n<=2000u);ss1_cost_samples=(unsigned)n;
+   }
    bool (*retro_serialize)(void *,size_t);LOAD(retro_serialize);
    bool (*retro_unserialize)(const void *,size_t);LOAD(retro_unserialize);
    if(!strcmp(argv[5],"--ss1-shipping")) {
@@ -222,8 +228,8 @@ if(ss1_mode) {
          }
          assert(!memcmp(saved,again,bytes));
          assert(!clock_gettime(CLOCK_MONOTONIC,&start));
-         for(unsigned sample=0;sample<3u;++sample)assert(retro_unserialize(saved,bytes));
-         unserialize_ns=ss1_elapsed_ns(start)/3u;
+         for(unsigned sample=0;sample<ss1_cost_samples;++sample)assert(retro_unserialize(saved,bytes));
+         unserialize_ns=ss1_elapsed_ns(start)/ss1_cost_samples;
          assert(retro_serialize(again,bytes));assert(!memcmp(saved,again,bytes));
          if(!strcmp(argv[5],"--ss1-publish")) {
             const char *phase=getenv("ARCDROID_SS1_KILL_PHASE");ss1_kill_phase=phase?(unsigned)strtoul(phase,NULL,10):0;
@@ -297,8 +303,8 @@ if(ss1_mode) {
             struct timespec start;assert(!clock_gettime(CLOCK_MONOTONIC,&start));
             assert(retro_serialize(saved,bytes));serialize_ns=ss1_elapsed_ns(start);
             assert(!clock_gettime(CLOCK_MONOTONIC,&start));
-            for(unsigned sample=0;sample<3u;++sample){assert(retro_serialize_size()==bytes);assert(retro_serialize(saved,bytes));}
-            serialize_ns=ss1_elapsed_ns(start)/3u;
+            for(unsigned sample=0;sample<ss1_cost_samples;++sample){assert(retro_serialize_size()==bytes);assert(retro_serialize(saved,bytes));}
+            serialize_ns=ss1_elapsed_ns(start)/ss1_cost_samples;
             if(produce) {
                ss1_write_state(state_path,saved,bytes);
                char checkpoint[4096];snprintf(checkpoint,sizeof(checkpoint),"%s/checkpoint-save",data_root);
@@ -376,7 +382,7 @@ if(ss1_mode) {
          const char *identities[]={"identity.build","identity.schema","identity.platform","identity.engine","identity.abi","identity.machine","identity.firmware",
             "identity.options","identity.media-count","identity.media.0","frontier.hd","frontier.jfd"};
          unsigned refused=0;
-         for(unsigned test=0;test<sizeof(identities)/sizeof(identities[0])+11u;++test) {
+         for(unsigned test=0;test<sizeof(identities)/sizeof(identities[0])+26u;++test) {
             memcpy(again,saved,bytes);size_t length=bytes;
             if(test<sizeof(identities)/sizeof(identities[0])) {
                size_t at=ss1_record(again,identities[test],5);assert(at&&ss1_get64(again+at+16));
@@ -398,6 +404,19 @@ if(ss1_mode) {
                   uint64_t key=UINT64_C(14695981039346656037);for(unsigned b=0;b<24u;++b)key=(key^field[b])*UINT64_C(1099511628211);
                   size_t at=40u;while(at<(size_t)ss1_get64(again+16)&&ss1_get64(again+at)!=key)at+=24u+(size_t)ss1_get64(again+at+16);
                   assert(at<(size_t)ss1_get64(again+16));memset(again+at+24,0xff,sizeof(size_t));ss1_checksum(again);break;
+               }
+               default:{
+                  unsigned index=test-(unsigned)(sizeof(identities)/sizeof(identities[0]))-11u;
+                  const char *names[]={"libretro/arcdroid_libretro.c:arc_audio_fraction",
+                     "libretro/arcdroid_libretro.c:arc_stick_fraction_x",
+                     "libretro/arcdroid_libretro.c:arc_stick_fraction_y"};
+                  const long double bad[]={__builtin_nanl(""),__builtin_infl(),-__builtin_infl(),-1.0L,1.0L};
+                  assert(index<15u);uint8_t field[24];ss1_put64(field,ss1_key(names[index/5u]));
+                  ss1_put64(field+8,0);ss1_put64(field+16,sizeof(long double));
+                  uint64_t key=UINT64_C(14695981039346656037);for(unsigned b=0;b<24u;++b)key=(key^field[b])*UINT64_C(1099511628211);
+                  size_t at=40u;while(at<(size_t)ss1_get64(again+16)&&ss1_get64(again+at)!=key)at+=24u+(size_t)ss1_get64(again+at+16);
+                  assert(at<(size_t)ss1_get64(again+16)&&ss1_get64(again+at+16)==sizeof(long double));
+                  memcpy(again+at+24,&bad[index%5u],sizeof(long double));ss1_checksum(again);break;
                }
             }
             unsigned notices=total_osd_calls;last_message[0]=0;uint64_t mutations=ss1_native_mutations;

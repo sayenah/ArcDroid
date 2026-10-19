@@ -9066,10 +9066,30 @@ static size_t arc_snapshot_session_bound(const ArcMachineDescriptor *machine)
    size_t bytes=arc_state_static_bound(arc_snapshot_static_visit);
    if(!bytes)return 0;
    bytes+=16u+(size_t)machine->memory_kib*1024u;
-   bytes+=3u*(4096u*2048u*4u+2048u*8u);
+   /* Two historical VIDC surfaces use exact RGB444 (vidc_make_colour at
+    * fixed black-level configuration). Presentation additionally holds the
+    * RGB888 OSK/chooser output. Row copies need only their 16-byte recipes.
+    * Incompressible distinct rows, not the frontend geometry, set the bound. */
+   bytes+=(size_t)ARC_STATE_VIDC_WIDTH*ARC_STATE_VIDC_HEIGHT*6u+
+      3u*ARC_STATE_VIDC_HEIGHT*16u;
    bytes+=0x4000u*16u+24u+17u*40u; /* MEMC map and CPU bank/fetch references. */
    bytes+=4u*256u+65536u; /* File metadata, heap sizes, identities and frontiers. */
-   bytes+=arc_state_io_pending_bound();
+   /* Guest-side raw writes are sectors or one track side (disc_adf.c).
+    * A frame boundary can also prepare a helper/carrier or replacement, so
+    * include their complete admitted file extents. JFD publishes at most its
+    * 9 MiB STORE_CAP snapshot; IDE compaction writes the whole native image.
+    * These cover each protocol write, without assuming a finite number of
+    * fake frames. Logical M bindings and generated S store names fit 256 B. */
+   size_t effect_write=ARC_ADFFS_DISC_SIZE>ARC_LAUNCH_DISC_SIZE?ARC_ADFFS_DISC_SIZE:ARC_LAUNCH_DISC_SIZE;
+   for(unsigned i=0;i<arc_media_count;++i)if(arc_media[i].populated) {
+      if(arc_media[i].info.kind==ARC_MEDIA_JFD) {
+         if(effect_write<9u*1024u*1024u)effect_write=9u*1024u*1024u;
+      } else if(arc_media[i].info.declared_size>effect_write)effect_write=arc_media[i].info.declared_size;
+   }
+   if(arc_hd_store&&effect_write<ARC_INSTALL_HD_BYTES)effect_write=ARC_INSTALL_HD_BYTES;
+   size_t effects=arc_state_io_session_bound(effect_write,256u);
+   if(!effects)return 0;
+   bytes+=effects;
    arc_state_media_budget=arc_snapshot_media_bound();bytes+=arc_state_media_budget;
    /* Source identity belongs to load-time preparation, including its cache.
     * The first public state load must not pay for immutable media hashing. */
