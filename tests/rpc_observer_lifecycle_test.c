@@ -5,6 +5,7 @@
 int main(int argc,char **argv)
 {
     assert(argc==2);open_library(argv[1]);load_api();
+    LOAD(l1_state,"arc_rpc_test_l1_state");
     uint64_t (*epoch)(void),(*generation)(void);void (*seed_pending)(void);bool (*clean)(void);
     LOAD(epoch,"arc_rpc_observer_test_epoch");LOAD(generation,"arc_rpc_test_session_generation");
     LOAD(seed_pending,"arc_rpc_observer_test_seed_pending");LOAD(clean,"arc_rpc_observer_test_clean");
