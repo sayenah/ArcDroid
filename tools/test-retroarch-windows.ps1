@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$InputDirectory,
     [Parameter(Mandatory = $true)][string]$WorkDirectory,
-    [switch]$GuardedJfdOnly
+    [switch]$GuardedJfdOnly,
+    [string]$OrdinaryRouteBuild = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -3085,3 +3086,5 @@ public static class ArcRpcHdCrc {
     if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- $result" }
     . (Join-Path $PSScriptRoot 'test-retroarch-rpc-privacy.ps1')
 }
+
+if ($OrdinaryRouteBuild) { . (Join-Path $PSScriptRoot 'test-retroarch-rpc-route.ps1') }

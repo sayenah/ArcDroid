@@ -321,7 +321,7 @@ void arc_engine_rpc_observers_bind(unsigned catalogue)
 {
     if(!arc_engine_is_rpc())return;
     ArcDigest digest;size_t count=0;unsigned actual=0;
-    const ArcRpcFirmwareFingerprint *table=arc_riscpc_firmware_catalogue(&count);
+    const ArcRpcFirmwareFingerprint *table=arc_riscpc_production_catalogue(&count);
     if(arc_rpc_session_firmware(&digest)){
         const ArcRpcFirmwareFingerprint *fingerprint=arc_riscpc_firmware_recognize(&digest,table,count);
         if(fingerprint)actual=(unsigned)fingerprint->os;

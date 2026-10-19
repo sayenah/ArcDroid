@@ -10,6 +10,7 @@ static struct retro_disk_control_ext_callback disks;
 static struct retro_keyboard_callback keyboard;
 static unsigned videos,audios,polls,av_calls,controllers,descriptors,summary_lines,freeze_notices[4];
 static uint64_t audio_frames,pixel_hash=1469598103934665603ULL,sound_hash=1469598103934665603ULL;
+static bool projection_override;
 static bool shipping,failed,changed,write_off,last_catalogue_message,matrix_mode,following_arculator,direct_start_compat;
 static char terminal[512];
 static unsigned privacy_ext,privacy_legacy,privacy_notice,privacy_ext_notice,privacy_legacy_notice;
@@ -48,6 +49,7 @@ static bool host_environment(unsigned command,void *data)
     if(command==RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES){*(uint64_t *)data=UINT64_C(1)<<RETRO_DEVICE_KEYBOARD;return true;}
     if(command==RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE){*(bool *)data=changed;changed=false;return true;}
     if(command==RETRO_ENVIRONMENT_GET_VARIABLE){struct retro_variable *v=data;
+        if(projection_override && !strcmp(v->key,"arcdroid_machine")){v->value="A3000";return true;}
         if(!strcmp(v->key,"arcdroid_disk_writes")){v->value=write_off?"off":"shadow";return true;}
         if(!strcmp(v->key,"arcdroid_jfd_write_protect")){v->value=write_off?"off":"as-imaged";return true;}
         if(!strcmp(v->key,"arcdroid_short_tail")){v->value=write_off?"zero-filled":"missing";return true;}
@@ -87,7 +89,7 @@ static size_t host_audio(const int16_t *data,size_t frames)
 static void host_poll(void){++polls;}
 int main(int argc,char **argv)
 {
-    assert(argc==6);matrix_mode=!strncmp(argv[5],"matrix:",7);shipping=!strcmp(argv[5],"shipping");extended_messages=strstr(argv[5],"fallback")==NULL;system_directory=argv[3];assert(canonical(argv[4],save_directory));
+    assert(argc==6);matrix_mode=!strncmp(argv[5],"matrix:",7);shipping=!strncmp(argv[5],"shipping",8);projection_override=strstr(argv[5],"override")!=NULL;extended_messages=strstr(argv[5],"fallback")==NULL;system_directory=argv[3];assert(canonical(argv[4],save_directory));
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
@@ -195,7 +197,7 @@ int main(int argc,char **argv)
         struct retro_system_av_info av;get_av(&av);
         if(!strncmp(argv[5],"rate",4))assert(fabs(av.timing.fps-atof(argv[5]+4))<0.01);
         for(unsigned i=0;i<65;++i){unsigned v=videos,a=audios;run();assert(videos==v+1 && audios==a+1);}
-        assert(av_calls==prior_av && strstr(terminal,"snapshot saved"));
+        assert(av_calls==prior_av && strstr(terminal,"RiscPC settings were saved"));
         double expected=65*48000.0/av.timing.fps;
         assert(fabs((double)(audio_frames-initial_samples)-expected)<=1.0);
         reset();assert(phase()==1);

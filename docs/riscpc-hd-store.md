@@ -4,8 +4,8 @@
 
 Status: **accepted by Fable (D-145)**. Run A at `b4bc633`, amended by D-147 (R2c-1) for run B
 on `slice/r2c-ide`; runs M/N apply D-156/D-158/D-159/D-160. This freezes work-order item 9 and the store interfaces
-needed by items 10–12. Platform qualification remains separate; RPC is not
-exposed through a shipping route. MUST statements below are requirements.
+needed by items 10–12. Platform qualification remains separate; gate-closed ordinary loads keep Arculator; gate-open
+shipping builds may prepare RiscPC. MUST statements below are requirements.
 
 ## 1. Ownership, identity and commit guarantees
 
@@ -747,7 +747,8 @@ from an empty or recognised unpublished store; a published store refuses the
 import without modification. The source is opened read-only and never written,
 renamed or removed. The result belongs to the content's own `hd-riscpc` store
 and uses ordinary recovery rules. It does not rekey the content or select a
-foreign store. Shipping routes continue to reject RPC plans.
+foreign store. Gate-closed builds keep ordinary content on Arculator. Both shipping gate states
+reject RPC test plans; gate-open ordinary loads use the production preparation host.
 
 ## 10. VFS/platform assumptions
 
@@ -901,7 +902,7 @@ are authored bytes, never firmware, games or user boot resources.
 | `rpc-hd-population` | AC-5: candidate invisible, source unchanged on every abort/fault/kill, stale expected generation refused, source corruption before reconstruction, effective source overlays preserved even in untouched chunks, begin refused mid-checkpoint and ROTATE excluded throughout ownership, kill between RETIRE removals recognised, complete population published atomically, no boot-resource dependency |
 | `rpc-ide-registers` | AC-5: frozen item-10 command matrix, 256-sector latch/one backend write, range/width/nIEN/IRQ/status/reset/cancel, absence, read failure IDNF and write failure ABRT |
 | `rpc-ide-guest` | AC-5/AC-7: authored guest through real MMIO/scheduler/store, virtual timestamps, host VFS delay/outcome equivalence, reset/unload/stale generations, audio counts, two frontend pacings |
-| `rpc-hd-plan` | AC-7: `hd_import=<file>` exact-size read-only raw import only from empty/unpublished state through population and real adapter/store; published-store refusal; content identity frozen across swaps/edits/model selection; shipping routes still reject RPC plans |
+| `rpc-hd-plan` | AC-7: `hd_import=<file>` exact-size read-only raw import only from empty/unpublished state through population and real adapter/store; published-store refusal; content identity frozen across swaps/edits/model selection; both shipping gate states reject RPC test plans; gate-closed ordinary loads keep Arculator |
 | `rpc-hd-frame-cost` | AC-9 support: authored checkpoint workload at §8’s sequential rate exports per-state byte/operation/metadata/namespace counters (including indexed reconstruction, streaming ROTATE and bounded RETIRE), allocations, host frame time/T, open time and guest progress; no mock timing pass presented as Odin3 evidence |
 | Existing `native-hard-disc-store`, `hard-disc-formatter`, `install-ide-registers` | AC-5/AC-6: run unchanged A3020 fixtures/assertions; identical store bytes and no writes outside RPC namespace |
 | Existing `rpc-frontend-boundary-guard`, `rpc-symbol-guard`, `rpc-windows-test-exports`, `rpc-shipping-route`, `rpc-session-switch`, `rpc-session-lifecycle` | AC-7: dormant reachability, namespace, ABI and Arculator→RPC→Arculator isolation remain intact |
@@ -989,7 +990,7 @@ checks the current paths against it. The VFS has no atomic multi-file snapshot
 or package lock. No package writes are performed.
 
 The test-only plan-v2 key is `hd_populate=on`; it implies hard_disc=on, conflicts
-with hard_disc=off and hd_import, and is rejected by v1 and shipping routes.
+with hard_disc=off and hd_import, and is rejected by v1 and both shipping gate states.
 The plan opens with create_blank=false, drives the same step API offline, and
 attaches IDE only after a complete root. R3b-2 supplies frame-loop preparation.
 A known receipt is a no-op without package I/O; legacy roots get a notice and
@@ -1202,3 +1203,21 @@ The platform and same-UID rename-over residuals, unsupported-storage refusal,
 root requirements and private P10b expectations remain in
 `docs/riscpc-session-preparation.md`'s ownership section (D-208). The synchronous
 Arculator directory helper and Arculator persistence are unchanged.
+
+## R3d-4 ordinary content identity
+
+Ordinary loads use the frontend's existing `arc_content_digest`: a loose image
+and a single-image ZIP use the image digest; a playlist uses its ordered set
+identity; a folder set uses its initially selected image. Disk-control edits,
+swaps and resets never rekey the session. The HD key is content-only; CMOS keys
+also include the selected model, layout and firmware. Auto keeps deterministic
+firmware ranking. A versioned `<save>/arcdroid/rpc-pairs/<content_id>.pair.{0,1}`
+sidecar, outside the HD directory, records only a successfully admitted pair
+under the content lock. A changed pair gives advice that its settings are
+separate; missing, corrupt or unpublished advice never changes selection or
+invalidates either store (D-211). No settings are copied between pairs.
+Each 32-byte slot contains versioned magic, a little-endian generation, model,
+OS, zero reserved bytes and CRC32. Publication renames a complete temporary
+record into the inactive slot; the highest valid generation wins. The active
+slot survives interruption, including on Windows VFS where rename cannot
+replace an existing file. A failed advisory publication never refuses a load.

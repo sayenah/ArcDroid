@@ -256,3 +256,12 @@ with tempfile.TemporaryDirectory(prefix='arc-census-elf-') as temp:
             guard.verify_census([directory], nm, True, errors, policy)
             assert bool(errors) != accepted, (name, errors)
 print('rpc-symbol-guard: census ELF sanitizer and fortified imports checked against finite service names')
+
+# Clang copied-DSO instrumentation: bookkeeping never admits the referent.
+for form,decoration,kind in [('elf','','B'),('macho','_','S')]:
+    check_nm(decoration+'arc_rpc_data D\n'+decoration+'__odr_asan_gen_arc_rpc_data '+kind+'\n','rpc',sanitized=True,form=form)
+    check_nm(decoration+'__odr_asan_gen_arc_rpc_absent '+kind+'\n','rpc','ODR indicator without local data referent',sanitized=True,form=form)
+    check_nm(decoration+'collision D\n'+decoration+'__odr_asan_gen_collision '+kind+'\n','rpc','unprefixed RPCEmu definition',sanitized=True,form=form)
+    check_nm(decoration+'arc_rpc_data D\n'+decoration+'__odr_asan_gen_arc_rpc_data T\n','rpc','unprefixed RPCEmu definition',sanitized=True,form=form)
+    check_nm(decoration+'arc_rpc_data D\n'+decoration+'__odr_asan_gen_arc_rpc_data '+kind+'\n','rpc','unprefixed RPCEmu definition',sanitized=False,form=form)
+print('rpc-symbol-guard: Clang ODR indicators bind to locally defined, independently checked data; orphan/function/non-sanitized lookalikes rejected')

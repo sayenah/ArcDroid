@@ -9,7 +9,8 @@ SOURCES = ('libretro/rpc_preparation.c', 'libretro/rpc_preparation.h',
            'libretro/rpc_hd_store.c', 'libretro/arc_lock.h')
 OBJECTS = ('rpc_preparation', 'rpc_preparation_host', 'rpc_cmos_store',
            'rpc_launch_record_store', 'rpc_hd_store', 'arc_lock')
-STATIC_SOURCES = ('libretro/arcdroid_libretro.c', 'tests/arc_test_plan.c')
+STATIC_SOURCES = ('libretro/arcdroid_libretro.c', 'tests/arc_test_plan.c',
+                  'libretro/rpc_staging.h', 'libretro/rpc_route.c')
 
 
 def split(code, delimiter):

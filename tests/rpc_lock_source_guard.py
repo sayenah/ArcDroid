@@ -8,7 +8,7 @@ import tempfile
 root = Path(sys.argv[1]).resolve()
 
 
-allowed = {'libretro/rpc_preparation.c','libretro/rpc_preparation.h',
+allowed = {'libretro/rpc_route.c','libretro/rpc_route.h','libretro/rpc_preparation.c','libretro/rpc_preparation.h',
            'libretro/rpc_hd_store.c','libretro/rpc_hd_store.h',
            'libretro/rpc_cmos_store.c','libretro/rpc_cmos_store.h',
            'libretro/rpc_launch_record_store.c','libretro/rpc_launch_record_store.h'}
@@ -21,7 +21,7 @@ def check(sources):
         if name in ('libretro/arc_lock.c', 'libretro/arc_lock.h'):
             continue
         if name not in allowed and re.search(r'\barc_lock_\w+|\b(?i:arc_lock\.h)\b|\bArcLock\w*\b', text):
-            errors.append(f'{name}: dormant lock referenced by shipping source')
+            errors.append(f'{name}: lock referenced outside an owning module by shipping source')
         if name not in ('libretro/arc_io.c', 'libretro/arc_io.h') and re.search(r'\barc_io_mkdir\s*\(', text):
             errors.append(f'{name}: lock-only mkdir migrated to another shipping caller')
     return errors
@@ -45,6 +45,10 @@ with tempfile.TemporaryDirectory(prefix='arc-lock-dormancy-') as directory:
             raise SystemExit(f'dormancy collector mutant survived: {name}')
 
 sources = collect(root)
+pair=sources['libretro/rpc_route.c'].split('bool arc_riscpc_pair_admitted(',1)[1]
+if 'arc_lock_held(owner)' not in pair or pair.count('arc_lock_verify(owner)')<3:
+    raise SystemExit('pair advisory does not verify ownership before publication')
+
 rejected = 0
 for windows_paths in (False, True):
     for crlf in (False, True):
@@ -80,6 +84,6 @@ for stem in ('rpc_hd_store','rpc_cmos_store','rpc_launch_record_store'):
     source=sources['libretro/'+stem+'.c'];header=sources['libretro/'+stem+'.h']
     if 'ArcLock *owner' not in header or 'arc_lock_verify(' not in source or 'arc_lock_held(' not in source:
         raise SystemExit(stem+': mandatory ownership missing')
-print('rpc-lock-enforcement: token-bound stores and preparation only; '
+print('rpc-lock-enforcement: token-bound stores, preparation and admitted-pair advisory only; '
       f'{rejected} migration, type, arc_io, source-tree and documentary negative checks '
       'in POSIX/Windows path forms and LF/CRLF text')

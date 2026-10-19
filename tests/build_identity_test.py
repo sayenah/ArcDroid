@@ -49,6 +49,7 @@ target_include_directories(probe PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <string.h>
 #include "arc_build_identity.h"
 #define RETRO_LOG_INFO 1
 #define ARCDROID_VERSION "authored"
@@ -60,7 +61,7 @@ static void log_line(int level, const char *format, ...) {
     (void)level; va_list args; va_start(args, format); vprintf(format, args); va_end(args);
 }
 static void (*arc_log)(int, const char *, ...) = log_line;
-''' + logger.group(0) + '\nint main(void) { arc_build_identity(); }\n')
+''' + frontend[frontend.index('__attribute__((used)) static const char arc_rpc_build_descriptor'):logger.start()] + logger.group(0) + '\nint main(void) { arc_build_identity(); }\n')
     (repo / 'tracked').write_text('one\n')
     # Ignore build products just as the project does, including untracked files.
     (repo / '.gitignore').write_text('ignored\n')
