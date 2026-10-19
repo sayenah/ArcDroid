@@ -141,6 +141,7 @@ void arc_state_fail(ArcState *s,const char *reason)
       if(n)memcpy(s->error_text,reason,n);s->error_text[n]=0;s->error=s->error_text;
    }
 }
+void arc_state_free(void *pointer) { free(pointer); }
 const char *arc_state_error(const ArcState *s) { return s?s->error:"allocation"; }
 bool arc_state_loading(const ArcState *s) { return s&&s->loading; }
 unsigned arc_state_pass(const ArcState *s) { return s?s->pass:0; }
@@ -171,8 +172,13 @@ static StateItem *find_item(ArcState *s,uint64_t key)
       }
       return NULL;
    }
-   StateItem probe;memset(&probe,0,sizeof(probe));probe.key=key;
-   return bsearch(&probe,s->items,s->count,sizeof(*s->items),item_order);
+   size_t low=0,high=s->count;
+   while(low<high) {
+      size_t middle=low+(high-low)/2u;StateItem *r=&s->items[middle];
+      if(r->key==key)return r;
+      if(r->key<key)low=middle+1u;else high=middle;
+   }
+   return NULL;
 }
 static StateItem *item(ArcState *s,uint64_t key,unsigned kind,const void *data,size_t bytes)
 {

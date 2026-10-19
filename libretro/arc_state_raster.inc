@@ -47,5 +47,5 @@ void arc_state_raster(ArcState *s,const char *name,uint32_t *pixels,size_t pitch
    if(s->drop_owner==name_key(name)){s->drop_done=true;return;}
 #endif
    StateRasterRestore *r=malloc(sizeof(*r));if(!r){arc_state_fail(s,"allocation");return;}
-   *r=(StateRasterRestore){pixels,pitch,rows,saved,bytes};arc_state_action(s,raster_restore_commit,free,r);
+   *r=(StateRasterRestore){pixels,pitch,rows,saved,bytes};arc_state_action(s,raster_restore_commit,arc_state_free,r);
 }

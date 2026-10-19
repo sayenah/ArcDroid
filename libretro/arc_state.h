@@ -10,6 +10,8 @@ typedef void (*ArcStateVisit)(ArcState *);
  * region identities and bounded offsets, never as process addresses. */
 ArcState *arc_state_begin(const void *input, size_t length);
 void arc_state_end(ArcState *state);
+/* Callback form of free(p), preserving the census allocator interception. */
+void arc_state_free(void *pointer);
 void arc_state_clear_cache(void);
 void *arc_state_scratch(ArcState *state,size_t bytes);
 void arc_state_stage(ArcState *state,void *destination,const void *source,size_t bytes);

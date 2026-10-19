@@ -697,7 +697,7 @@ void arc_io_state_path(ArcState *s,const char *name,char *path,size_t capacity)
    if(arc_state_loading(s)) {
       ArcIoStatePath *change=malloc(sizeof(*change));if(!change){arc_state_fail(s,"allocation");return;}
       *change=(ArcIoStatePath){path,capacity,binding==UINT64_MAX?ARC_STATE_FILE_BINDINGS:(unsigned)binding};
-      arc_state_action(s,arc_io_state_path_commit,free,change);
+      arc_state_action(s,arc_io_state_path_commit,arc_state_free,change);
    }
 }
 typedef struct { ArcIoFile *previous,*next; } ArcIoStateFileChange;

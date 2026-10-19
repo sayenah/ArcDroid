@@ -19475,6 +19475,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "void arc_state_free ( void * pointer ) ;",
+        "classification": "host-only",
+        "reason": "Callback cleanup adapter invokes free(pointer), so the existing forced-include allocation bridge instruments release during census builds. It owns no storage and serializes no guest value."
+      },
+      {
+        "kind": "declaration",
         "declaration": "void arc_state_clear_cache ( void ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."

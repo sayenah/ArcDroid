@@ -22,7 +22,7 @@ static void arc_state_jfd_retire(ArcState *s,ArcJfdOverlay *old,size_t sectors,b
 {
    ArcStateJfdRetirement *r=malloc(sizeof(*r));
    if(!r){arc_state_fail(s,"allocation");return;}
-   *r=(ArcStateJfdRetirement){old,sectors,all};arc_state_action(s,arc_state_jfd_retire_commit,free,r);
+   *r=(ArcStateJfdRetirement){old,sectors,all};arc_state_action(s,arc_state_jfd_retire_commit,arc_state_free,r);
 }
 static void arc_state_jfd(ArcState *s,unsigned index)
 {
