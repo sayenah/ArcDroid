@@ -539,9 +539,14 @@ L1 counter ABI (D-200): revision 3 appends l1_hint_accepted, l1_hint_rejected,
 l1_mirror_search, l1_mirror_recheck_failed and l1_linear_fallback. Acceptance
 requires an in-range way and a valid equal line in the current cache/set.
 Rejection includes uninitialised and seeded-poison hints. Mirror searches count
-once per rejected hint with gate 2; linear fallbacks count nonempty gate-0 calls
-and rejected gate-1 hints. Recheck failures are structural zeros with the exact
-mirror; their diagnostic increment is tested by explicit white-box corruption.
+once per rejected hint with gates 2 and 4; linear fallbacks count nonempty gate-0
+calls and rejected hints with gates 1 and 3. Gates 3 (production SA-110 way0-hint)
+and 4 (way0-mirror) first compare way 0: a hit bypasses all five L1 path counters
+and the hint store. On a way-0 miss they validate the hint as above; rejection
+searches the remainder from way 1, using linear search for gate 3 and the mirror
+for gate 4. Gates 1 and 2 search from way 0. Recheck failures are structural zeros
+with the exact mirror; their diagnostic increment is tested by explicit white-box
+corruption.
 Empty returns do not enter any L1 mechanism. Reference probe counts derive from
 the returned slot, never the hint. The scalar name order is append-only; both
 histogram offsets and sizeof(ArcRpcExercise) move when scalars are appended.

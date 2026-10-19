@@ -40,6 +40,7 @@ def kill(name,content,target='rpc_l1_directed_test',field=None):
         print(name+': killed',flush=True)
 mutants=[
  ('unconditional-hint-store','if (side->hints[index] != way) L1_HINT_WRITE(side,index,way);','L1_HINT_WRITE(side,index,way);'),
+ ('hit-no-hint-refresh','        if (result) hint_store(side,index,(uint8_t)((unsigned)(result-c->tags) & side->way_mask));','        /* mutant: omit post-hit hint refresh */'),
  ('always-linear','    } else if (side->gate) {','    } else if (false) {'),
  ('hint-no-va',' && c->tags[base+way].va == line',''),
  ('hint-no-valid',' && c->tags[base+way].valid',''),

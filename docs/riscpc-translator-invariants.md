@@ -228,7 +228,7 @@ when a nested failure ends without another P0. Generation zero is valid.
 - **Cleared by:**
   - **any** allocation in either cache, **SA D-cache fills included** (`rpc_mem_timing.c:714`);
   - control writes (`rpc_mem_timing.c:560`) and TLB flush (`rpc_mem_timing.c:582-585`);
-  - c7 invalidation (`rpc_mem_timing.c:780,796`);
+  - c7 invalidation (`rpc_mem_timing.c:780,803`);
   - SA slow-clock uncached reads (`rpc_mem_timing.c:636`).
 - **Not cleared** by a mode change. [C]
 - **Defect (§5 Q-3) — resolved (PR #375, `44d007e`).** A memo hit did not check `backed` or the region, whereas the slow path requires both before any tag lookup (`rpc_mem_timing.c:683–686`). A collision eviction followed by a re-walk could change that eligibility without clearing the memo. The gate now mirrors the slow path; `rpc-fetch-memo-rewalk` reproduces the sequence. Note for 6b: in the integrated system `backed` implies a cache region (`mem.c:169–180`), so the region term never decides the outcome there, but it is kept to mirror the slow path exactly (Opus QA, S61).

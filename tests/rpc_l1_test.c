@@ -81,14 +81,18 @@ static void drain(void)
         assert(next>test_clock.now_ns);test_clock.now_ns=next;
     }
 }
+static uint32_t address_set(Cache *c,unsigned n,unsigned set)
+{ return (0x10000000u>>c->shift | (n*c->sets+set))<<c->shift; }
 static uint32_t address(Cache *c,unsigned n)
-{ return (0x10000000u>>c->shift | (n*c->sets))<<c->shift; }
-static void fill_slot(Cache *c,unsigned way,unsigned n)
+{ return address_set(c,n,0); }
+static void fill_set(Cache *c,unsigned set,unsigned way,unsigned n)
 {
-    uint32_t va=address(c,n);
-    if(!c->tags[way].valid)++c->populated;
-    tag_write(c,way,(Tag){va>>c->shift,va,1,0});
+    uint32_t va=address_set(c,n,set);unsigned slot=set*c->ways+way;
+    if(!c->tags[slot].valid)++c->populated;
+    tag_write(c,slot,(Tag){va>>c->shift,va,1,0});
 }
+static void fill_slot(Cache *c,unsigned way,unsigned n)
+{ fill_set(c,0,way,n); }
 static void unchanged(Cache *c,uint32_t va,int expected)
 {
     Cache before=*c;ArcRpcMemStats stats=m.stats;ArcRpcMemFast fast=arc_rpc_mem_fast;
@@ -109,17 +113,18 @@ static void unchanged(Cache *c,uint32_t va,int expected)
     if(result==2)assert(arc_rpc_exercise.values[ARC_RPC_COUNT_ACCESS_WAYS+(unsigned)expected%c->ways]==counts.values[ARC_RPC_COUNT_ACCESS_WAYS+(unsigned)expected%c->ways]+1);
     integrity(c);
 }
-static void directed(unsigned model,bool data,unsigned gate)
+static void directed(unsigned model,bool data,unsigned gate,unsigned set)
 {
     bind_model(model,gate);Cache *c=data?&m.data:&m.instruction;
+    assert(set<c->sets);unsigned base=set*c->ways;
     unchanged(c,0,-1); /* sentinel cannot alias reachable line zero */
-    for(unsigned n=0;n<c->ways;++n)fill_slot(c,n,n);
+    for(unsigned n=0;n<c->ways;++n)fill_set(c,set,n,n);
     unsigned slots[]={0,c->ways/2,c->ways-1};
     for(unsigned k=0;k<3;++k){
-        unsigned n=slots[k];uint32_t va=address(c,n);
+        unsigned n=slots[k];uint32_t va=address_set(c,n,set);
         set_hint(c,va,n);
         uint64_t floor=arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted];
-        unchanged(c,va,(int)n);
+        unchanged(c,va,(int)(base+n));
 #if !defined(ARCDROID_RPC_L1_POISON)
         assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted]==floor+(gate!=0 && !(gate>=3 && n==0)));
 #else
@@ -127,12 +132,22 @@ static void directed(unsigned model,bool data,unsigned gate)
 #endif
         set_hint(c,va,c->ways);
         uint64_t accepted=arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted];
-        unchanged(c,va,(int)n);
+        unchanged(c,va,(int)(base+n));
         assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted]==accepted); /* bound */
-        set_hint(c,va,(n+1)%c->ways);unchanged(c,va,(int)n); /* wrong VA */
+        /* A fallback hit must refresh the hint; consume that refreshed value
+         * on the next lookup without reseeding it. Way-0 gates bypass hints
+         * on their first-way hit; poison may replace a hint before consumption. */
+        if(gate && !(gate>=3 && n==0)){
+            assert(side_state(c)->hints[hint_index(c,va>>c->shift)]==n);
+#if !defined(ARCDROID_RPC_L1_POISON)
+            unchanged(c,va,(int)(base+n));
+            assert(arc_rpc_exercise.values[ARC_RPC_COUNT_l1_hint_accepted]==accepted+1);
+#endif
+        }
+        set_hint(c,va,(n+1)%c->ways);unchanged(c,va,(int)(base+n)); /* wrong VA */
     }
     #if !defined(ARCDROID_RPC_CROSSCHECK) && !defined(ARCDROID_RPC_L1_POISON)
-    if(c->sets>1){
+    if(set==0 && c->sets>1){
         uint32_t va=address(c,1);unsigned way=c->ways;
         Tag saved=c->tags[way];tag_write(c,way,(Tag){va>>c->shift,va,1,0});
         set_hint(c,va,way);
@@ -142,35 +157,35 @@ static void directed(unsigned model,bool data,unsigned gate)
         tag_write(c,way,saved);
     }
     #endif
-    unchanged(c,address(c,c->ways+3),-1); /* zero mask, UBSan */
+    unchanged(c,address_set(c,c->ways+3,set),-1); /* zero mask, UBSan */
     /* Locked SWP bypasses resident tags on every model, without replacement,
      * hit, dirty, fill or memo effects. Only its demand packet is collected. */
     Cache old_i=m.instruction,old_d=m.data;ArcRpcMemStats old_stats=m.stats;
     bool old_memo=arc_rpc_mem_fast.memo_valid;uint64_t old_fetch_hits=arc_rpc_mem_fast.fetch_hits;
     arc_rpc_mem_fast.recording=true;arc_rpc_mem_fast.opcode=0xe1000090;
-    uint32_t swp_va=address(c,1);arc_rpc_mem_access(swp_va,swp_va,4,true,false,0,true);
+    uint32_t swp_va=address_set(c,1,set);arc_rpc_mem_access(swp_va,swp_va,4,true,false,0,true);
     assert(!memcmp(&old_i,&m.instruction,sizeof(old_i)) && !memcmp(&old_d,&m.data,sizeof(old_d)));
     assert(m.stats.hits==old_stats.hits && m.stats.fills==old_stats.fills && m.stats.dirty_halves==old_stats.dirty_halves);
     assert(arc_rpc_mem_fast.memo_valid==old_memo && arc_rpc_mem_fast.fetch_hits==old_fetch_hits);
     assert(m.command[m.head].locked);drain();
-    uint32_t stale=address(c,0);set_hint(c,stale,0);
-    fill_slot(c,0,c->ways+1);unchanged(c,stale,-1); /* refill */
-    uint32_t duplicate=address(c,1);
-    Tag invalid=c->tags[1];invalid.valid=0;invalid.dirty=0;
-    tag_write(c,0,invalid);--c->populated;set_hint(c,duplicate,0);
-    unchanged(c,duplicate,1); /* invalid VA equal to valid VA */
+    uint32_t stale=address_set(c,0,set);set_hint(c,stale,0);
+    fill_set(c,set,0,c->ways+1);unchanged(c,stale,-1); /* refill */
+    uint32_t duplicate=address_set(c,1,set);
+    Tag invalid=c->tags[base+1];invalid.valid=0;invalid.dirty=0;
+    tag_write(c,base,invalid);--c->populated;set_hint(c,duplicate,0);
+    unchanged(c,duplicate,(int)base+1); /* invalid VA equal to valid VA */
     if(model==2 && data){
-        c->tags[1].dirty=3;uint8_t cursor=c->victim[0];
-        uint32_t key=side_state(c)->keys[1];
+        c->tags[base+1].dirty=3;uint8_t cursor=c->victim[set];
+        uint32_t key=side_state(c)->keys[base+1];
         arc_rpc_mem_fast.recording=true;arc_rpc_mem_maintenance(7,1,10,duplicate);drain();
-        assert(c->tags[1].valid && !c->tags[1].dirty && side_state(c)->keys[1]==key);
-        assert(m.stats.dirty_halves==2 && c->victim[0]==cursor);
+        assert(c->tags[base+1].valid && !c->tags[base+1].dirty && side_state(c)->keys[base+1]==key);
+        assert(m.stats.dirty_halves==2 && c->victim[set]==cursor);
         set_hint(c,duplicate,1);arc_rpc_mem_fast.recording=true;
         arc_rpc_mem_maintenance(7,1,6,duplicate);drain();
-        unchanged(c,duplicate,-1);assert(c->victim[0]==cursor);
+        unchanged(c,duplicate,-1);assert(c->victim[set]==cursor);
     }
     invalidate(c);integrity(c);unchanged(c,duplicate,-1);
-    fill_slot(c,0,0);set_hint(c,address(c,0),0);invalidate(c);integrity(c);
+    fill_set(c,set,0,0);set_hint(c,address_set(c,0,set),0);invalidate(c);integrity(c);
     unchanged(c,0,-1);
     tag_write(c,0,(Tag){0,0,1,0});c->populated=1;unchanged(c,0,0);
     /* Reset/unbind must drop derived state even without a subsequent clock. */
@@ -243,6 +258,7 @@ static void random_model(unsigned cpu,bool data,unsigned gate,uint32_t seed)
 {
     L1Model r;model_reset(&r,cpu);bind_model(cpu,gate);
     uint64_t castouts=0,fills=0;unsigned full=0,single=0,rebinds=0;
+    bool high_set=false,last_set=false;
     for(unsigned n=0;n<20000;++n){
         uint32_t bits=random_step(&seed);unsigned op=bits>>28;
         /* Preserve long residency runs so replacement/dirty castout is
@@ -254,7 +270,13 @@ static void random_model(unsigned cpu,bool data,unsigned gate,uint32_t seed)
         bool fetch=!data,write=data && (bits&128);Cache *c=data?&m.data:&m.instruction;
         L1ModelCache *rc=data?&r.d:&r.i;
         if(cpu!=2){c=&m.instruction;rc=&r.i;fetch=(bits&128)!=0;write=!fetch && (bits&256);}
-        uint32_t va=0x10000000u+(((bits>>8)%96)*c->sets+(bits%4))* (1u<<c->shift)+(bits&16);
+        /* Keep sets 0--3 and add middle/final sets, with enough collisions for
+         * replacement. Derive these independently of the candidate masks. */
+        unsigned sets[]={0,1,2,3,rc->sets/2,rc->sets-1},set=sets[(bits>>2)%6];
+        uint32_t va=0x10000000u+(((bits>>8)%96)*rc->sets+set)* (1u<<rc->shift)
+            +((bits&16)&((1u<<rc->shift)-1));
+        assert((va>>rc->shift)%rc->sets==set);
+        if(op<=12){high_set|=set==rc->sets/2;last_set|=set==rc->sets-1;}
         if(op<12){
             bool locked=data && (bits&512) && op==11;
             bool mapped=data && op==10; if(mapped)write=true;
@@ -280,6 +302,7 @@ static void random_model(unsigned cpu,bool data,unsigned gate,uint32_t seed)
         if(op!=15){castouts+=r.castouts-before_castouts;fills+=r.fills-before_fills;}
     }
     assert(fills>0 && full>0 && rebinds>0);
+    assert(high_set && last_set);
     if(cpu==2 && data)assert(castouts>0 && single>0);
     printf("L1 reach fills=%llu dirty-castouts=%llu full=%u single=%u rebind=%u\n",
         (unsigned long long)fills,(unsigned long long)castouts,full,single,rebinds);
@@ -364,8 +387,14 @@ int main(void)
         way0_priority(cpu,false,gate);if(cpu==2)way0_priority(cpu,true,gate);
     }
     for(unsigned gate=0;gate<5;++gate)for(unsigned cpu=0;cpu<4;++cpu){
-        directed(cpu,false,gate);random_model(cpu,false,gate,0x61a20001u+cpu);
-        if(cpu==2){directed(cpu,true,gate);random_model(cpu,true,gate,0xd1100061u);}
+        const unsigned sets[]={4,128,16,64};
+        unsigned selected[]={0,sets[cpu]/2,sets[cpu]-1};
+        for(unsigned k=0;k<3;++k){
+            directed(cpu,false,gate,selected[k]);
+            if(cpu==2)directed(cpu,true,gate,selected[k]);
+        }
+        random_model(cpu,false,gate,0x61a20001u+cpu);
+        if(cpu==2)random_model(cpu,true,gate,0xd1100061u);
     }
     for(unsigned gate=0;gate<5;++gate)split_and_unified(gate);
     puts("L1 directed matrix and 500000 independent operations passed");return 0;
