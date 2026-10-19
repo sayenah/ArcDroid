@@ -219,7 +219,7 @@ mutants += [
  ('M-PUBLISH-VERIFY',HD,'ok=read_leaf(s,leaf,s->record,manifest_length(s->manifests[2]))&&!memcmp(s->record,s->manifests[2],manifest_length(s->manifests[2]));','copy(s,s->record,s->manifests[2],MANIFEST_BYTES);ok=true;',a.hd,('hd','steps')),
  ('M-GC-TWO',HD,'removed<1','removed<2',a.hd,('hd','steps')),
  ('M-LATE-S',HD,'s->parent=s->current;s->snapshot=s->sequence;copy(s,s->frozen,s->live,sizeof(s->live));','s->parent=s->current;s->snapshot=s->sequence-1;copy(s,s->frozen,s->live,sizeof(s->live));',a.hd,('hd','steps')),
- ('M-WRITER-UNLOAD',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}','',a.hd,('hd','steps')),
+ ('M-WRITER-UNLOAD',HD,'if(s->rotation_writer){if(!discard)ok=flush(s,s->rotation_writer)&&ok;ok=close_file(s,s->rotation_writer,true)&&ok;}','',a.hd,('hd','steps')),
  ('M-WRITER-FAILURE',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}','',a.hd,('hd','steps')),
 ]
 # Opus QA 3 canonical store recipes (run P), independent of the evidence tree.
@@ -241,7 +241,7 @@ mutants += [
  ('S10-skip-publish-verify-compare',HD,'ok=read_leaf(s,leaf,s->record,manifest_length(s->manifests[2]))&&!memcmp(s->record,s->manifests[2],manifest_length(s->manifests[2]));\n            if(ok){copy(s,s->manifests[slot]','ok=read_leaf(s,leaf,s->record,manifest_length(s->manifests[2]));\n            if(ok){copy(s,s->manifests[slot]',a.hd,('hd', 'steps')),
  ('S11-skip-switch-header-readback',HD,'if(!ok||!closed||!read_leaf(s,leaf,check,256)||memcmp(h,check,256))return false;','(void)check;if(!ok||!closed)return false;',a.hd,('hd', 'steps')),
  ('S12-failure-keeps-writer-open',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}\n    s->refused=true;','s->refused=true;',a.hd,('hd', 'steps')),
- ('S13-close-leaks-writer',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}free(s);','free(s);',a.hd,('hd', 'steps')),
+ ('S13-close-leaks-writer',HD,'if(s->rotation_writer){if(!discard)ok=flush(s,s->rotation_writer)&&ok;ok=close_file(s,s->rotation_writer,true)&&ok;}free(s);return ok;','free(s);return ok;',a.hd,('hd', 'steps')),
  ('S14-skip-retire-length-check',HD,'if(!size(s,leaf,&n)||n!=s->lengths[s->current])return false;','(void)n;',a.hd,('hd', 'steps')),
  ('S15-skip-prepare-dest-probe',HD,'size_t n;if(size(s,leaf,&n)||s->refused)return false;\n        if(s->jgeneration','\n        if(s->jgeneration',a.hd,('hd', 'steps')),
  ('S16-create-not-namespace',HD,'if(create)++s->stats.namespace_operations;metadata(s);','metadata(s);',a.hd,('hd', 'steps')),

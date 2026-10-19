@@ -25,7 +25,7 @@ mutants=[
  ('rpc-log-callback','engine/arcdroid_engine.c','arc_rpc_backend.set_log_callback(callback ? arc_test_log_proxy : NULL, NULL);','(void)0;'),
  ('frontend-empty-kind','libretro/arcdroid_libretro.c','arc_kind = ARC_SESSION_KIND_EMPTY;','(void)0;'),
  ('rpc-storage-notice-dedup','libretro/arcdroid_libretro.c','if (fresh) {','if (fresh && !arc_rpc_refusal_noticed) {'),
- ('rpc-write-observer','libretro/arcdroid_libretro.c','arc_io_set_write_observer(arc_disc_write_observer);','(void)0;',3),
+ ('rpc-write-observer','libretro/arcdroid_libretro.c','arc_io_set_write_observer(arc_disc_write_observer);','(void)0;',5),
  ('rpc-max-geometry','libretro/arcdroid_libretro.c','info->geometry.max_width = 4096u;','info->geometry.max_width = arc_kind == ARC_SESSION_KIND_RISCPC ? 2048u : 4096u;'),
  ('raw-deleted-refusal','engine/rpc/rpc_floppy.c','{refused(d,r,"deleted-data");return ARC_RPC_FLOPPY_WRITE_PROTECT;}','{return ARC_RPC_FLOPPY_WRITE_PROTECT;}'),
  ('raw-storage-warning','engine/rpc/rpc_floppy.c','storage_failures|=1u<<drive;','',2),
@@ -39,7 +39,7 @@ mutants += [
  ('arc-refusal-only-if-current','engine/arcdroid_engine.c','   arc_arculator_backend.adf_refusal_callback_set(callback);','   if (arc_backend == &arc_arculator_backend) arc_arculator_backend.adf_refusal_callback_set(callback);'),
  ('arc-log-only-if-current','engine/arcdroid_engine.c','   arc_arculator_backend.set_log_callback(callback, opaque);','   if (arc_backend == &arc_arculator_backend) arc_arculator_backend.set_log_callback(callback, opaque);'),
  ('refusal-info-every-frame','libretro/arcdroid_libretro.c','else if (arc_rpc_refusal_pending && !arc_rpc_refusal_noticed)','else if (arc_rpc_refusal_pending)'),
- ('plan-clear-retains-terminal','libretro/arcdroid_libretro.c','arc_plan_terminal[0]=0;arc_plan_terminal_refresh=0;','(void)0;'),
+ ('plan-clear-retains-terminal','libretro/rpc_preparation_host.c','*h->progress=*h->terminal=*h->advisory=*h->logged_progress=0;','*h->progress=*h->advisory=*h->logged_progress=0;'),
  ('plan-switch-loses-cmos','libretro/arcdroid_libretro.c','      if (arc_loaded) arc_persist_cmos();',''),
  ('plan-switch-publishes-seed','libretro/arcdroid_libretro.c','      if (arc_loaded) arc_persist_cmos();','      arc_boot_persist_seed(); arc_persist_cmos();'),
 ]

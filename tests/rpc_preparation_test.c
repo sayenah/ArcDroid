@@ -1,5 +1,6 @@
 /* R3b-2a independent outcome, no-mutation and operation-budget oracle.
  * GPL-2.0-only. */
+#include "rpc_store_owner.h"
 #include "arcdroid_core.h"
 #include "rpc_hd_store.h"
 #include "rpc_hd_vfs.h"
@@ -37,7 +38,7 @@ static void budget(ArcRpcHdStore *s, uint64_t ops, uint64_t meta, uint64_t ns, u
     assert(a.tick_copied_bytes <= ARC_RPC_HD_STEP_COPY_BYTES);
 }
 static ArcRpcHdOutcome open_steps(ArcRpcHdStore **out) {
-    *out = arc_riscpc_hd_open_begin("/save", id, error, sizeof(error));
+    *out = arc_riscpc_hd_open_begin("/save",id,rpc_store_test_owner(),error,sizeof(error));
     assert(*out);
     assert(!arc_riscpc_hd_population_begin(*out));
     ArcRpcHdOutcome result = ARC_RPC_HD_OPEN_PENDING;
@@ -90,7 +91,7 @@ static void receipt_store(void) {
         budget(s, ops, meta, ns, bytes);
     }
     idle(s);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     assert(open_steps(&s) == ARC_RPC_HD_RECEIPTED);
     uint8_t read[131072];
     assert(arc_riscpc_hd_read(s, 511, 256, read) &&
@@ -98,7 +99,7 @@ static void receipt_store(void) {
     ArcRpcHdReceipt actual;
     assert(arc_riscpc_hd_receipt(s, &actual) &&
            !memcmp(&r, &actual, sizeof(r)));
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     snapshot();
 }
 static int manifest(void) {
@@ -126,10 +127,10 @@ static void revision_matrix(void) {
             uint8_t block[131072]={0};
             for(unsigned j=0;j<10;++j){assert(arc_riscpc_hd_write(s,1400,256,block));idle(s);}
             ArcRpcHdStats stats;arc_riscpc_hd_stats(s,&stats);assert(stats.checkpoints);
-            arc_riscpc_hd_close(s);assert(open_steps(&s)==ARC_RPC_HD_RECEIPTED);
+            arc_riscpc_hd_close(s,false);assert(open_steps(&s)==ARC_RPC_HD_RECEIPTED);
             ArcRpcHdReceipt preserved;assert(arc_riscpc_hd_receipt(s,&preserved));assert(!memcmp(&receipt,&preserved,sizeof(receipt)));
         }else{assert(namespace_calls==ns);}
-        arc_riscpc_hd_close(s);disk_digest(after);
+        arc_riscpc_hd_close(s,false);disk_digest(after);
         if(!admitted)assert(!memcmp(before,after,32));
         test_vfs_no_open_handles();
     }
@@ -143,7 +144,7 @@ static void revision_matrix(void) {
         TestFile *bad=slot?&files[b]:a;bad->data[24336]=99;fix_crc(bad);
         uint8_t before[32],after[32];disk_digest(before);uint64_t ns=namespace_calls;
         ArcRpcHdStore *s;assert(open_steps(&s)==ARC_RPC_HD_UNSUPPORTED);assert(namespace_calls==ns);
-        arc_riscpc_hd_close(s);disk_digest(after);assert(!memcmp(before,after,32));
+        arc_riscpc_hd_close(s,false);disk_digest(after);assert(!memcmp(before,after,32));
     }
     restore();
 }
@@ -169,7 +170,7 @@ static void outcomes(void) {
         assert(notice);
         if (expected == ARC_RPC_HD_UNSUPPORTED)
             assert(strstr(notice, "created by a newer version of ArcDroid"));
-        arc_riscpc_hd_close(s);
+        arc_riscpc_hd_close(s,false);
         disk_digest(after);
         assert(!memcmp(before, after, 32));
         test_vfs_no_open_handles();
@@ -181,19 +182,19 @@ static void outcomes(void) {
     disk_digest(before);
     ArcRpcHdStore *s;
     assert(open_steps(&s) == ARC_RPC_HD_CORRUPT);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     disk_digest(after);
     assert(!memcmp(before, after, 32));
     /* Unknown receipt fields stay opaque after authenticating the known envelope. */
     restore();TestFile *future=&files[manifest()];future->data[24328]=2;
     future->data[24424]=0x71;fix_crc(future);disk_digest(before);
-    assert(open_steps(&s)==ARC_RPC_HD_UNSUPPORTED);arc_riscpc_hd_close(s);
+    assert(open_steps(&s)==ARC_RPC_HD_UNSUPPORTED);arc_riscpc_hd_close(s,false);
     disk_digest(after);assert(!memcmp(before,after,32));
     /* An unfamiliar unbound short journal is never treated as creation debris. */
     restore();char foreign_name[1100];snprintf(foreign_name,sizeof(foreign_name),"/save/arcdroid/hd-riscpc/%s/journal.b",id);
     int foreign=find(foreign_name,true);files[foreign].data=malloc(8);
     files[foreign].capacity=files[foreign].size=8;memcpy(files[foreign].data,"FOREIGN!",8);
-    disk_digest(before);assert(open_steps(&s)==ARC_RPC_HD_UNSUPPORTED);arc_riscpc_hd_close(s);
+    disk_digest(before);assert(open_steps(&s)==ARC_RPC_HD_UNSUPPORTED);arc_riscpc_hd_close(s,false);
     disk_digest(after);assert(!memcmp(before,after,32));
     /* An unreadable length-mismatched slot is I/O unavailability, not a
      * successful integrity inspection. */
@@ -201,7 +202,7 @@ static void outcomes(void) {
     for(unsigned at=1;at<100&&!failed_prefix;++at){
         restore();files[manifest()].size-=1;disk_digest(before);fault=5;fail_at=at;
         ArcRpcHdOutcome r=open_steps(&s);assert(r==ARC_RPC_HD_CORRUPT||r==ARC_RPC_HD_UNAVAILABLE);
-        failed_prefix=r==ARC_RPC_HD_UNAVAILABLE;arc_riscpc_hd_close(s);disk_digest(after);assert(!memcmp(before,after,32));
+        failed_prefix=r==ARC_RPC_HD_UNAVAILABLE;arc_riscpc_hd_close(s,false);disk_digest(after);assert(!memcmp(before,after,32));
     }
     assert(failed_prefix);
     /* Mixed supported and opaque slots cannot silently fall back. */
@@ -218,7 +219,7 @@ static void outcomes(void) {
     fix_crc(&files[other]);
     disk_digest(before);
     assert(open_steps(&s) == ARC_RPC_HD_UNSUPPORTED);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     disk_digest(after);
     assert(!memcmp(before, after, 32));
     /* Every reported read failure is unavailable, not damage or absence. */
@@ -229,7 +230,7 @@ static void outcomes(void) {
         fail_at = at;
         disk_digest(before);
         ArcRpcHdOutcome r = open_steps(&s);
-        arc_riscpc_hd_close(s);
+        arc_riscpc_hd_close(s,false);
         disk_digest(after);
         assert(!memcmp(before, after, 32));
         assert(r == ARC_RPC_HD_RECEIPTED || r == ARC_RPC_HD_UNAVAILABLE);
@@ -255,7 +256,7 @@ static void refusal(ArcRpcHdOutcome expected) {
     assert(open_steps(&s)==expected);
     assert(namespace_calls==ns && !arc_riscpc_hd_receipt(s,NULL));
     ArcIdeBackend backend;arc_riscpc_hd_backend(s,&backend);assert(!backend.sectors);
-    arc_riscpc_hd_close(s);disk_digest(after);assert(!memcmp(before,after,32));
+    arc_riscpc_hd_close(s,false);disk_digest(after);assert(!memcmp(before,after,32));
     test_vfs_no_open_handles();
 }
 static void future_envelopes(void) {
@@ -333,7 +334,7 @@ static void carryovers(void)
     ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(truncate_completed&&a.read_only&&a.published);
     const char *notice=arc_riscpc_hd_notice(s);assert(notice&&strstr(notice,"recovered; the hard disc is read-only"));
     uint8_t read[512];assert(arc_riscpc_hd_read(s,511,1,read));for(unsigned i=0;i<512;++i)assert(read[i]==0x73);
-    assert(!arc_riscpc_hd_write(s,0,1,read));arc_riscpc_hd_close(s);test_vfs_no_open_handles();
+    assert(!arc_riscpc_hd_write(s,0,1,read));arc_riscpc_hd_close(s,false);test_vfs_no_open_handles();
     vfs.truncate=test_truncate;vfs.stat=test_stat;truncate_completed=false;
 }
 static void publish_cancellation(void) {
@@ -351,14 +352,14 @@ static void publish_cancellation(void) {
             budget(s,ops,meta,ns,bytes);
         }
         assert(done==(cut==6));
-        arc_riscpc_hd_population_abort(s);arc_riscpc_hd_close(s);
+        arc_riscpc_hd_population_abort(s);arc_riscpc_hd_close(s,false);
         assert(open_steps(&s)==(cut>=5?ARC_RPC_HD_RECEIPTED:ARC_RPC_HD_UNPUBLISHED));
         ArcRpcHdStats stats;arc_riscpc_hd_stats(s,&stats);assert(stats.published==(cut>=5));
         if(cut>=5){ArcRpcHdReceipt actual;uint8_t read[512];
             assert(arc_riscpc_hd_receipt(s,&actual)&&!memcmp(&r,&actual,sizeof(r)));
             assert(arc_riscpc_hd_read(s,1000,1,read)&&!memcmp(read,payload,512));
         }else assert(!arc_riscpc_hd_receipt(s,NULL));
-        arc_riscpc_hd_close(s);test_vfs_no_open_handles();
+        arc_riscpc_hd_close(s,false);test_vfs_no_open_handles();
     }
     restore();
 }
@@ -379,7 +380,7 @@ static void reconstruction_failure(void) {
         uint64_t ops=steps,meta=metadata_calls,ns=namespace_calls,bytes=vfs_requested_bytes;
         arc_riscpc_hd_tick(s);budget(s,ops,meta,ns,bytes);
         arc_riscpc_hd_stats(s,&a);assert(a.read_only);
-        test_vfs_no_open_handles();arc_riscpc_hd_close(s);
+        test_vfs_no_open_handles();arc_riscpc_hd_close(s,false);
     }
 }
 static void torn_write_refusal(void) {
@@ -399,7 +400,7 @@ static void torn_write_refusal(void) {
         uint8_t read[512];assert(arc_riscpc_hd_read(s,511,1,read));
         for(unsigned i=0;i<512;++i)assert(read[i]==0x73);
         ArcRpcHdReceipt r;assert(arc_riscpc_hd_receipt(s,&r)==!legacy);if(!legacy)assert(r.files==7);
-        assert(!arc_riscpc_hd_write(s,0,1,read));arc_riscpc_hd_close(s);
+        assert(!arc_riscpc_hd_write(s,0,1,read));arc_riscpc_hd_close(s,false);
         disk_digest(after);assert(!memcmp(before,after,32));test_vfs_no_open_handles();
         refuse_update_open=refuse_truncate=false;
     }
@@ -423,7 +424,7 @@ static void overlapping_records(void) {
         assert(arc_riscpc_hd_write(s, 1024 + i, 256, bytes));
     }
     /* Reopen before checkpoint: the >5 MiB journal spans many replay steps. */
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     assert(open_steps(&s)==ARC_RPC_HD_RECEIPTED);
     idle(s);
     for (unsigned i = 0; i < 40; ++i) {
@@ -432,9 +433,9 @@ static void overlapping_records(void) {
         for (unsigned j = 0; j < 512; ++j)
             assert(sector[j] == i + 1);
     }
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     assert(open_steps(&s) == ARC_RPC_HD_RECEIPTED);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
 }
 int main(void) {
     fresh_files();
@@ -449,11 +450,11 @@ int main(void) {
     overlapping_records();
     fresh_files();
     ArcRpcHdStore *s =
-        arc_riscpc_hd_open("/save", id, true, error, sizeof(error));
+        arc_riscpc_hd_open("/save",id,true,rpc_store_test_owner(),error,sizeof(error));
     assert(s);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     assert(open_steps(&s) == ARC_RPC_HD_LEGACY);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     fresh_files();
     test_vfs_no_open_handles();
     printf("HD independent VFS maxima: bytes=%llu operations=%llu metadata=%llu namespace=%llu\n",

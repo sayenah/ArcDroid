@@ -211,7 +211,7 @@ if frontend:
       ('reset-binding-cpu','engine/rpc/rpc_session.c','arc_rpc_observers_rebase(arc_rpc_session_cpu());','arc_rpc_observers_rebase(0);'),
       ('session-frame','engine/rpc/rpc_session.c','arc_rpc_observers_frame(arc_rpc_scheduler.now_ns/1000u);','(void)0;'),
       ('session-frame-unit','engine/rpc/rpc_session.c','arc_rpc_observers_frame(arc_rpc_scheduler.now_ns/1000u);','arc_rpc_observers_frame(arc_rpc_scheduler.now_ns);'),
-      ('reset-swap-owner','libretro/arcdroid_libretro.c','arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;\n      arc_disc_notice_read=arc_disc_notice_write=0;\n#if defined(ARCDROID_TEST_PLANS)','(void)0;\n#if defined(ARCDROID_TEST_PLANS)'),
+      ('reset-swap-owner','libretro/arcdroid_libretro.c','arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;\n      arc_disc_notice_read=arc_disc_notice_write=0;arc_engine_disc_clear();arc_disc_invalidate();','arc_engine_disc_clear();arc_disc_invalidate();'),
       ('hd-record-agreement','engine/arcdroid_engine.c','memcmp(boot+0x1c0+22,map+26,10) || memcmp(map+26,backup+26,10)','false'),
       ('hd-checksum','engine/arcdroid_engine.c','sum!=boot[511] ||','false ||'),
       ('hd-geometry','engine/arcdroid_engine.c','boot[0x1c0]!=9 || boot[0x1c1]!=63 || boot[0x1c2]!=16 ||','false ||'),

@@ -67,9 +67,11 @@ def pixels(path,status):
 
 def main():
     runner,core,fixture=map(lambda p:Path(p).resolve(),sys.argv[1:4])
-    # CMake passes the same budget to this driver and CTest. Slow sanitizer
-    # phases can borrow unused time instead of hitting separate 120 s caps.
-    budget=TestBudget(float(sys.argv[4]))
+    # CMake passes the same budget to this driver and CTest, including the
+    # ownership checks. Slow sanitizer phases can borrow unused phase time.
+    budget=TestBudget(float(sys.argv[5]))
+    from rpc_host_runner_ownership_test import runner_clients
+    runner_clients(runner.parent,Path(__file__).resolve().parents[1],runner,Path(sys.argv[4]).resolve(),fixture)
     with tempfile.TemporaryDirectory(prefix='arc-rpc-hd-native-') as temp:
         d=Path(temp);save=d/'save';shutil.copytree(fixture/'save',save)
         plan=fixture/'hd.arcplan'

@@ -291,8 +291,11 @@ def cases(root):
             require(state['phase']==16 and state['package_faults']==1 and state['points']==0,
                     'pre-FORMAT package failure was not reached / refused')
             no_root(save)
-            require(not any(p.is_file() for p in save.rglob('*')),
-                    'pre-FORMAT package failure left stray files')
+            # Delta 22: the native owner sentinel remains by design; no store
+            # or temporary payload may precede FORMAT.
+            regular=[p for p in save.rglob('*') if p.is_file()]
+            require(len(regular)==1 and '/locks-riscpc/c-' in regular[0].as_posix() and regular[0].stat().st_size==0,
+                    'pre-FORMAT failure left files other than the exact zero-byte content sentinel')
             reopened,_ = run(root/'absent-system',save,mode='verify')
             require(reopened=={'published':0,'receipt':0},
                     'pre-FORMAT package failure published state')

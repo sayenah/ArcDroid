@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT/'tools'))
 import rpc_lockstep_compare as compare
 import rpc_lockstep_codegen as codegen
 import rpc_lockstep_inventory as inventory
+from rpc_lockstep_host_inventory import SOURCES, STATIC_SOURCES
 
 
 def main():
@@ -35,6 +36,9 @@ def main():
         for path in paths:
             raw = (ROOT/'tests'/path.name).read_bytes().replace(b'\r\n', b'\n')
             path.write_bytes(raw.replace(b'\n', b'\r\n'))
+        for name in (*SOURCES,*STATIC_SOURCES):
+            target=root/name;target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes((ROOT/name).read_bytes().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
         with patch('io.open', side_effect=windows_open), \
              patch.object(builtins, 'open', side_effect=windows_open), \
              patch.object(inventory, 'ROOT', root):

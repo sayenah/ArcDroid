@@ -68,16 +68,16 @@ static bool environment(unsigned command,void *data)
     case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{struct retro_message_ext *m=data;
         message_level=m->level;
         if(strstr(m->msg,"interrupted hard-disc write was recovered")){
-            assert(m->type==RETRO_MESSAGE_TYPE_NOTIFICATION && m->duration==5000 && m->level==RETRO_LOG_INFO);
+            assert(m->target==RETRO_MESSAGE_TARGET_OSD && m->type==RETRO_MESSAGE_TYPE_STATUS && m->duration==5000 && m->level==RETRO_LOG_INFO);
             ++advisory_messages;
         }
         if(m->type==RETRO_MESSAGE_TYPE_STATUS && m->msg[0]){
-            if(m->level==RETRO_LOG_ERROR){assert(m->duration==UINT_MAX && last_status_clear);terminal_active=true;}
-            else {assert(m->duration==60000);++progress_messages;}
+            if(m->level==RETRO_LOG_ERROR){assert(m->duration==UINT_MAX && m->target==RETRO_MESSAGE_TARGET_OSD);terminal_active=true;}
+            else if(m->duration==2000){++progress_messages;}else assert(m->duration==5000);
         }
         if(m->type==RETRO_MESSAGE_TYPE_STATUS){
             last_status_clear=!m->msg[0];
-            if(last_status_clear){++cleared_messages;terminal_active=false;}
+            if(last_status_clear){if(phase())assert(m->priority>=3);++cleared_messages;terminal_active=false;}
         }
         if(!extended_messages)return false;
         ++notices;if(m->level==RETRO_LOG_ERROR)++errors;return true;}
@@ -169,13 +169,15 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
         bool retained=strstr(mode,"retained")!=NULL;
         assert(phase()==2 && terminal_active==retained);
         unsigned errors_before=errors;run();
-        assert(advisory_messages==1 && errors==errors_before && terminal_active==retained);
+        assert(advisory_messages==(retained?0u:1u) && errors==errors_before && terminal_active==retained);
         if(!extended_messages && !retained)assert(fallback_lifetime>0 && fallback_lifetime<=300);
         for(unsigned i=0;i<301;++i){run();assert(terminal_active==retained);}
-        assert(advisory_messages==1);
-        if(!extended_messages && !retained)assert(!fallback_lifetime);
-        reset();assert(!terminal_active && last_status_clear);
-        unload();assert(!terminal_active && last_status_clear);
+        assert(advisory_messages==(retained?0u:1u));
+        /* Delta 4: the startup hold resumes after the advisory. */
+        if(!extended_messages && !retained)assert(fallback_lifetime);
+        unsigned before_clear=cleared_messages;
+        reset();assert(!terminal_active && cleared_messages==before_clear+1);
+        unload();assert(!terminal_active && last_status_clear==!retained);
         deinit();vfs_assert_no_open_handles();puts("HD recovery advisory: timed, no persistent status; terminal retention/reset/unload pass");return 0;
     }
 
@@ -264,7 +266,9 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
     }
     for(unsigned i=0;i<4;++i){
         cmos(before);unsigned publications=tmp_writes;run();cmos(after);
-        assert(tmp_writes-publications==(!memcmp(before+16,after+16,240)?0u:1u));
+        /* Delta 23: S-4 is stepped. One maintenance tick may create at
+         * most one candidate; unload below proves the newest snapshot. */
+        assert(tmp_writes-publications<=1u);
     }
     cmos(before);unload();assert(phase()==0);assert(load(&game));settle(run);assert(phase()==2);cmos(after);assert(!memcmp(before+16,after+16,240));
     /* Guest work outside retro_run is persisted specifically by unload. */

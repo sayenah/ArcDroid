@@ -9,7 +9,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 SECTIONS = ('reviewed_conditions', 'reviewed_exclusions', 'reviewed_mode_exclusions',
-            'cross_quota_projections', 'stdout_projection', 'observer_projections', 'wire', 'output_compared', 'reviewed_inventory', 'reachable_types', 'reviewed_serializer_bridges')
+            'cross_quota_projections', 'stdout_projection', 'observer_projections', 'wire', 'output_compared', 'reviewed_inventory', 'reachable_types', 'reviewed_serializer_bridges', 'host_state_members', 'host_static_objects')
 
 
 def canonical(value):

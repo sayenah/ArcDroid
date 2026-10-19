@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "arc_io.h"
+#include "arc_lock.h"
 #define ARC_RPC_CMOS_PROCEDURE_REVISION 4u
 /* Procedure-defined 2000-01-01 UTC; independent of content and plan RTC. */
 #define ARC_RPC_CMOS_GENERATION_EPOCH UINT64_C(946684800)
@@ -31,6 +32,7 @@ typedef struct {
 } ArcRpcCmosStats;
 typedef struct {
     ArcRpcCmosKey key;
+    ArcLock *owner; /* Borrowed through close; required even for recovery. */
     char base[1024];
     uint64_t generation;
     uint8_t payload[240];
@@ -43,18 +45,21 @@ typedef struct {
     unsigned phase, slot, attempts;
     size_t path_cursor;
     bool reconciled, exhausted, slot_found[2], destination_found, putting;
+    bool marker_checked,marker_present;
 } ArcRpcCmosStore;
 typedef enum { ARC_RPC_CMOS_UNAVAILABLE = -2, ARC_RPC_CMOS_REFUSED = -1,
     ARC_RPC_CMOS_MISSING, ARC_RPC_CMOS_FOUND, ARC_RPC_CMOS_INSPECTING } ArcRpcCmosResult;
 /* Begin does no I/O. Step retries reported inspection errors at most 3 times.
  * Payload is usable only after reconciliation, even if one slot was read. */
 ArcRpcCmosResult arc_riscpc_cmos_store_begin(ArcRpcCmosStore *, const char *,
-    const ArcRpcCmosKey *, char *, size_t);
+    const ArcRpcCmosKey *, ArcLock *, char *, size_t);
 ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *, char *, size_t);
 bool arc_riscpc_cmos_store_put_begin(ArcRpcCmosStore *, const uint8_t[240],
     const ArcRpcCmosEvidence *, char *, size_t);
 bool arc_riscpc_cmos_store_put_step(ArcRpcCmosStore *, bool *done, char *, size_t);
 void arc_riscpc_cmos_store_close(ArcRpcCmosStore *);
+bool arc_riscpc_cmos_store_unsaved(ArcRpcCmosStore *);
+bool arc_riscpc_cmos_store_mark_unsaved(ArcRpcCmosStore *);
 /* A seed is admitted only after verified absence; never overwrites a record. */
 bool arc_riscpc_cmos_store_seed(ArcRpcCmosStore *, const uint8_t[240], char *, size_t);
 unsigned arc_riscpc_cmos_layout(const char *name);
@@ -65,7 +70,7 @@ bool arc_riscpc_cmos_two_floppies(unsigned layout, uint8_t payload[240]);
 void arc_riscpc_cmos_required(unsigned layout, uint8_t mask[32]);
 bool arc_riscpc_cmos_oracle(unsigned layout, const uint8_t payload[240], const ArcRpcCmosEvidence *e);
 ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *store, const char *save,
-    const ArcRpcCmosKey *key, char *error, size_t error_size);
+    const ArcRpcCmosKey *key, ArcLock *owner, char *error, size_t error_size);
 bool arc_riscpc_cmos_store_put(ArcRpcCmosStore *store, const uint8_t payload[240],
     const ArcRpcCmosEvidence *evidence, char *error, size_t error_size);
 #endif

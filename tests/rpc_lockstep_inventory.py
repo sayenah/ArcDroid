@@ -10,6 +10,7 @@ import sys
 import tempfile
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
+from rpc_lockstep_host_inventory import check as check_host_members, OBJECTS
 CLASSES = {'contents-compared','immutable-input identity','output-compared','excluded with ruling'}
 
 
@@ -84,6 +85,11 @@ def check_symbols(schema,source,symbols):
 
 
 def self_test(schema):
+    for owner in OBJECTS:
+        source='libretro/'+owner+'.c'
+        try:check_symbols(schema,source,['unclassified_host_state'])
+        except RuntimeError:pass
+        else:raise RuntimeError(('unclassified frontend symbol accepted',source))
     for apple,text,expected in (
         (False,'.bss b 0 0\n.data d 0 0\n.rdata$zzz d 0 0\n.L42 b 0 0\nshortened.0 b 0 8\n',['shortened.0']),
         (False,'shortened.31 b 0 8\nunknown.7 b 0 8\n',['shortened.31','unknown.7']),
@@ -169,6 +175,9 @@ def main():
             'inventory metadata changed without independent review')
     for entry in schema['inventory']:
         require(entry['classification'] in CLASSES and entry.get('citation') and entry.get('ruling'),'incomplete inventory entry')
+    require(schema['host_state_members']==policy['host_state_members'], 'host member policy changed without independent review')
+    require(schema['host_static_objects']==policy['host_static_objects'], 'host static policy changed without independent review')
+    check_host_members(schema,ROOT)
     self_test(schema)
     if a.probe_compiler:object_control(schema,a.build,a.probe_compiler,a.nm,a.apple)
     base=a.build/('CMakeFiles/arcdroid_rpclockstep_libretro_rpc.dir' if
@@ -176,10 +185,17 @@ def main():
         'CMakeFiles/arcdroid_rpcplan_libretro_rpc.dir')
     objects=sorted([*base.rglob('*.c.o'),*base.rglob('*.c.obj')])
     require(objects,('no built inventory objects',base))
+    frontend=base.parent/('arcdroid_rpclockstep_libretro.dir' if 'rpclockstep' in base.name else 'arcdroid_rpcplan_libretro.dir')
+    for name in OBJECTS:
+        matches=[*frontend.glob('libretro/'+name+'.c.o'),*frontend.glob('libretro/'+name+'.c.obj')]
+        require(len(matches)==1,('missing frontend inventory object',name,frontend))
+        objects.extend(matches)
+
     rows=[];sources=set()
     for obj in objects:
-        source=obj.relative_to(base).as_posix().removesuffix('.obj').removesuffix('.o')
-        require(source.startswith(('engine/rpc/','engine/rpcemu/')),('unexpected object source',source))
+        owner=frontend if obj.is_relative_to(frontend) else base
+        source=obj.relative_to(owner).as_posix().removesuffix('.obj').removesuffix('.o')
+        require((source.startswith(('engine/rpc/','engine/rpcemu/')) or source in {'libretro/'+n+'.c' for n in OBJECTS}),('unexpected object source',source))
         sources.add(source)
         for row in check_symbols(schema,source,data_symbols(a.nm,obj,a.apple)):
             rows.append(dict(object=obj.relative_to(a.build).as_posix(),**row))

@@ -42,6 +42,23 @@ def main():
         old,new,link=compile_unit(prep,'arcdroid_rpclockstep_libretro',
             (ROOT/prep).read_text(encoding='utf-8')+'\n'+(ROOT/'tests/rpc_lockstep_preparation_fixture.c').read_text(encoding='utf-8'))
         replacements={old:new}
+        host='libretro/rpc_preparation_host.c'
+        fixture='''
+/* Disposable owning-TU probe, no fixture symbol in repository targets. */
+ArcRpcPreparationHost arc_test_lockstep_host_context(ArcRpcPreparation *p,bool change)
+{
+    static ArcRpcFrontendHost host;
+    host.preparation=p;
+    if(change){
+        host.released=true;host.unloading=true;
+        if(!arc_riscpc_host_reset(&host))return (ArcRpcPreparationHost){0};
+    }
+    return callbacks(&host);
+}
+'''
+        old,new,_=compile_unit(host,'arcdroid_rpclockstep_libretro',
+            (ROOT/host).read_text(encoding='utf-8')+fixture)
+        replacements[old]=new
         def library(label):
             path=root/(label+Path(a.core).suffix)
             command=[replacements.get(x,x) for x in link];command[command.index('-o')+1]=str(path)
@@ -69,6 +86,23 @@ def main():
                 'retirement lease not initially clear at P0')
         require(checkpoints[1].key[2:5]==(0,1,1) and checkpoints[1].value[field]==1,
                 'real preparation consumed callback did not change the next emitted lease')
+        prefix='rpc_observers.state.binding.opaque.'
+        changed={name.removeprefix(prefix):value for name,value in checkpoints[1].value.items()
+                 if name.startswith(prefix)}
+        for name in ('content_waiting','defaults_waiting','observations_begun','hd_close_ok',
+                     'stopped_window','marker_checked','released','ownership_lost',
+                     'draining','drain_started','drain_ok','content_owner.valid',
+                     'content_owner.opened','content_owner.held','content_owner.parents_done',
+                     'defaults_owner.lost','record.marker_checked','record.marker_present',
+                     'defaults.marker_checked','defaults.marker_present','host.queued_reset',
+                     'host.released','host.unloading','record.owner','observations.owner'):
+            require(checkpoints[0].value[prefix+name]==0 and changed[name]==1,
+                    ('new host state not emitted',name,changed.get(name)))
+        require(changed['defaults.owner']==2 and changed['drain_frames']==7,
+                'typed owner role or bounded drain ordinal missing')
+        import hashlib
+        expected=int.from_bytes(hashlib.sha256(bytes([0x5a])*240).digest()[:8],'little')
+        require(changed['drain_payload']==expected,'live drain payload contents missing')
         ref=(cached.stdout,stream.read_bytes())
         for label,core in (('reference-uncached',reference),('mutant-uncached',mutant)):
             result,path=run(label,core,True)
@@ -77,8 +111,40 @@ def main():
         result,_=run('mutant-cached',mutant)
         require(result.returncode==1 and 'lockstep mutating projection' in result.stderr,
                 ('preparation-generation mutant survived or failed for unrelated reason',result.returncode,result.stderr))
-        print('retirement_pending: P0=0, next fetch checkpoint=1; cache on/off identical; '
+        print('retirement_pending and new host/ownership/marker/drain fields changed at next checkpoint; cache on/off identical; '
               'KILLED preparation-generation-invalidation (uncached mutant control passes)')
+        # Isolate the host write: no consumed callback or preparation mutation
+        # can accidentally rescue a missing host invalidation mark.
+        replacements.clear()
+        old,new,_=compile_unit(prep,'arcdroid_rpclockstep_libretro',
+            (ROOT/prep).read_text(encoding='utf-8')+'\n#define ARC_LOCKSTEP_HOST_ONLY_PROBE\n'+
+            (ROOT/'tests/rpc_lockstep_preparation_fixture.c').read_text(encoding='utf-8'))
+        replacements[old]=new
+        original=(ROOT/host).read_text(encoding='utf-8')
+        old,new,_=compile_unit(host,'arcdroid_rpclockstep_libretro',original+fixture)
+        replacements[old]=new
+        host_reference=library('host-reference')
+        anchor='bool arc_riscpc_host_reset(ArcRpcFrontendHost *h)\n{\n    ARC_RPC_HOST_DIRTY();'
+        require(original.count(anchor)==1,'host reset dirty mutant anchor')
+        old,new,_=compile_unit(host,'arcdroid_rpclockstep_libretro',
+            original.replace(anchor,anchor.replace('    ARC_RPC_HOST_DIRTY();',''))+fixture)
+        replacements[old]=new
+        host_mutant=library('host-mutant')
+        result,path=run('host-cached',host_reference)
+        require(result.returncode==0,('host reset positive control failed',result.stderr))
+        checkpoints=[r for r in records(path,schema,sh) if r.kind==1]
+        require(checkpoints[0].value[prefix+'host.queued_reset']==0 and
+                checkpoints[1].value[prefix+'host.queued_reset']==1,
+                'real host reset did not queue the request in the next checkpoint')
+        ref=(result.stdout,path.read_bytes())
+        for label,core in (('host-reference-uncached',host_reference),('host-mutant-uncached',host_mutant)):
+            result,path=run(label,core,True)
+            require(result.returncode==0 and (result.stdout,path.read_bytes())==ref,
+                    ('host uncached control changed behaviour',label,result.stderr))
+        result,_=run('host-mutant-cached',host_mutant)
+        require(result.returncode==1 and 'lockstep mutating projection' in result.stderr,
+                ('host reset dirty mutant survived or failed for unrelated reason',result.returncode,result.stderr))
+        print('KILLED host-reset-dirty-mark; real queued reset observed; cache on/off and uncached mutant controls identical')
 
 
 if __name__=='__main__':main()

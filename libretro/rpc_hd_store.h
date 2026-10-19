@@ -2,6 +2,7 @@
 #ifndef ARC_RPC_HD_STORE_H
 #define ARC_RPC_HD_STORE_H
 #include "arc_storage.h"
+#include "arc_lock.h"
 #include <stddef.h>
 #include <stdint.h>
 #define ARC_RPC_HD_CHUNK 262144u
@@ -26,7 +27,7 @@ typedef enum { ARC_RPC_HD_OPEN_PENDING, ARC_RPC_HD_UNPUBLISHED,
     ARC_RPC_HD_UNSUPPORTED, ARC_RPC_HD_UNAVAILABLE, ARC_RPC_HD_CORRUPT,
     ARC_RPC_HD_LEGACY, ARC_RPC_HD_RECEIPTED } ArcRpcHdOutcome;
 /* No I/O at begin; one deterministic preparation step per call. */
-ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *, const char *, char *, size_t);
+ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *, const char *, ArcLock *, char *, size_t);
 ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *);
 ArcRpcHdOutcome arc_riscpc_hd_outcome(const ArcRpcHdStore *);
 const char *arc_riscpc_hd_outcome_notice(ArcRpcHdOutcome);
@@ -63,8 +64,9 @@ typedef struct {
 } ArcRpcHdStats;
 /* No creation on damage; create_blank only admits an empty/unpublished store. */
 ArcRpcHdStore *arc_riscpc_hd_open(const char *save, const char *content,
-    bool create_blank, char *error, size_t error_size);
-void arc_riscpc_hd_close(ArcRpcHdStore *store);
+    bool create_blank, ArcLock *owner, char *error, size_t error_size);
+/* Discard closes clean handles without namespace changes. */
+bool arc_riscpc_hd_close(ArcRpcHdStore *store, bool discard);
 void arc_riscpc_hd_backend(ArcRpcHdStore *store, ArcIdeBackend *out);
 bool arc_riscpc_hd_read(ArcRpcHdStore *, uint32_t lba, uint32_t count, uint8_t *out);
 bool arc_riscpc_hd_write(ArcRpcHdStore *, uint32_t lba, uint32_t count, const uint8_t *in);

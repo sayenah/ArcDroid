@@ -285,7 +285,11 @@ bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
    memcpy(prefix, path, at); prefix[at] = 0;
    if (!arc_io_is_directory_counted(prefix, operations)) {
       ++*operations; ++*namespace_operations;
-      if (arc_io_vfs->mkdir(prefix) != 0) return false;
+      int made=arc_io_vfs->mkdir(prefix);
+      if(made!=0){
+         if(made!=-2)return false;
+         if(!arc_io_is_directory_counted(prefix,operations))return false;
+      }
    }
    *cursor = at + 1; *done = at == length; return true;
 }

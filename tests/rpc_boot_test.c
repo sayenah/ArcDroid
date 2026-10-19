@@ -3,6 +3,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #endif
+#include "rpc_native_store_owner.h"
 #include "arc_io.h"
 #include "rpc_boot.h"
 #include <assert.h>
@@ -248,6 +249,8 @@ int main(int argc, char **argv) {
   unsigned special = (unsigned)strtoul(argv[6], NULL, 10);
   package_fault_phase = special;
   arc_io_set_vfs(&vfs);
+  /* Ownership is a separate unit; store fault ordinals start after admission. */
+  (void)rpc_native_test_owner(save_directory,id);
   vfs.open = observed_open;
   vfs.close = observed_close;
   vfs.size = observed_size;
@@ -265,7 +268,7 @@ int main(int argc, char **argv) {
   char error[512] = {0};
   bool blank = !strcmp(mode, "legacy") || !strcmp(mode, "forge");
   ArcRpcHdStore *s =
-      arc_riscpc_hd_open(save_directory, id, blank, error, sizeof(error));
+      arc_riscpc_hd_open(save_directory,id,blank,rpc_native_test_owner(save_directory,id),error,sizeof(error));
   if (!s) {
     fprintf(stderr, "%s\n", error);
     return 3;
@@ -280,8 +283,8 @@ int main(int argc, char **argv) {
     memcpy(fake + 128, "ARCRHDM1", 8);
     fake[136] = 2;
     assert(arc_riscpc_hd_write(s, 200000, 1, fake));
-    arc_riscpc_hd_close(s);
-    s = arc_riscpc_hd_open(save_directory, id, false, error, sizeof(error));
+    arc_riscpc_hd_close(s,false);
+    s = arc_riscpc_hd_open(save_directory,id,false,rpc_native_test_owner(save_directory,id),error,sizeof(error));
     assert(s && !arc_riscpc_hd_receipt(s, NULL));
   }
   if (!strcmp(mode, "verify") || recovery_mode()) {
@@ -290,7 +293,7 @@ int main(int argc, char **argv) {
     printf("{\"published\":%u,\"receipt\":%u}\n", a.published,
            arc_riscpc_hd_receipt(s, NULL));
     printf("points=%u\n", points);
-    arc_riscpc_hd_close(s);
+    arc_riscpc_hd_close(s,false);
     vfs_assert_no_open_handles();
     return 0;
   }
@@ -407,7 +410,7 @@ int main(int argc, char **argv) {
     assert(!memcmp(&after, &original_receipt, sizeof(after)));
   }
   printf("points=%u\n", points);
-  arc_riscpc_hd_close(s);
+  arc_riscpc_hd_close(s,false);
   vfs_assert_no_open_handles();
   return state == ARC_RPC_BOOT_FAILED || state == ARC_RPC_BOOT_CANCELLED ? 2
                                                                          : 0;

@@ -3083,4 +3083,5 @@ public static class ArcRpcHdCrc {
     Write-Host $result
     $result | Add-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-hd-results.txt')
     if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- $result" }
+    . (Join-Path $PSScriptRoot 'test-retroarch-rpc-privacy.ps1')
 }

@@ -47,6 +47,7 @@ typedef struct {
     bool valid;
 } CacheTag;
 struct ArcRpcHdStore {
+    ArcLock *owner;
     uint32_t live[ARC_RPC_HD_SECTORS], frozen[ARC_RPC_HD_SECTORS];
     uint8_t cache[CACHE_COUNT][ARC_RPC_HD_CHUNK], scratch[ARC_RPC_HD_CHUNK], checkpoint[ARC_RPC_HD_CHUNK], record[RECORD_MAX];
     uint8_t manifests[3][MANIFEST_BYTES], headers[2][256];
@@ -84,6 +85,12 @@ struct ArcRpcHdStore {
 _Static_assert(sizeof(ArcRpcHdStore) + 12288u <= 4889964u, "RPC store memory bound");
 static void step_start(ArcRpcHdStore *,ArcRpcHdStats *);
 static void step_finish(ArcRpcHdStore *,const ArcRpcHdStats *);
+/* Identity may be lost only at unit boundaries. Writable handles are clean
+ * there; write, flush and close run together before the next check. */
+static bool held(ArcRpcHdStore *s)
+{ return s && arc_lock_held(s->owner); }
+static bool owned(ArcRpcHdStore *s)
+{ return s && arc_lock_held(s->owner) && arc_lock_verify(s->owner)==ARC_LOCK_HELD; }
 static bool view_ready(const ArcRpcHdStore *s)
 { return s && (s->outcome==ARC_RPC_HD_LEGACY||s->outcome==ARC_RPC_HD_RECEIPTED||
     (s->outcome==ARC_RPC_HD_UNAVAILABLE&&s->open_validated)); }
@@ -154,15 +161,15 @@ static bool size(ArcRpcHdStore *s,const char *leaf,size_t *n)
     return false;
 }
 static bool remove_leaf(ArcRpcHdStore *s,const char *leaf)
-{ char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation="remove";path(s,leaf,p);++s->stats.namespace_operations;metadata(s);return arc_io_remove(p); }
+{ if(!held(s))return false;char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation="remove";path(s,leaf,p);++s->stats.namespace_operations;metadata(s);return arc_io_remove(p); }
 /* The split destination step already proved absence under exclusive ownership. */
 static bool rename_empty(ArcRpcHdStore *s,const char *from,const char *to)
-{ char a[1100],b[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",to);s->io_operation="rename";
+{ if(!held(s))return false;char a[1100],b[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",to);s->io_operation="rename";
   path(s,from,a);path(s,to,b);++s->stats.namespace_operations;metadata(s);return arc_io_rename(a,b); }
 static bool rename_leaf(ArcRpcHdStore *s,const char *from,const char *to)
 { size_t n;if(size(s,to,&n)||s->refused)return false;return rename_empty(s,from,to); }
 static ArcIoFile *open_leaf(ArcRpcHdStore *s,const char *leaf,bool write,bool create)
-{ char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);if(create)++s->stats.namespace_operations;metadata(s);
+{ if((write||create)&&!held(s))return NULL;char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);if(create)++s->stats.namespace_operations;metadata(s);
   uint64_t before=s->stats.operations;ArcIoFile *f=create?arc_io_create_file_counted(p,&s->stats.operations):arc_io_open_stream_counted(p,write,&s->stats.operations);
   s->stats.metadata_operations+=s->stats.operations-before;return f; }
 /* Cleanup must not replace the operation that already failed. */
@@ -614,13 +621,13 @@ static bool rotate_step(ArcRpcHdStore *s)
 }
 void arc_riscpc_hd_tick(ArcRpcHdStore *s)
 {
-    if(!s)return;
+    if(!s || !held(s))return;
     s->stats.tick_bytes=s->stats.tick_operations=s->stats.tick_hash_bytes=s->stats.tick_copied_bytes=s->stats.tick_metadata_operations=s->stats.tick_namespace_operations=0;
     if(s->outcome==ARC_RPC_HD_OPEN_PENDING||s->population||s->refused)return;
     uint64_t bytes=s->stats.requested_bytes,ops=s->stats.operations,
         hashes=s->stats.hash_bytes,copies=s->stats.copied_bytes,meta=s->stats.metadata_operations,namespace=s->stats.namespace_operations;
     bool ok=true;switch(s->state){
-    case ARC_RPC_HD_IDLE:if(s->requested){s->requested=false;s->state=ARC_RPC_HD_ROTATE;s->phase_step=0;}break;
+    case ARC_RPC_HD_IDLE:if(s->requested){if(!owned(s)){failure(s,false);return;}s->requested=false;s->state=ARC_RPC_HD_ROTATE;s->phase_step=0;}break;
     case ARC_RPC_HD_ROTATE:ok=rotate_step(s);break;
     case ARC_RPC_HD_MATERIALIZE:ok=materialize_step(s);break;
     case ARC_RPC_HD_MANIFEST:
@@ -677,7 +684,7 @@ bool arc_riscpc_hd_read(ArcRpcHdStore *s,uint32_t lba,uint32_t count,uint8_t *ou
 }
 bool arc_riscpc_hd_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count,const uint8_t *in)
 {
-    if(!s||s->outcome==ARC_RPC_HD_OPEN_PENDING||!in||!s->published||s->population||s->refused||!range(lba,count))return false;
+    if(!s||!held(s)||s->outcome==ARC_RPC_HD_OPEN_PENDING||!in||!s->published||s->population||s->refused||!range(lba,count))return false;
     s->io_operation="append-admission";journal_leaf(s->current,s->io_leaf);
     uint32_t bytes=96+count*512;uint64_t aggregate=(uint64_t)s->lengths[0]+s->lengths[1];
     if(aggregate+bytes>ARC_RPC_HD_JOURNAL_CAP||s->sequence==UINT64_MAX||s->records_count==RECORDS_MAX)return failure(s,false);
@@ -1331,7 +1338,7 @@ static bool recover_step(ArcRpcHdStore *s) {
     }
 }
 ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *s) {
-    if (!s)
+    if (!s || !held(s))
         return ARC_RPC_HD_UNAVAILABLE;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1341,10 +1348,10 @@ ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *s) {
     return s->outcome;
 }
 ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *save, const char *content,
-                                        char *error, size_t n) {
+                                        ArcLock *owner, char *error, size_t n) {
     if (error && n)
         *error = 0;
-    if (!arc_install_store_native_path(save) || !key_valid(content)) {
+    if (!arc_install_store_native_path(save) || !key_valid(content) || !arc_lock_held(owner)) {
         if (error && n)
             snprintf(error, n,
                      "Invalid RiscPC hard-disc path or content identity");
@@ -1364,16 +1371,17 @@ ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *save, const char *content,
             snprintf(error, n, "RiscPC hard-disc path is too long");
         return NULL;
     }
+    s->owner=owner;
     copy(s, s->content, content, 41);
     s->stats.allocation_high = sizeof(*s) + 12288;
     return s;
 }
-ArcRpcHdStore *arc_riscpc_hd_open(const char *save,const char *content,bool create_blank,char *error,size_t error_size)
+ArcRpcHdStore *arc_riscpc_hd_open(const char *save,const char *content,bool create_blank,ArcLock *owner,char *error,size_t error_size)
 {
-    ArcRpcHdStore *s=arc_riscpc_hd_open_begin(save,content,error,error_size);if(!s)return NULL;
+    ArcRpcHdStore *s=arc_riscpc_hd_open_begin(save,content,owner,error,error_size);if(!s)return NULL;
     ArcRpcHdOutcome outcome;do{outcome=arc_riscpc_hd_open_step(s);}while(outcome==ARC_RPC_HD_OPEN_PENDING);
     if(outcome==ARC_RPC_HD_CORRUPT||outcome==ARC_RPC_HD_UNSUPPORTED||(outcome==ARC_RPC_HD_UNAVAILABLE&&!s->open_validated)){
-        if(error&&error_size)snprintf(error,error_size,"%s",arc_riscpc_hd_outcome_notice(outcome));arc_riscpc_hd_close(s);return NULL;}
+        if(error&&error_size)snprintf(error,error_size,"%s",arc_riscpc_hd_outcome_notice(outcome));arc_riscpc_hd_close(s,false);return NULL;}
     if(!s->published&&!s->refused){
         if(create_blank&&arc_riscpc_hd_population_begin(s)){s->authored=true;
             bool ok=true;for(unsigned i=0;i<504&&ok;++i){ok=arc_hd_format_range(256,13,(uint64_t)i*ARC_RPC_HD_CHUNK,s->scratch,ARC_RPC_HD_CHUNK);
@@ -1386,10 +1394,26 @@ ArcRpcHdStore *arc_riscpc_hd_open(const char *save,const char *content,bool crea
         }}
     if(s->refused&&error&&error_size)snprintf(error,error_size,"%s",s->notice?s->notice:"RiscPC hard disc is read-only");return s;
 }
-void arc_riscpc_hd_close(ArcRpcHdStore *s) { if(s){if(s->listing)(void)arc_io_close_directory(s->listing);if(s->replay_file)(void)close_file(s,s->replay_file,true);if(s->population)arc_riscpc_hd_population_abort(s);if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}free(s);} }
+bool arc_riscpc_hd_close(ArcRpcHdStore *s, bool discard)
+{
+    if(!s)return true;
+    bool ok=true;
+    if(!discard && !owned(s)){discard=true;ok=false;}
+    if(s->listing)ok=arc_io_close_directory(s->listing)&&ok;
+    if(s->replay_file)ok=close_file(s,s->replay_file,true)&&ok;
+    if(s->population && !discard)arc_riscpc_hd_population_abort(s);
+    /* A retained writer is empty or has already been flushed; no dirty
+     * buffered handle crosses an identity-check boundary. */
+    if(s->rotation_writer){
+        if(!discard)ok=flush(s,s->rotation_writer)&&ok;
+        ok=close_file(s,s->rotation_writer,true)&&ok;
+    }
+    free(s);return ok;
+}
+
 bool arc_riscpc_hd_population_begin(ArcRpcHdStore *s)
 {
-    if(!s||s->outcome==ARC_RPC_HD_OPEN_PENDING||s->refused||s->population||s->state!=ARC_RPC_HD_IDLE||s->requested||s->generation==UINT64_MAX||
+    if(!s||!owned(s)||s->outcome==ARC_RPC_HD_OPEN_PENDING||s->refused||s->population||s->state!=ARC_RPC_HD_IDLE||s->requested||s->generation==UINT64_MAX||
        (s->published&&s->jgeneration[s->current]==UINT64_MAX))return false;
     s->population=true;s->sealed=false;s->seal_at=0;s->seal_step=s->publish_step=0;s->reconstruction_active=false;s->snapshot=s->sequence;s->parent=s->current;
     copy(s,s->frozen,s->live,sizeof(s->live));memset(s->population_changed,0,sizeof(s->population_changed));
@@ -1508,7 +1532,7 @@ static bool population_publish_chunk_step(ArcRpcHdStore *s, unsigned i,
 }
 bool arc_riscpc_hd_population_io_step(ArcRpcHdStore *s, bool *done) {
     *done = false;
-    if (!s || !s->population_io || s->refused)
+    if (!s || !held(s) || !s->population_io || s->refused)
         return false;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1672,7 +1696,7 @@ static bool seal_unit(ArcRpcHdStore *s, bool *done) {
     return true;
 }
 bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *s, bool *done) {
-    if (!s || !done)
+    if (!s || !done || !held(s))
         return false;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1776,7 +1800,7 @@ static bool population_publish_unit(ArcRpcHdStore *s, bool *done) {
     }
 }
 bool arc_riscpc_hd_population_publish_step(ArcRpcHdStore *s, bool *done) {
-    if (!s || !done)
+    if (!s || !done || !held(s))
         return false;
     ArcRpcHdStats before;
     step_start(s, &before);
@@ -1794,7 +1818,7 @@ bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s) {
     return true;
 }
 void arc_riscpc_hd_population_abort(ArcRpcHdStore *s) {
-    if (!s || !s->population)
+    if (!s || !s->population || !held(s))
         return;
     s->population = false;
     s->population_io = s->reconstruction_active = false;
@@ -1849,3 +1873,9 @@ bool arc_riscpc_hd_next_namespace(const ArcRpcHdStore *s, unsigned operation)
     if (operation == 4) return s->seal_at > 504 || (s->seal_at == 504 && s->seal_step);
     return s->publish_step == 4;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+/* Pure ownership-role read; never inspect a native descriptor or path. */
+bool arc_riscpc_hd_lockstep_owner(const void *store,const void *owner)
+{return store && ((const ArcRpcHdStore *)store)->owner==owner;}
+#endif

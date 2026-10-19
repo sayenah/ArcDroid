@@ -45,8 +45,8 @@ static bool fail(ArcRpcBoot *b, const char *reason) {
   return false;
 }
 static bool named_failure(ArcRpcBoot *b, const char *reason, const char *path) {
-  snprintf(b->error, sizeof(b->error), "Boot population %s: %.250s", reason,
-           path);
+  (void)path;
+  snprintf(b->error, sizeof(b->error), "Boot population %s: a file in the boot archives", reason);
   return false;
 }
 static unsigned find_child(ArcRpcBoot *b, unsigned parent, const char *name) {

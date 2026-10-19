@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-mutants-') as temp:
         if sanitized:flags+=['-fsanitize=address,undefined','-fno-omit-frame-pointer']
         includes=sum((['-I',str(root/p)] for p in ('core','engine','libretro','libretro/include','third_party/zlib')),[])
         command=[compiler,*flags,*includes,str(root/'tests/rpc_boot_test.c'),*paths,
-                 str(root/'libretro/arc_io.c'),str(root/'libretro/install_store.c'),core,zlib,'-o',str(binary)]
+                 str(root/'libretro/arc_io.c'),str(root/'libretro/arc_lock.c'),str(root/'libretro/install_store.c'),core,zlib,'-o',str(binary)]
         result=subprocess.run(command,capture_output=True,text=True,timeout=120)
         if result.returncode:raise RuntimeError('invalid mutant compilation: '+result.stderr[-3000:])
     def suite():

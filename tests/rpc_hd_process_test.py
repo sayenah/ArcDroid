@@ -14,6 +14,8 @@ def run(root,mode,kind,cut=0):
     return subprocess.run([str(binary),str(root),mode,kind,str(cut)],capture_output=True,text=True,timeout=60)
 with tempfile.TemporaryDirectory(prefix='arc-rpc-hd-process-') as temp:
     temp=Path(temp);baseline=temp/'baseline';baseline.mkdir()
+    from rpc_host_runner_ownership_test import native_clients
+    native_clients(binary,baseline)
     r=run(baseline,'prepare','checkpoint');assert r.returncode==0,r.stdout+r.stderr
     for kind in (tuple(args.kinds) or ('checkpoint','population','creation','interleaved')):
         live=temp/'live'

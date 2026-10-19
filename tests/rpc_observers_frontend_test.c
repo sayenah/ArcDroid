@@ -447,10 +447,22 @@ legacy_disc:;
         if(scenario==23 || scenario==24){char helper[11],hd[11];assert(identity_query(helper,hd) && !strcmp(hd,"ArcDroidHD") && saw_disc_insert);}
         if(scenario==6)assert(saw_identity_unknown);
         if(scenario==11)assert(disc_logs<=4);
-        if(scenario==25 || scenario==26){assert(disc_logs==1);reset();for(unsigned f=0;f<5;++f)run();assert(disc_logs==1);}
+        if(scenario==25 || scenario==26){
+            assert(disc_logs==1);reset();for(unsigned f=0;f<5;++f)run();
+            /* A-6 delta 12: reset clears/reconfigures the multi-disc observer
+             * and cache, producing one fresh waiting decision, no heartbeat.
+             * The single-media inactive decision remains unchanged. */
+            assert(disc_logs==(scenario==25?2u:1u));
+            for(unsigned f=0;f<5;++f)run();assert(disc_logs==(scenario==25?2u:1u));
+        }
         if(scenario==27)assert(busy_logs>=2 && busy_logs<=3 && resolved_logs==1 && disc_logs==busy_logs+1);
         if((scenario>=28 && scenario<=30) || scenario==32 || scenario==33 || scenario==35 || scenario==36)assert(saw_device_refusal);
-        if(scenario==31){reset();for(unsigned f=0;f<4;++f)run();ArcDiscRequest request;api->disc_snapshot(&request);assert(request.a_active);}
+        if(scenario==31){
+            reset();for(unsigned f=0;f<4;++f)run();ArcDiscRequest request;api->disc_snapshot(&request);
+            /* A-6 delta 12: the reset-time cache/configuration knows Two is
+             * already inserted; the repeated guest request stays suppressed. */
+            assert(!request.a_active && disks.get_image_index()==1);
+        }
         if(scenario==37)assert(disc_logs==2); /* One hint and one notified transition, no heartbeat. */
         if(!auto_insert && scenario!=26){assert(disks.set_eject_state(true) && disks.set_image_index(1) && disks.set_eject_state(false));assert(disks.get_image_index()==1);}
         unload();vfs_assert_no_open_handles();

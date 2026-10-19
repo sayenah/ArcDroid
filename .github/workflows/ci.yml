@@ -310,14 +310,16 @@ jobs:
         with:
           name: arcdroid-windows-retroarch-input
           path: build/retroarch-input
-      - name: Parse Windows RetroArch script
+      - name: Parse Windows RetroArch scripts
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path tools/test-retroarch-windows.ps1).Path, [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
-      - name: RetroArch 1.22.2 native load, power-on Shift, screenshot, and reloads
+          foreach ($script in @('tools/test-retroarch-windows.ps1', 'tools/test-retroarch-rpc-privacy.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          }
+      - name: RetroArch 1.22.2 native load, power-on Shift, screenshot, reloads, and RPC notice privacy
         shell: pwsh
         run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native
       - name: Slice 28 guarded old-map JFD persistence and refusal

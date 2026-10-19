@@ -669,3 +669,49 @@ expression are pinned in both schema and reviewed policy. Only that bridge may
 omit an owning-TU offsetof row; unreviewed omissions or replacement expressions
 are rejected before table generation. This preserves complete-member checking
 for ordinary serialized C storage.
+
+## Run C host merge (S68)
+
+The R3d-3 host merge retains M2b's hooks, dirty marks, projections and pinned
+retirement bridge. The RUNNING reset body remains byte-identical to `d42adbe`.
+New pure preparation/host bridges append semantic ownership, marker recovery,
+drain and queued-reset fields to the compared session group. Token references
+use preparation roles, never native descriptors or process addresses. A live
+drain payload uses SHA-256/64 over its 240 initialized bytes; inactive payload
+storage has no meaning. A foreign binding or host callback context is never
+dereferenced. The wire format stays v1; the compared-field compatibility hash
+changes through the existing generated-schema mechanism.
+
+`host_state_members` in the schema and separate reviewed policy classifies
+each new or changed member in the host, preparation, ownership and store
+types. Native callbacks/contexts, lock handles and paths, acquisition clocks,
+notice presentation, silence scratch and diagnostic costs have individual
+host-only reasons; logical ownership, publication markers, bounded draining
+and reset admission remain compared. Unchanged M2b member declarations are
+pinned individually as baseline members, without redefining their contract.
+The source member census rejects a new type/member, a changed declaration or
+capacity, and missing classifications or emitted-field references. It adds
+no blanket file exclusion. The native object census also inspects the six
+owning frontend objects, including load-failure scratch and local label tables;
+unknown writable symbols still fail.
+
+`host_static_objects` separately pins every static declaration in the frontend
+and plan adapter, including function-local descriptors and callback pointers.
+New host references, admission/notice flags, staging views, fixed catalogue
+tables, F4 message-path flags and the F9 measurement stamp each have an explicit
+classification. Pointee state and copied media contents use their existing
+semantic serializers; frontend admission and presentation bookkeeping have
+individual host-only reasons. Unsupported static declaration forms fail closed.
+
+Every new mutating preparation API and host reset/lifecycle entry invalidates
+the shared preparation generation. The preparation-cache test changes real
+owned state between emitted checkpoints and compares cached and uncached
+streams. A separate case queues a reset through the real host entry, with no
+preparation callback to rescue a missing mark. Removing either the preparation
+generation check or the host reset dirty mark must fail the projection-purity
+check; each uncached mutant remains an identical-stream positive control.
+
+The launch predicate census includes the host TU. The merge refreshes source
+pins and lexical offsets, preserves both parents' historical audit metadata,
+and marks added entries as not rerun. A pin refresh is not evidence of a new
+exhaustive lexical mutation run.

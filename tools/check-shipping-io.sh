@@ -105,6 +105,7 @@ libretro/arc_session.c
 libretro/install_store.c
 libretro/rpc_hd_store.c
 libretro/rpc_preparation.c
+libretro/rpc_preparation_host.c
 libretro/rpc_launch_record_store.c
 libretro/rpc_preparation.h
 libretro/rpc_cmos_store.c
