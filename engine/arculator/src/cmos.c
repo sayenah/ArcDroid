@@ -473,3 +473,8 @@ void i2c_change(int new_clock, int new_data)
 	i2c.last_data = new_data;
 	i2c_clock = new_clock;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/cmos_state.inc"
+#endif

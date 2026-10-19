@@ -1,6 +1,7 @@
 /* ArcDroid headless video backend. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "arcdroid_platform.h"
 #include "plat_video.h"
+#include "arc_state.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,6 +12,7 @@
 #define ARC_VIDEO_MAX_HEIGHT 2048
 
 static uint32_t *arc_video_frame;
+static uint16_t arc_video_rows[2048][2];
 static unsigned arc_video_width = 640u;
 static unsigned arc_video_height = 480u;
 static uint64_t arc_video_sequence;
@@ -21,6 +23,7 @@ void arc_platform_video_reset(void)
    arc_video_width = 640u;
    arc_video_height = 480u;
    arc_video_sequence = 0u;
+   memset(arc_video_rows,0,sizeof(arc_video_rows));
    if (arc_video_frame)
       memset(arc_video_frame, 0,
              (size_t)ARC_VIDEO_MAX_WIDTH * ARC_VIDEO_MAX_HEIGHT * sizeof(*arc_video_frame));
@@ -71,10 +74,12 @@ void video_renderer_update(BITMAP *source, int source_x, int source_y,
    if (dest_x + width > ARC_VIDEO_MAX_WIDTH) width = ARC_VIDEO_MAX_WIDTH - dest_x;
    if (dest_y + height > ARC_VIDEO_MAX_HEIGHT) height = ARC_VIDEO_MAX_HEIGHT - dest_y;
    if (width <= 0 || height <= 0) return;
-   for (int y = 0; y < height; ++y)
+   for (int y = 0; y < height; ++y) {
+      arc_state_raster_mark(arc_video_rows,(unsigned)(dest_y+y),(unsigned)dest_x,(unsigned)width);
       memcpy(arc_video_frame + (size_t)(dest_y + y) * ARC_VIDEO_MAX_WIDTH + dest_x,
              source->line[source_y + y] + (size_t)source_x * sizeof(uint32_t),
              (size_t)width * sizeof(uint32_t));
+   }
 }
 
 void video_renderer_present(int source_x, int source_y, int width, int height, int line_double)
@@ -89,6 +94,8 @@ void video_renderer_present(int source_x, int source_y, int width, int height, i
       for (int y = height - 1; y >= 0; --y)
       {
          uint32_t *source = arc_video_frame + (size_t)y * ARC_VIDEO_MAX_WIDTH;
+         arc_state_raster_mark(arc_video_rows,(unsigned)y*2u,0,(unsigned)width);
+         arc_state_raster_mark(arc_video_rows,(unsigned)y*2u+1u,0,(unsigned)width);
          memcpy(arc_video_frame + (size_t)(y * 2 + 1) * ARC_VIDEO_MAX_WIDTH,
                 source, (size_t)width * sizeof(uint32_t));
          memcpy(arc_video_frame + (size_t)(y * 2) * ARC_VIDEO_MAX_WIDTH,
@@ -112,3 +119,14 @@ const uint32_t *arc_platform_video_frame(unsigned *width, unsigned *height,
 }
 
 void updatewindowsize(int width, int height) { (void)width; (void)height; }
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/arcdroid_video_state.inc"
+#include "../engine/state-generated/platform_video_extra.inc"
+void arc_state_visit_platform_arcdroid_video_extra(ArcState *s) { arc_state_platform_video_extra(s); }
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_platform_test_seed_video_history(void)
+{ if(arc_video_frame)arc_video_frame[4096u*2048u-1u]=0x00506070u;arc_state_raster_mark(arc_video_rows,2047u,4095u,1u); }
+#endif

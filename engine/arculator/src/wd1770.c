@@ -514,3 +514,8 @@ int wd1770_idle(void)
 {
 	return !(wd1770.status & 1u) && !timer_is_enabled(&wd1770.timer);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/wd1770_state.inc"
+#endif

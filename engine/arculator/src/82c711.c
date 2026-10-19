@@ -102,3 +102,8 @@ void c82c711_init(void)
 		 hd_fn[1], hd_spt[1], hd_hpc[1], hd_cyl[1],
 		 c82c711_ide_irq_raise, c82c711_ide_irq_clear);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/82c711_state.inc"
+#endif

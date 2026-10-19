@@ -1,6 +1,8 @@
 /* ArcDroid libretro adapter. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "libretro.h"
 #include "arc_io.h"
+#include "arc_state.h"
+#include "arc_state_io.h"
 #include "arc_session.h"
 #include "rpc_preparation_host.h"
 #include "arc_build_identity.h"
@@ -90,6 +92,7 @@ static size_t arc_video_pitch;
  * reinitialisation. Engine and OSK surfaces can be freed on reset or machine
  * recreation, so video callbacks always receive this core-lifetime surface. */
 static uint32_t arc_present_frame[ARC_PRESENT_MAX_WIDTH * ARC_PRESENT_MAX_HEIGHT];
+static uint16_t arc_present_rows[2048][2];
 static int16_t arc_audio_frame[2048u * 2u];
 static uint8_t arc_cmos_record[256];
 static uint8_t arc_cmos_last_written[256];
@@ -375,6 +378,7 @@ typedef struct {
    size_t effective_extent;
    bool zero_tail_presentation;
    ArcDigest digest;
+   char jfd_sha256[65]; /* Immutable base identity survives lazy decoded-buffer release. */
    ArcJfdImage jfd;
    bool jfd_damage_notice_shown;
    bool jfd_off_notice_shown;
@@ -394,6 +398,16 @@ typedef struct {
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static ArcMediaEntry arc_rpc_helper_entry;
 static unsigned arc_media_count;
+static bool arc_state_inside_run;
+static size_t arc_state_capacity;
+static bool arc_state_context_supported;
+static ArcDigest arc_state_firmware_digest;
+static bool arc_state_firmware_valid;
+static retro_input_poll_t arc_state_real_poll;
+static retro_input_state_t arc_state_real_input;
+static bool arc_state_boundary_armed,arc_state_restore_seen,arc_state_uncertain_frame,arc_state_speculative_frame_seen;
+static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES];
+
 #if defined(ARCDROID_TEST_FAULTS)
 static const ArcRpcFirmwareFingerprint *arc_test_rpc_catalogue;
 static size_t arc_test_rpc_catalogue_count;
@@ -1181,6 +1195,14 @@ static const char *arc_os_slug(ArcOsClass os)
 static void arc_plan_notice(const char *message, bool error);
 #endif
 static void arc_input_sampling_reset(bool release_engine_levels);
+static void arc_state_boundary_reset(void);
+static void arc_state_note_committed(void);
+static void arc_state_boundary_callback(void);
+static void arc_state_boundary_frame(void);
+static void arc_state_boundary_save(void);
+static size_t arc_snapshot_session_bound(const ArcMachineDescriptor *machine);
+static void arc_snapshot_static_visit(ArcState *s);
+static enum retro_savestate_context arc_state_context(void);
 static void arc_release_session(void)
 {
    if(arc_rpc_host){char error[256]={0};(void)arc_riscpc_host_free(arc_rpc_host,error,sizeof(error));arc_rpc_host=NULL;}
@@ -1230,6 +1252,8 @@ static void arc_release_session(void)
    arc_error_hint_state = 0u;
    arc_install_store_close(arc_hd_store);
    arc_hd_store = NULL;
+   arc_state_capacity=0;
+   arc_state_boundary_reset();
    arc_hd_failure_noticed = false;
    arc_hd_readonly_noticed = false;
    arc_hd_write_failure_noticed = false;
@@ -1297,6 +1321,12 @@ static void arc_seed_cmos(void)
 {
    if (arc_kind != ARC_SESSION_KIND_ARCULATOR) return;
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
+   arc_state_io_root(arc_save_path);
+   if(arc_cmos_path[0]) {
+      char identity[256];const char *leaf=strrchr(arc_cmos_path,'/');
+      snprintf(identity,sizeof(identity),"CMOS:%s",leaf?leaf+1:arc_cmos_path);
+      (void)arc_state_io_store(arc_cmos_path,identity);
+   }
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE] = {0};
    void *existing = NULL;
    size_t existing_size = 0u;
@@ -1343,6 +1373,18 @@ static void arc_cmos_ignored_write(void *opaque, unsigned raw,
    }
 }
 
+/* Publication authority updates this marker from the exact acknowledged bytes,
+ * including replayed effects, so the next real frame cannot publish them twice. */
+static void arc_state_cmos_committed(const char *path,const void *bytes,size_t size)
+{
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&arc_cmos_path[0]&&
+      !strcmp(path,arc_cmos_path)&&size==sizeof(arc_cmos_last_written)) {
+      memcpy(arc_cmos_last_written,bytes,size);arc_cmos_last_written_valid=true;
+   }
+}
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_ss1_persist_cmos(void);
+#endif
 static void arc_persist_cmos(void)
 {
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
@@ -1358,7 +1400,8 @@ static void arc_persist_cmos(void)
    if (!arc_cmos_last_written_valid ||
        memcmp(arc_cmos_record, arc_cmos_last_written, sizeof(arc_cmos_record)) != 0)
    {
-      if (arc_io_write_all(arc_cmos_path, arc_cmos_record, sizeof(arc_cmos_record)))
+      if (arc_io_write_all(arc_cmos_path, arc_cmos_record, sizeof(arc_cmos_record)) &&
+          !arc_state_io_speculative())
       {
          memcpy(arc_cmos_last_written, arc_cmos_record, sizeof(arc_cmos_last_written));
          arc_cmos_last_written_valid = true;
@@ -1373,7 +1416,7 @@ static void arc_boot_persist_seed(void)
         memcmp(arc_cmos_prepared, arc_cmos_last_written,
                sizeof(arc_cmos_prepared))) &&
        arc_io_write_all(arc_cmos_path, arc_cmos_prepared,
-                        sizeof(arc_cmos_prepared)))
+                        sizeof(arc_cmos_prepared)) && !arc_state_io_speculative())
    {
       memcpy(arc_cmos_last_written, arc_cmos_prepared,
              sizeof(arc_cmos_last_written));
@@ -1449,6 +1492,8 @@ void arc_jfd_store_log_commit(unsigned image_number, uint64_t generation,
                               size_t sector_index)
 {
    if (image_number) arc_disc_invalidate_image(image_number - 1u);
+   if(image_number&&image_number<=ARC_PLAYLIST_MAX_ENTRIES&&!arc_state_io_speculative())
+      arc_state_committed_jfd[image_number-1u]=generation;
 #if defined(ARCDROID_TEST_FAULTS)
    if (arc_log) arc_log(RETRO_LOG_INFO,
       "JFD write: image=%u generation=%llu descriptor=%zu\n",
@@ -1553,6 +1598,31 @@ static bool arc_file_digest_matches(const char *path, const uint8_t *expected,
    return matches;
 }
 
+/* Immutable backing for compact state deltas, separate from writable views. */
+static bool arc_state_media_base_path(const ArcMediaEntry *entry,char path[4096])
+{
+   if(entry->info.kind==ARC_MEDIA_JFD||arc_plan.disk_writes==ARC_DISK_WRITES_OFF) {
+      snprintf(path,4096u,"%s",entry->staged);return true;
+   }
+   int n=snprintf(path,4096u,"%s/arcdroid/media/%s/state-base.adf",arc_save_path,entry->digest.sha1);
+   return n>0&&n<4096;
+}
+static bool arc_state_prepare_media_base(ArcMediaEntry *entry,const void *data,size_t bytes,ArcDiskWriteMode mode)
+{
+#if defined(ARCDROID_SAVE_STATES)
+   if(arc_kind!=ARC_SESSION_KIND_ARCULATOR||entry->info.kind==ARC_MEDIA_JFD||mode==ARC_DISK_WRITES_OFF)return true;
+   char directory[4096],path[4096];
+   int n=snprintf(directory,sizeof(directory),"%s/arcdroid/media/%s",arc_save_path,entry->digest.sha1);
+   if(n<0||(size_t)n>=sizeof(directory)||!arc_io_make_path(directory))return false;
+   n=snprintf(path,sizeof(path),"%s/state-base.adf",directory);
+   if(n<0||(size_t)n>=sizeof(path))return false;
+   size_t existing=0;if(arc_io_file_size(path,&existing))return existing==bytes;
+   return arc_atomic_publish(path,data,bytes,NULL,NULL,0);
+#else
+   (void)entry;(void)data;(void)bytes;(void)mode;return true;
+#endif
+}
+
 static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                               ArcDiskWriteMode mode, bool notify_user,
                               bool *notice_reported,
@@ -1627,6 +1697,8 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
          }
       }
       entry->digest = arc_digest(entry->jfd.decoded, entry->jfd.decoded_size);
+      if(arc_kind==ARC_SESSION_KIND_ARCULATOR)
+         arc_sha256_hex(entry->jfd.decoded,entry->jfd.decoded_size,entry->jfd_sha256);
       entry->jfd_game_id = entry->jfd.game_id;
       entry->jfd_disc_number = entry->jfd.disc_number;
       entry->jfd_disc_count = entry->jfd.disc_count;
@@ -1669,8 +1741,14 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
    }
    if (!entry->label[0]) arc_media_stem(source, entry->label);
 
-   if (mode == ARC_DISK_WRITES_ORIGINAL && entry->info.kind != ARC_MEDIA_JFD)
+   if (mode == ARC_DISK_WRITES_ORIGINAL && entry->info.kind != ARC_MEDIA_JFD) {
       strcpy(entry->staged, source);
+      arc_state_io_root(arc_save_path);
+      if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&!arc_state_io_original(source,&entry->digest)) {
+         if(error&&error_size)snprintf(error,error_size,"Original media frontier could not be recovered.");
+         goto reject;
+      }
+   }
    else
    {
       char directory[ARC_MEDIA_PATH_CAPACITY];
@@ -1712,6 +1790,9 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                                  &entry->created_this_preparation, error, error_size))
             goto reject;
       }
+   }
+   if(!arc_state_prepare_media_base(entry,publish_data,publish_size,mode)) {
+      if(error&&error_size)snprintf(error,error_size,"Unable to prepare immutable save-state media base.");goto reject;
    }
    entry->populated = true;
    if (entry->info.short_image)
@@ -1761,6 +1842,11 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
 {
    void *source_data = NULL;
    size_t source_size = 0u;
+   arc_state_io_root(arc_save_path);
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&mode==ARC_DISK_WRITES_ORIGINAL&&!arc_state_io_recover_original(source)) {
+      if(error&&error_size)snprintf(error,error_size,"Original media frontier could not be recovered.");
+      return false;
+   }
    if (!source || !source[0] ||
        !arc_io_read_all(source, &source_data, &source_size))
    {
@@ -3357,6 +3443,10 @@ bool arc_libretro_test_hd_observation_write(unsigned mode)
       changed[0] ^= 0x40u;
       return arc_install_store_write(arc_hd_store, 15456u, 1u, changed) &&
          arc_install_store_write(arc_hd_store, 15456u, 1u, sector);
+   }
+   if (mode == 5u) {
+      memcpy(changed,sector,sizeof(changed));changed[0]^=0x40u;
+      return arc_install_store_write(arc_hd_store,15456u,1u,changed);
    }
    if (mode == 2u)
       return !arc_install_store_write(arc_hd_store, ARC_INSTALL_HD_SECTORS,
@@ -6544,8 +6634,8 @@ RETRO_API void retro_set_environment(retro_environment_t callback)
 RETRO_API void retro_set_video_refresh(retro_video_refresh_t callback) { arc_video = callback; }
 RETRO_API void retro_set_audio_sample(retro_audio_sample_t callback) { arc_audio = callback; }
 RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t callback) { arc_audio_batch = callback; }
-RETRO_API void retro_set_input_poll(retro_input_poll_t callback) { arc_input_poll = callback; }
-RETRO_API void retro_set_input_state(retro_input_state_t callback) { arc_input_state = callback; }
+RETRO_API void retro_set_input_poll(retro_input_poll_t callback) { arc_input_poll = callback;arc_state_boundary_callback(); }
+RETRO_API void retro_set_input_state(retro_input_state_t callback) { arc_input_state = callback;arc_state_boundary_callback(); }
 
 RETRO_API unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 
@@ -6647,6 +6737,7 @@ RETRO_API void retro_init(void)
 #endif
    arc_release_session();
    arc_log = NULL;
+   arc_state_io_set_commit_observer(arc_state_cmos_committed);
    if (arc_environment)
    {
       arc_environment(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, (void *)&disk);
@@ -6659,13 +6750,20 @@ RETRO_API void retro_init(void)
       if (arc_environment(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs))
       {
          arc_vfs = vfs.iface;
-         arc_io_set_vfs(arc_vfs);
+         arc_state_io_attach(arc_vfs);arc_io_set_vfs(arc_vfs);
       }
       if (arc_environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log))
          arc_log = log.log;
    }
    arc_engine_set_log_callback(arc_engine_log, NULL);
    arc_engine_adf_refusal_callback_set(arc_adf_log_refusal);
+   enum retro_savestate_context state_context=RETRO_SAVESTATE_CONTEXT_NORMAL;
+   arc_state_context_supported=arc_environment&&arc_environment(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT,&state_context);
+   uint64_t serialization_quirks=RETRO_SERIALIZATION_QUIRK_MUST_INITIALIZE|
+      RETRO_SERIALIZATION_QUIRK_ENDIAN_DEPENDENT|
+      RETRO_SERIALIZATION_QUIRK_PLATFORM_DEPENDENT;
+   if(!arc_state_context_supported)serialization_quirks|=RETRO_SERIALIZATION_QUIRK_INCOMPLETE;
+   if(arc_environment)arc_environment(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS,&serialization_quirks);
    ++arc_init_count;arc_build_identity();
 }
 
@@ -6681,6 +6779,7 @@ RETRO_API void retro_deinit(void)
    arc_loaded = false;
    arc_vfs = NULL;
    arc_io_set_vfs(NULL);
+   arc_state_io_attach(NULL);
    arc_environment = NULL;
    arc_video = NULL;
    arc_audio = NULL;
@@ -6753,6 +6852,17 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
       return false;
    }
 #endif
+   arc_state_io_root(arc_save_path);
+   if(arc_plan.disk_writes!=ARC_DISK_WRITES_OFF)for(unsigned i=0;i<arc_media_count;++i)
+      if(arc_media[i].info.kind!=ARC_MEDIA_JFD&&arc_media[i].staged[0]) {
+         char identity[4352];
+         if(arc_plan.disk_writes==ARC_DISK_WRITES_ORIGINAL)
+            snprintf(identity,sizeof(identity),"RAW-ORIGINAL:%s",arc_media[i].staged);
+         else snprintf(identity,sizeof(identity),"RAW:%s:%u:%u",arc_plan.content_id,i,(unsigned)arc_plan.disk_writes);
+         if(!arc_state_io_store(arc_media[i].staged,identity)) {
+            snprintf(error,error_size,"Saved disc frontier could not be recovered.");return false;
+         }
+      }
    arc_cmos_locked_raw_mask(arc_plan.os, locked_cmos_mask);
    /* A construction replaces every old KART transition, including a pending
     * power-on release. Frontend input is sampled again on the next run. */
@@ -7431,6 +7541,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    arc_kind = ARC_SESSION_KIND_ARCULATOR;
+   arc_io_set_vfs(arc_state_io_attach(arc_vfs));
    strcpy(arc_save_path, save_dir);
    arc_riscpc_notice_shown = false;
    if (!arc_prepare_media_list(game->path, arc_core_options.disk_writes,
@@ -7537,7 +7648,9 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    arc_firmware = search.data;
+   arc_state_firmware_valid=false;
    arc_firmware_size = search.size;
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR){arc_state_firmware_digest=arc_digest(arc_firmware,arc_firmware_size);arc_state_firmware_valid=true;}
    const ArcMachineDescriptor *launch_machine = arc_machine_descriptor(arc_core_options.machine);
    if (!arc_launch_plan_resolve(&arc_plan, arc_media[arc_image_index].info.kind,
                                 search.match->os, arc_content_digest.sha1,
@@ -7618,6 +7731,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       }
    }
    arc_loaded = true;
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR)arc_state_capacity=arc_snapshot_session_bound(launch_machine);
    arc_ejected = false;
    memset(arc_frame, 0, sizeof(arc_frame));
    arc_frame_number = 0u;
@@ -7958,6 +8072,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
          return false;
       }
       arc_kind = ARC_SESSION_KIND_RISCPC;
+      arc_io_set_vfs(arc_vfs);
       const char *system = NULL, *save = NULL; char error[256]={0};
       enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
       static const struct retro_keyboard_callback keyboard = {arc_keyboard};
@@ -8176,9 +8291,11 @@ RETRO_API void retro_reset(void)
          arc_entry_tail_presentation(&arc_media[i], updated.short_tail_zero);
 
    free(arc_firmware);
+   arc_state_firmware_valid=false;
    arc_firmware = new_firmware;
    new_firmware = NULL;
    arc_firmware_size = new_firmware_size;
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR){arc_state_firmware_digest=arc_digest(arc_firmware,arc_firmware_size);arc_state_firmware_valid=true;}
    arc_core_options = updated;
    arc_jfd_tab_pending_notice_shown = false;
    arc_session_machine = reset_choice;
@@ -8273,10 +8390,15 @@ static void arc_send_video(const void *pixels, unsigned width, unsigned height,
           height > ARC_PRESENT_MAX_HEIGHT ||
           pitch < (size_t)width * sizeof(uint32_t) ||
           pitch > ARC_PRESENT_MAX_WIDTH * sizeof(uint32_t)) return;
-      if(pixels!=arc_present_frame)for (unsigned row = 0u; row < height; ++row)
-         memcpy((uint8_t *)arc_present_frame + (size_t)row * pitch,
+      for (unsigned row = 0u; row < height; ++row) {
+         size_t start=(size_t)row*pitch/4u,remain=arc_kind==ARC_SESSION_KIND_ARCULATOR?width:0u;
+         while(remain) {unsigned x=(unsigned)(start%4096u),n=(unsigned)(4096u-x);if(n>remain)n=(unsigned)remain;
+            arc_state_raster_mark(arc_present_rows,(unsigned)(start/4096u),x,n);start+=n;remain-=n;}
+         if (pixels != arc_present_frame)
+            memcpy((uint8_t *)arc_present_frame + (size_t)row * pitch,
                 (const uint8_t *)pixels + (size_t)row * pitch,
                 (size_t)width * sizeof(uint32_t));
+      }
       pixels = arc_present_frame;
       arc_video_pitch = pitch;
    }
@@ -8522,8 +8644,9 @@ static void arc_rpc_present_run(void)
    } while (silence_remaining);
 }
 
-RETRO_API void retro_run(void)
+static void arc_run(void)
 {
+   arc_state_boundary_frame();
    if(arc_rpc_preparation_route){
 #if defined(ARCDROID_TEST_PLANS)
       arc_test_plan_hd_begin_frame();
@@ -8792,6 +8915,7 @@ RETRO_API void retro_run(void)
    count = (size_t)arc_audio_fraction;
    arc_audio_fraction -= (long double)count;
    arc_persist_cmos();
+   arc_state_note_committed();
    unsigned old_phase = arc_osk.activation_phase;
    bool old_busy = arc_osk.busy;
    arc_osk_update(&arc_osk, &arc_inputs);
@@ -8834,12 +8958,101 @@ RETRO_API void retro_run(void)
    }
 }
 
+RETRO_API void retro_run(void)
+{
+   arc_state_inside_run=true;arc_run();arc_state_inside_run=false;
+}
+
 RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_PAL; }
 RETRO_API void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }
 RETRO_API size_t retro_get_memory_size(unsigned id) { (void)id; return 0u; }
+#if defined(ARCDROID_SAVE_STATES)
+static void arc_snapshot_visit(ArcState *s);
+/* R-SS4b: include every admitted replacement and reset policy. Frontend
+ * metadata is bounded by the reviewed static graph; record headers by the
+ * codec's item limit. Only drive 0 and its helper are mounted; one JFD is decoded. */
+static size_t arc_snapshot_session_bound(const ArcMachineDescriptor *machine)
+{
+   size_t bytes=arc_state_static_bound(arc_snapshot_static_visit);
+   if(!bytes)return 0;
+   bytes+=16u; /* Capacity trailer. */
+   bytes+=(size_t)machine->memory_kib*1024u;
+   bytes+=3u*(4096u*2048u*4u+2048u*8u);
+   bytes+=(1638400u+819200u)*520u/512u+32u; /* Drive 0 plus read-only helper. */
+   bytes+=4u*(40960u+80u*8u+16u);
+   bytes+=ARC_JFD_MAX_DECODED+ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK*(sizeof(ArcJfdSector)+128u);
+   bytes+=ARC_JFD_PDD5_SLOTS*(1024u+64u);
+   bytes+=arc_state_io_pending_bound(); /* Aggregate bounded publication ownership. */
+   /* Reset may select another profile and firmware without reallocating frontend buffers. */
+   for(unsigned m=0;m<ARC_MACHINE_COUNT;++m) {
+      const ArcMachineDescriptor *candidate=arc_machine_descriptor((ArcMachine)m);
+      if(candidate->ide_capable) {
+         bytes+=ARC_INSTALL_HD_BYTES+(ARC_INSTALL_HD_BYTES/512u)*8u+16u;break;
+      }
+   }
+   /* Source identity belongs to load-time preparation, including its cache.
+    * The first public state load must not pay for immutable media hashing. */
+   if(arc_image_index<arc_media_count&&arc_media[arc_image_index].populated) {
+      ArcMediaEntry *entry=&arc_media[arc_image_index];char path[4096];
+      if(!arc_state_media_base_path(entry,path))return 0;
+      unsigned id=arc_image_index*2u;bool writable=arc_plan.disk_writes!=ARC_DISK_WRITES_OFF;
+      arc_io_state_binding(id,entry->source,writable);arc_io_state_binding(id+1u,entry->staged,writable);
+      arc_io_state_base_path(id,path);arc_io_state_base_path(id+1u,path);
+      if(!arc_io_state_base(id,NULL,NULL)||!arc_io_state_base(id+1u,NULL,NULL))return 0;
+   }
+   return bytes;
+}
+static bool arc_snapshot_available(void)
+{
+   return !arc_state_inside_run&&arc_loaded&&arc_kind==ARC_SESSION_KIND_ARCULATOR&&arc_engine_active()&&arc_state_capacity;
+}
+RETRO_API size_t retro_serialize_size(void)
+{
+   if(!arc_snapshot_available()||arc_state_context()==RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY)return 0u;
+   return arc_state_capacity;
+}
+RETRO_API bool retro_serialize(void *data,size_t size)
+{
+   if(!arc_snapshot_available()||!data||size<40u||arc_state_context()==RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY)return false;
+   arc_state_note_committed();
+   ArcState *s=arc_state_begin(NULL,0);
+   bool okay=arc_state_run(s,arc_snapshot_visit);
+   if(okay&&arc_state_size(s)>arc_state_capacity)arc_state_fail(s,"session bound");
+   if(okay&&size<arc_state_size(s))arc_state_fail(s,"buffer too small");
+   okay=okay&&!arc_state_error(s)&&arc_state_output(s,data,size);
+   if(okay)arc_state_boundary_save();
+   if(!okay&&arc_log)arc_log(RETRO_LOG_ERROR,"Save state refused: %s\n",arc_state_error(s));
+   arc_state_end(s);return okay;
+}
+RETRO_API bool retro_unserialize(const void *data,size_t size)
+{
+   if(!arc_snapshot_available()||!data||!size)return false;
+   if(arc_state_context()==RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY) {
+      arc_message("Use single-instance run-ahead with ArcDroid.",RETRO_LOG_WARN);return false;
+   }
+   arc_state_note_committed();
+   unsigned old_width=arc_video_width,old_height=arc_video_height;double old_rate=arc_video_rate;
+   bool speculative=arc_state_io_speculative();arc_state_io_speculate(false);
+   ArcState *s=arc_state_begin(data,size);
+   bool okay=arc_state_run(s,arc_snapshot_visit);
+   okay=okay&&arc_state_commit(s);
+   if(okay){arc_state_restore_seen=true;arc_state_speculative_frame_seen=false;}
+   if(okay&&arc_environment&&(old_width!=arc_video_width||old_height!=arc_video_height||old_rate!=arc_video_rate)) {
+      struct retro_system_av_info av;retro_get_system_av_info(&av);
+      arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+   }
+   if(!okay) {
+      if(arc_log)arc_log(RETRO_LOG_WARN,"Save state refused: %s\n",arc_state_error(s));
+      arc_message("This save state does not match the running session or saved disc changes.",RETRO_LOG_WARN);
+   }
+   arc_state_io_speculate(speculative);
+   arc_state_end(s);return okay;
+}
+#else
 RETRO_API size_t retro_serialize_size(void) { return 0u; }
-RETRO_API bool retro_serialize(void *data, size_t size) { (void)data; (void)size; return false; }
-RETRO_API bool retro_unserialize(const void *data, size_t size) { (void)data; (void)size; return false; }
+RETRO_API bool retro_serialize(void *data,size_t size) { (void)data;(void)size;return false; }
+RETRO_API bool retro_unserialize(const void *data,size_t size) { (void)data;(void)size;return false; }
+#endif
 RETRO_API void retro_cheat_reset(void) {}
 RETRO_API void retro_cheat_set(unsigned index, bool enabled, const char *code) { (void)index; (void)enabled; (void)code; }
 RETRO_API bool retro_load_game_special(unsigned type, const struct retro_game_info *info, size_t count)
@@ -8961,4 +9174,65 @@ RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned count)
    for(unsigned i=0;i<count;++i)observer(journal);
    return arc_test_clock_ns()-start;
 }
+#endif
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/arcdroid_libretro_state.inc"
+#endif
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/frontend_extra.inc"
+void arc_arculator_state_visit(ArcState *state);
+void arc_arculator_static_visit(ArcState *state);
+static void arc_snapshot_static_visit(ArcState *s)
+{
+   arc_state_visit_libretro_arcdroid_libretro(s);arc_arculator_static_visit(s);
+}
+static void arc_snapshot_visit(ArcState *s)
+{
+   arc_state_visit_libretro_arcdroid_libretro(s);
+   arc_state_frontend_extra(s);
+   arc_install_store_snapshot(s,arc_hd_store);
+   arc_arculator_state_visit(s);
+}
+#endif
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/boundary.inc"
+#else
+static void arc_state_boundary_reset(void) { arc_state_io_clear();arc_state_io_forget_stores();arc_state_clear_cache(); }
+static void arc_state_note_committed(void) {}
+static void arc_state_boundary_callback(void) {}
+static void arc_state_boundary_frame(void) {}
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_seed_present_history(void)
+{ arc_present_frame[ARC_PRESENT_MAX_WIDTH*ARC_PRESENT_MAX_HEIGHT-1u]=0x0090a0b0u;arc_state_raster_mark(arc_present_rows,2047u,4095u,1u); }
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+bool arc_libretro_test_ss1_store_status(uint64_t out[4])
+{
+   memset(out,0,4u*sizeof(*out));
+   if(arc_hd_store) {
+      uint8_t sector[512];
+      if(arc_install_store_state(arc_hd_store)!=ARC_INSTALL_STORE_READY||
+         !arc_install_store_read(arc_hd_store,15456u,1u,sector))return false;
+      out[0]=arc_install_store_generation(arc_hd_store);out[1]=arc_install_store_sequence(arc_hd_store);
+      out[2]=sector[0];out[3]=arc_crc32(arc_install_store_image(arc_hd_store),ARC_INSTALL_HD_BYTES);return true;
+   }
+   if(arc_media_count&&arc_media[0].jfd.decoded) {
+      ArcJfdImage *image=&arc_media[0].jfd;ArcJfdView view;
+      if(!image->overlay||image->overlay->damaged||!arc_jfd_effective_sector(image,0,0,false,&view)||!view.data)return false;
+      out[0]=image->overlay->generation;out[2]=view.data[0];out[3]=arc_crc32(view.data,view.sector.size);return true;
+   }
+   void *bytes=NULL;size_t count=0;
+   if(!arc_media_count||!arc_io_read_all(arc_media[0].staged,&bytes,&count))return false;
+   out[2]=count>100u*1024u?((uint8_t*)bytes)[100u*1024u]:0;out[3]=arc_crc32(bytes,count);free(bytes);return true;
+}
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_ss1_persist_cmos(void) { arc_persist_cmos(); }
 #endif

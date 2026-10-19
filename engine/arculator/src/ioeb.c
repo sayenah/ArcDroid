@@ -97,3 +97,8 @@ void ioeb_init()
 	ioeb_clock_select = 0;
 	has_joystick_ports = !strcmp(machine, "a3010");
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/ioeb_state.inc"
+#endif

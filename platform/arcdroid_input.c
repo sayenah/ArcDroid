@@ -104,3 +104,7 @@ void get_mouse_deltas(int *x, int *y, int *buttons)
    mouse_get_mickeys(x, y);
    if (buttons) *buttons = arc_mouse_buttons;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/arcdroid_input_state.inc"
+#endif

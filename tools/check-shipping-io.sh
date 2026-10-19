@@ -41,6 +41,7 @@ core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arculator_backend.c
+engine/arculator_state.c
 engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
@@ -100,6 +101,11 @@ platform/arcdroid_joystick.c
 platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
+libretro/arc_state.c
+libretro/arc_state_io.c
+libretro/arc_state_frontier.inc
+libretro/arc_state_raster.inc
+engine/state-generated/*.inc
 libretro/arc_lock.c
 libretro/arc_session.c
 libretro/install_store.c

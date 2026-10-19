@@ -66,6 +66,12 @@ int fullborders,noborders;
 int dblscan;
 
 
+/* ArcDroid modification (2026-10-18): track written raster rows for SS-1 compact spans. */
+#if defined(ARCDROID_SAVE_STATES)
+#include "arc_state.h"
+static uint16_t arc_raster_rows[2048][2];
+#endif
+
 void clear(BITMAP *b)
 {
 	memset(b->dat, 0, b->w * b->h * 4);
@@ -580,6 +586,9 @@ void initvid()
 	vidc.in_display = vidc.displayon = vidc_displayon = 0;
 	vidc.addr = vidc.caddr = 0;
 	buffer = create_bitmap(4096, 2048);
+#if defined(ARCDROID_SAVE_STATES)
+   memset(arc_raster_rows,0,sizeof(arc_raster_rows));
+#endif
 	vidc.line = 0;
 	vidc.clock = 24000;
 }
@@ -627,6 +636,10 @@ int getvidcwidth()
 void archline(uint8_t *bp, int x1, int y, int x2, uint32_t col)
 {
 	int x;
+#if defined(ARCDROID_SAVE_STATES)
+   if(buffer&&(uintptr_t)bp>=(uintptr_t)buffer->dat&&(uintptr_t)bp-(uintptr_t)buffer->dat<4096u*2048u*4u&&x1>=0&&x2>=x1)
+      arc_state_raster_mark(arc_raster_rows,(unsigned)((bp-buffer->dat)/(4096u*4u)),(unsigned)x1,(unsigned)(x2-x1+1));
+#endif
 	for (x=x1;x<=x2;x++)
 		((uint32_t *)bp)[x]=col;
 }
@@ -772,6 +785,9 @@ static void vidc_poll(void *__p)
 		else
 			bp = (uint8_t *)buffer->line[l];
 
+#if defined(ARCDROID_SAVE_STATES)
+      arc_state_raster_mark(arc_raster_rows,(unsigned)((bp-buffer->dat)/(4096u*4u)),0,4096u);
+#endif
 		if (!memc_videodma_enable)
 		{
 			if (vidc.borderon)
@@ -1518,3 +1534,17 @@ void vidc_debug_print(char *s)
 		   stereo_images[stereoimages[4]], stereo_images[stereoimages[5]],
 		   stereo_images[stereoimages[6]], stereo_images[stereoimages[7]]);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/vidc_state.inc"
+#include "../../state-generated/video_extra.inc"
+void arc_state_visit_engine_arculator_src_vidc_extra(ArcState *s) { arc_state_video_extra(s); }
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS) && defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): authored retained-raster history fixture,
+ * representing pixels left outside a subsequently smaller display mode. */
+void arc_engine_test_seed_raster_history(void)
+{ if(buffer&&buffer->dat)((uint32_t*)buffer->dat)[4096u*2048u-1u]=0x00102030u;arc_state_raster_mark(arc_raster_rows,2047u,4095u,1u); }
+#endif

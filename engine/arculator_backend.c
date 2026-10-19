@@ -657,6 +657,13 @@ static bool arc_test_advance_timer(void)
    return true;
 }
 
+bool arc_engine_test_advance_timers(unsigned count)
+{
+   if(!arc_machine_live)return false;
+   for(unsigned i=0;i<count;++i)if(!arc_test_advance_timer())return false;
+   return true;
+}
+
 bool arc_engine_test_newio_dir(bool seek, uint8_t *value)
 {
    if (!value || !arc_test_newio_live()) return false;
@@ -1352,3 +1359,7 @@ const ArcEngineBackendOps arc_arculator_backend = {
    .faulted = arc_arculator_faulted,
    .active = arc_arculator_active,
 };
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "state-generated/arculator_backend_state.inc"
+#endif

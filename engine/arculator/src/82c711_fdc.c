@@ -1081,3 +1081,8 @@ int c82c711_fdc_idle(void)
 	       !fdc->data_ready && !fdc->written && !fdc->inread &&
 	       !fdc->format_state && !fdc->timer.enabled;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/82c711_fdc_state.inc"
+#endif

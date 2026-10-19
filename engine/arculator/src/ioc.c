@@ -335,3 +335,8 @@ void ioc_debug_print(char *s)
 		   ioc.timerl[0], ioc.timerl[1], ioc.timerl[2], ioc.timerl[3],
 		   ioc.ctrl);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/ioc_state.inc"
+#endif

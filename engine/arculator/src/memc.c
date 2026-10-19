@@ -310,3 +310,8 @@ void memc_debug_print_cam(void)
 		debug_out("\n");
 	}
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/memc_state.inc"
+#endif

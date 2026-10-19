@@ -563,3 +563,94 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    }
    return true;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "arc_state.h"
+/* Read the immutable publication envelope for an unmounted prepared member.
+ * Full descriptor/eligibility validation still happens on insertion. */
+bool arc_jfd_store_frontier_base(const char *save_directory,const ArcDigest *base,
+                                 const char sha256[65],uint64_t *generation)
+{
+   *generation=0;ArcJfdStore store={0};
+   if(!base||!hex_bytes(base->sha1,store.sha1,20u)||!hex_bytes(sha256,store.sha256,32u))return false;
+   int n=snprintf(store.directory,sizeof(store.directory),"%s/arcdroid/jfd",save_directory);
+   if(n<0||(size_t)n>=sizeof(store.directory))return false;
+   if(!arc_io_existing_directory(store.directory))return true;
+   uint64_t generations[2]={0,0};
+   for(unsigned slot=0;slot<2u;++slot) {
+      n=snprintf(store.slot[slot],sizeof(store.slot[slot]),"%s/%s.%c",store.directory,base->sha1,slot?'b':'a');
+      if(n<0||(size_t)n>=sizeof(store.slot[slot]))return false;
+      bool present=false;if(!slot_present(&store,slot,&present))return false;if(!present)continue;
+      uint8_t *bytes=NULL;size_t length=0;
+      bool good=arc_io_read_all_limit(store.slot[slot],(void**)&bytes,&length,STORE_CAP,NULL);
+      if(good)good=length>=HEADER_SIZE+CHECKSUM_SIZE&&!memcmp(bytes,"AJWO",4u)&&get32(bytes+4)==STORE_VERSION&&
+         get64(bytes+8)==base->size&&!memcmp(bytes+16,store.sha1,20u)&&!memcmp(bytes+36,store.sha256,32u)&&
+         get64(bytes+68)!=0&&get32(bytes+length-4)==arc_crc32(bytes,length-4u);
+      if(good) {
+         uint32_t count=get32(bytes+76),last=0;size_t cursor=HEADER_SIZE;
+         if(count>ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK+ARC_JFD_PDD5_SLOTS)good=false;
+         for(uint32_t i=0;good&&i<count;++i) {
+            if(cursor>length-4u||length-4u-cursor<RECORD_SIZE){good=false;break;}
+            unsigned track=get16(bytes+cursor),kind=bytes[cursor+2],ordinal=get16(bytes+cursor+3),size=get16(bytes+cursor+7);
+            uint32_t key=(track<<16u)|(kind<<15u)|ordinal;
+            if(track>=ARC_JFD_MAX_TRACK_SIDES||kind>1u||(i&&key<=last)||!size||size>1024u||
+               (kind==0u&&ordinal>=ARC_JFD_MAX_SECTORS_PER_TRACK)||
+               (kind==1u&&(track>=ARC_JFD_PDD5_TRACKS||ordinal>=ARC_JFD_PDD5_IDS||size!=1024u))||size>length-4u-cursor-RECORD_SIZE)good=false;
+            else {cursor+=RECORD_SIZE+size;last=key;}
+         }
+         if(cursor!=length-4u)good=false;
+         if(good)generations[slot]=get64(bytes+68);
+      }
+      free(bytes);if(!good)return false;
+   }
+   if(generations[0]&&generations[0]==generations[1])return false;
+   *generation=generations[0]>generations[1]?generations[0]:generations[1];return true;
+}
+bool arc_jfd_store_frontier(const ArcJfdImage *image,uint64_t *generation)
+{
+   *generation=0;
+   if(!image->overlay||!image->overlay->store)return true;
+   const ArcJfdStore *store=image->overlay->store;
+   for(unsigned i=0;i<2u;++i) {
+      bool present=false;if(!slot_present(store,i,&present))return false;
+      if(!present)continue;
+      uint8_t *bytes=NULL;size_t size=0;ArcJfdRecords *records=NULL;
+      uint64_t candidate=0;unsigned count=0;const char *reason=NULL;
+      bool good=arc_io_read_all_limit(store->slot[i],(void**)&bytes,&size,STORE_CAP,NULL)&&
+         snapshot_parse(image,store,bytes,size,&records,&candidate,&count,&reason);
+      free(bytes);records_free(records,image->sector_count);
+      if(!good)return false;
+      if(candidate>*generation)*generation=candidate;
+   }
+   return true;
+}
+void arc_jfd_state_binding(ArcState *s,const char *name,ArcJfdOverlay *overlay,
+                            const void *decoded,size_t bytes,
+                            const char *save_directory,unsigned image_number)
+{
+   if(!overlay)return;
+   ArcJfdStore *store=arc_state_heap(s,name,&overlay->store,
+                                    sizeof(ArcJfdStore),sizeof(ArcJfdStore));
+   if(!store||!arc_state_pass(s))return;
+   arc_state_object(s,name);
+   arc_state_value(s,&store->active,sizeof(store->active));
+   if(arc_state_loading(s)) {
+      char sha1_hex[41],sha256_hex[65];
+      arc_sha1_hex(decoded,bytes,sha1_hex);arc_sha256_hex(decoded,bytes,sha256_hex);
+      if(!hex_bytes(sha1_hex,store->sha1,20u)||!hex_bytes(sha256_hex,store->sha256,32u)) {
+         arc_state_fail(s,"JFD binding");return;
+      }
+      int n=snprintf(store->directory,sizeof(store->directory),"%s/arcdroid/jfd",save_directory);
+      if(n<0||(size_t)n>=sizeof(store->directory)) {arc_state_fail(s,"JFD path");return;}
+      n=snprintf(store->slot[0],sizeof(store->slot[0]),"%s/%s.a",store->directory,sha1_hex);
+      if(n<0||(size_t)n>=sizeof(store->slot[0])) {arc_state_fail(s,"JFD path");return;}
+      n=snprintf(store->slot[1],sizeof(store->slot[1]),"%s/%s.b",store->directory,sha1_hex);
+      if(n<0||(size_t)n>=sizeof(store->slot[1])) {arc_state_fail(s,"JFD path");return;}
+      n=snprintf(store->candidate,sizeof(store->candidate),"%s/%s.tmp",store->directory,sha1_hex);
+      if(n<0||(size_t)n>=sizeof(store->candidate)) {arc_state_fail(s,"JFD path");return;}
+      store->image_number=image_number;
+      overlay->commit=store_commit;overlay->commit_created=store_commit_created;
+      if(store->active>1u)arc_state_fail(s,"JFD slot");
+   }
+}
+#endif

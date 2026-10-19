@@ -64,3 +64,7 @@ void arc_platform_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frame
    if (underrun_frames) *underrun_frames = arc_audio_underrun_frames;
    if (overrun_frames) *overrun_frames = arc_audio_overrun_frames;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/arcdroid_sound_state.inc"
+#endif
