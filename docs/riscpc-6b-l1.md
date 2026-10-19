@@ -483,3 +483,18 @@ Run C's variant cores (way0-hint, way0-mirror), the same procedure, workloads an
 | ldm-stm8 (guard) | −2.96 % / −2.27 % | −2.00 % / −2.30 % | 0.50 % / 0.50 % |
 
 Both candidates qualify (031 gain beyond band in both orders; no guard regression — both guards now improve). The 031 gains lie within each other's band₅₀, so the tie rule selects **way0-hint** (fewer mechanisms). **SA-110 gate: way0-hint.** The rule-4 confirmation run (L1 off against the way0-hint core on hot, warm, stream-sa110, stream-arm710, ldm-stm8 and 031) started on the Odin3 at 21:40 on 2026-10-18.
+
+## Rule-4 confirmation run (S69, recorded by Fable)
+
+Odin3, L1 off (every cache linear) against the way0-hint core (run C variant cores; the production default timing object is identical to it), all six frozen workloads, two six-run orders each, 120 s idle, no run flagged by the clock-step rule (private `.work/s69/l1conf/`). Δ = (B − A)/A, p50 / p95:
+
+| Workload | Order 1 | Order 2 | Band₅₀ / band₉₅ (D-201) | Outcome |
+|---|---|---|---|---|
+| 031 | −12.05 % / −12.24 % | −11.99 % / −11.62 % | 0.80 % / 0.62 % | gain |
+| hot | +0.47 % / +0.34 % | +0.85 % / +1.13 % | 0.90 % / 0.99 % | orders disagree (retest) |
+| warm | −2.74 % / −2.58 % | −2.62 % / −3.06 % | 0.50 % / 0.50 % | no regression |
+| stream-sa110 | +0.76 % / +0.17 % | +1.00 % / +0.55 % | 0.50 % / 0.50 % | **regression** |
+| stream-arm710 | +0.88 % / −0.05 % | +0.82 % / −0.06 % | 0.78 % / 0.50 % | **regression** |
+| ldm-stm8 | −1.70 % / −1.77 % | −1.94 % / −1.76 % | 0.50 % / 0.50 % | no regression |
+
+**Outcome by the frozen rule: not confirmed** (regressions on stream-sa110 and stream-arm710 in both orders; hot to be retested). L1 does not merge at this head. **Fable's ruling (run F):** the cost is consistent with QA S-2 (hint and mirror maintenance on every fill and invalidate for gates that never read them) and with the hint check after a way-0 miss on miss-heavy streams. Run F removes all hint and mirror maintenance for linear gates (ARM710, ARM7500, and any linear SA-110 configuration), keeps exactness, and minimises the way-0-miss path cost on SA-110 without changing its lookup order; then a fresh rule-4 confirmation run on all six workloads (the frozen rule and bands unchanged; this run's data is not reused).
