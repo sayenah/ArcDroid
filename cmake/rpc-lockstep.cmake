@@ -145,6 +145,7 @@ if(TARGET arcdroid_rpclockstep_libretro)
   list(FILTER rpc_lockstep_ci_tests EXCLUDE REGEX "^rpc-lockstep-(profile-counts|site-counts-)")
   set_tests_properties(${rpc_lockstep_ci_tests} PROPERTIES LABELS rpc-lockstep-emitter-ci)
   if(ARCDROID_RPC_LOCKSTEP_LOCAL_TESTS)
+    get_property(rpc_lockstep_before_local DIRECTORY PROPERTY TESTS)
     # Keep each existing golden as a separately bounded CTest item. No committed
     # vector is regenerated; runner checks additionally compare complete stdout.
     set(RPC_LOCKSTEP_GOLDENS rpc-cpu-trace rpc-cmos-trace rpc-plan-devices)
@@ -155,11 +156,42 @@ if(TARGET arcdroid_rpclockstep_libretro)
     list(APPEND RPC_LOCKSTEP_GOLDENS rpc-factory-capture-2 rpc-factory-capture-3)
     foreach(density IN ITEMS baseline every-instruction full-audit)
       foreach(golden IN LISTS RPC_LOCKSTEP_GOLDENS)
+        # Completed local goldens reached 2829.44 s in that nightly. Keep
+        # their subprocess budget below the existing 6060 s CTest limit,
+        # with >2x that measured maximum (W4), including dense AV model 3.
+        set(rpc_lockstep_golden_timeout 6000)
+        set(rpc_lockstep_ctest_timeout 6060)
+        if(golden MATCHES "^rpc-plan-av-[012]$")
+          # W10b / nightly 39258331010, -j4: six subprocess timeouts at
+          # 3600.40--3600.44 s (completion unknown). W4: next whole minute
+          # above twice the censored maximum, plus one minute for the wrapper.
+          set(rpc_lockstep_golden_timeout 7260)
+          set(rpc_lockstep_ctest_timeout 7320)
+        endif()
         add_test(NAME rpc-lockstep-golden-${density}-${golden} COMMAND "${Python3_EXECUTABLE}" -B
           "${RPC_LOCKSTEP_PY}/rpc_lockstep_goldens_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
           $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpclockstep_libretro>
-          ${density} --only ${golden})
-        set_tests_properties(rpc-lockstep-golden-${density}-${golden} PROPERTIES TIMEOUT 6060)
+          ${density} --only ${golden} --timeout ${rpc_lockstep_golden_timeout})
+        set_tests_properties(rpc-lockstep-golden-${density}-${golden} PROPERTIES
+          TIMEOUT ${rpc_lockstep_ctest_timeout})
+      endforeach()
+    endforeach()
+    # Label the entire option's registration delta, independently of the plan:
+    # an added local test gets no shard until explicitly placed in the manifest.
+    get_property(rpc_lockstep_local_tests DIRECTORY PROPERTY TESTS)
+    list(REMOVE_ITEM rpc_lockstep_local_tests ${rpc_lockstep_before_local})
+    set_property(TEST ${rpc_lockstep_local_tests} APPEND PROPERTY LABELS rpc-lockstep-local)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpc-lockstep-local-shards.json")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpc-lockstep-local-shards.json" rpc_lockstep_shard_plan)
+    string(JSON rpc_lockstep_shard_count LENGTH "${rpc_lockstep_shard_plan}" shards)
+    math(EXPR rpc_lockstep_last_shard "${rpc_lockstep_shard_count} - 1")
+    foreach(shard RANGE ${rpc_lockstep_last_shard})
+      string(JSON rpc_lockstep_shard_size LENGTH "${rpc_lockstep_shard_plan}" shards ${shard})
+      math(EXPR rpc_lockstep_last_test "${rpc_lockstep_shard_size} - 1")
+      foreach(index RANGE ${rpc_lockstep_last_test})
+        string(JSON test GET "${rpc_lockstep_shard_plan}" shards ${shard} ${index})
+        set_property(TEST ${test} APPEND PROPERTY LABELS rpc-lockstep-local-${shard})
       endforeach()
     endforeach()
   endif()
