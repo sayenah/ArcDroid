@@ -9,7 +9,8 @@ scenarios, with callback failure before execution and termination after it.
 Boot phases reuse store helpers; every phase still has selected cuts. Trace
 totals, pinned labels and complete class coverage are checked so drift fails.
 Both profiles probe cleanup from killed chunk and sealed candidates. Sanitizer
-runs two isolated cases concurrently; full remains serial.
+runs two isolated cases concurrently; full remains serial within each shard.
+Shards partition every mode's raw cut list, including path-dependent prefixes.
 """
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -26,7 +27,10 @@ from rpc_fault_profile import checked
 parser=argparse.ArgumentParser()
 parser.add_argument('binary')
 parser.add_argument('--profile',choices=('full','sanitizer'),default='full')
+parser.add_argument('--shard',type=int,nargs=2,metavar=('INDEX','COUNT'),default=(0,1))
 args=parser.parse_args()
+if not 0 <= args.shard[0] < args.shard[1]:
+    parser.error('shard requires 0 <= INDEX < COUNT')
 profiles=json.loads(Path(__file__).with_name('rpc_boot_faults_profile.json').read_text())
 
 
@@ -105,6 +109,9 @@ def inject(system, save, mode, cut):
 
 
 def exercise(cuts, action):
+    index,count=args.shard
+    cuts=cuts[index::count]
+    print(f'{action.__name__} mode={mode} shard={index}/{count} raw_cuts='+','.join(map(str,cuts)),flush=True)
     if args.profile=='sanitizer':
         # Fixed work, bounded concurrency; each case owns a separate save tree.
         with ThreadPoolExecutor(max_workers=2) as workers:
@@ -112,6 +119,7 @@ def exercise(cuts, action):
     else:
         for cut in cuts:
             action(cut)
+    return len(cuts)
 
 
 def live_path(root, mode, cut):
@@ -134,8 +142,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
             # Interruption restarts from scratch; a complete root becomes a no-op.
             run(system,save);compare(save)
             shutil.rmtree(save)
-        exercise(population_cuts[mode],population_case)
-        print(f'rpc-boot-{mode}: {len(population_cuts[mode])} population, readback, seal/receipt, publish and retirement points pass',flush=True)
+        exercised=exercise(population_cuts[mode],population_case)
+        print(f'rpc-boot-{mode}: {exercised} population, readback, seal/receipt, publish and retirement points pass',flush=True)
     # Preserve the original append matrix; supplement it with two real complete
     # rotations, including replacement of retained roots/chunks and cleanup.
     for scenario in ('checkpoint','rotation'):
@@ -149,8 +157,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
                 run(system,save,mode='verify');compare(save)
                 run(root/'missing-system',save,mode='reopen');compare(save)
                 shutil.rmtree(save)
-            exercise(checkpoint_cuts[mode.rsplit('-',1)[-1]],checkpoint_case)
-            print(f'rpc-boot-{mode}: {len(checkpoint_cuts[mode.rsplit('-',1)[-1]])} guest-write, rotation, publication, retirement and cleanup points pass',flush=True)
+            exercised=exercise(checkpoint_cuts[mode.rsplit('-',1)[-1]],checkpoint_case)
+            print(f'rpc-boot-{mode}: {exercised} guest-write, rotation, publication, retirement and cleanup points pass',flush=True)
     for scenario in ('recovery-chunk','recovery-seal'):
         seed_cut=profiles[scenario]['seed_cut']
         seed=root/scenario;seed.mkdir()
@@ -168,5 +176,5 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
                 require(state=={'published':0,'receipt':0},f'{scenario}: partial root')
                 run(system,save);compare(save)
                 shutil.rmtree(save)
-            exercise(recovery_cuts[mode.rsplit('-',1)[-1]],recovery_case)
-            print(f'rpc-boot-{scenario}-{mode}: {len(recovery_cuts[mode.rsplit('-',1)[-1]])} cleanup points pass',flush=True)
+            exercised=exercise(recovery_cuts[mode.rsplit('-',1)[-1]],recovery_case)
+            print(f'rpc-boot-{scenario}-{mode}: {exercised} cleanup points pass',flush=True)

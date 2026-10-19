@@ -3129,10 +3129,19 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     set(RPC_HD_PROCESS_PROFILE sanitizer)
     set(RPC_HD_PROCESS_TIMEOUT 900)
   endif()
-  add_test(NAME rpc-hd-store-process COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_process_test.py" $<TARGET_FILE:rpc_hd_process>
-    --profile "${RPC_HD_PROCESS_PROFILE}")
-  set_tests_properties(rpc-hd-store-process PROPERTIES TIMEOUT "${RPC_HD_PROCESS_TIMEOUT}" RUN_SERIAL TRUE)
+  # Each scenario owns a TemporaryDirectory. Preserve all four scenarios and
+  # the parent's W4 limit; independent CTest entries can run concurrently.
+  foreach(scenario IN ITEMS checkpoint population creation interleaved)
+    add_test(NAME rpc-hd-store-process-${scenario} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_process_test.py" $<TARGET_FILE:rpc_hd_process>
+      ${scenario} --profile "${RPC_HD_PROCESS_PROFILE}")
+    set_tests_properties(rpc-hd-store-process-${scenario} PROPERTIES
+      TIMEOUT "${RPC_HD_PROCESS_TIMEOUT}" LABELS slow)
+    if(ARCDROID_SANITIZERS)
+      # The sanitizer driver itself runs two isolated cases at a time.
+      set_property(TEST rpc-hd-store-process-${scenario} PROPERTY PROCESSORS 2)
+    endif()
+  endforeach()
   add_executable(rpc_boot_test tests/rpc_boot_test.c libretro/rpc_boot.c
     libretro/rpc_boot_zip.c libretro/rpc_hd_store.c libretro/arc_io.c libretro/install_store.c)
   target_include_directories(rpc_boot_test PRIVATE core engine libretro libretro/include third_party/zlib)
@@ -3156,9 +3165,18 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_budget_test.py" $<TARGET_FILE:rpc_boot_test>
     "${RPC_BOOT_FAULTS_PROFILE}")
   set_tests_properties(rpc-boot-budget PROPERTIES TIMEOUT 600)
-  add_test(NAME rpc-boot-faults COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>
-    --profile "${RPC_BOOT_FAULTS_PROFILE}")
+  # Partition raw fault/kill cuts in every scenario, after the unchanged
+  # profile checks. Each shard owns its fixture, baseline and live trees.
+  foreach(shard RANGE 0 7)
+    add_test(NAME rpc-boot-faults-${shard} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>
+      --profile "${RPC_BOOT_FAULTS_PROFILE}" --shard ${shard} 8)
+    set_tests_properties(rpc-boot-faults-${shard} PROPERTIES
+      TIMEOUT "${RPC_BOOT_FAULTS_TIMEOUT}" LABELS slow)
+    if(ARCDROID_SANITIZERS)
+      set_property(TEST rpc-boot-faults-${shard} PROPERTY PROCESSORS 2)
+    endif()
+  endforeach()
   # R2c run Q precedent: ordinary builds kill all writer mutants; sanitizers
   # retain the unmutated package regressions and every fault boundary class.
   if(NOT ARCDROID_SANITIZERS)
@@ -3169,7 +3187,6 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     set_tests_properties(rpc-boot-mutants PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
   endif()
   set_tests_properties(rpc-boot-packages PROPERTIES TIMEOUT 600)
-  set_tests_properties(rpc-boot-faults PROPERTIES TIMEOUT "${RPC_BOOT_FAULTS_TIMEOUT}" RUN_SERIAL TRUE)
   add_executable(rpc_hd_formatter_test tests/rpc_hd_formatter_test.c)
   target_include_directories(rpc_hd_formatter_test PRIVATE core)
   target_link_libraries(rpc_hd_formatter_test PRIVATE arcdroid_core)
@@ -3208,10 +3225,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     DEPENDS tests/rpc_hd_retroarch_rom.py tests/rpc_video_rom.py tests/generate_fixtures.py VERBATIM)
   add_custom_target(rpc-hd-retroarch-fixtures ALL DEPENDS "${RPC_HD_RETROARCH_DIR}/hd.arcplan")
   add_dependencies(rpc_runner rpc-hd-retroarch-fixtures)
+  set(RPC_HD_RETROARCH_TIMEOUT 600)
   add_test(NAME rpc-hd-retroarch-guest COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
-    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
-  set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}"
+    "${RPC_HD_RETROARCH_TIMEOUT}")
+  set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT ${RPC_HD_RETROARCH_TIMEOUT})
   set(RPC_HD_COST_PROFILE)
   if(ARCDROID_SANITIZERS)
     list(APPEND RPC_HD_COST_PROFILE --sanitizer)
@@ -3422,3 +3441,19 @@ if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
     -include ${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h)
 endif()
 include(cmake/rpc-lockstep.cmake)
+
+# W10 tiers: label mutation/fault matrices and long integration workloads.
+# Apply after all registration, including the optional profiling tests.
+# Labels affect selection only; assertions, profiles and W4 limits stay intact.
+if(BUILD_TESTING)
+  get_property(arcdroid_ci_tests DIRECTORY PROPERTY TESTS)
+  foreach(test IN LISTS arcdroid_ci_tests)
+    if(test MATCHES "(mutants|mutations|faults)" OR
+        test STREQUAL "rpc-lockstep-sensitivity-variants" OR
+        test STREQUAL "rpc-profile-lockstep-coverage" OR
+        test MATCHES "^rpc-lockstep-(consistency-.*|emitter-(reach|mutants)|compare-mutants-[0-3]|cache(-.*)?|corpus-[0-3]|golden-.*)$" OR
+        test MATCHES "^(native-hd-(guest|stress)-process|native-hard-disc-store|power-on-shift-harness|jfd-tab-.*-process|libretro-harness|rpc-memory-long-.*|rpc-session-frontend-switch|rpc-endpoint-late-arm|rpc-floppy-guest|rpc-hot-throughput|rpc-memory-timing-[012]|rpc-hash-identity|rpc-boot-packages|rpc-hd-store-(process-.*|bounds))$")
+      set_property(TEST ${test} APPEND PROPERTY LABELS slow)
+    endif()
+  endforeach()
+endif()

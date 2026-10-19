@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract counterexamples, sensitivity and constant buffering. GPL-2.0-only."""
 import copy
+import argparse
 import importlib.util
 import io
 import json
@@ -483,10 +484,17 @@ def cli_checks():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--stress', action='store_true')
+    parser.add_argument('--mutants', action='store_true')
+    parser.add_argument('--shard', type=int, nargs=2, metavar=('INDEX', 'COUNT'), default=(0, 1))
+    args = parser.parse_args()
+    if not 0 <= args.shard[0] < args.shard[1]:
+        parser.error('shard requires 0 <= INDEX < COUNT')
     policy_encoding_check()
-    print('comparator cases:', suite(stress='--stress' in sys.argv))
+    print('comparator cases:', suite(stress=args.stress))
     cli_checks()
-    if '--mutants' in sys.argv:
+    if args.mutants:
         from rpc_lockstep_compare_mutants import mutations, target_cases
         original = (ROOT/'tools/rpc_lockstep_compare.py').read_text(encoding='utf-8')
         schema, sh = reference.load_schema()
@@ -500,7 +508,8 @@ def main():
                 # other malformed controls accept any Invalid, as in suite().
                 return ('invalid', str(error) if label.startswith('qa-pointer-') else None)
         survivors = []
-        for label, old, new in mutations():
+        index, count = args.shard
+        for label, old, new in list(mutations())[index::count]:
             require(original.count(old) == 1, ('mutant anchor not unique', label))
             module = type(reference)('lockstep_mutant')
             module.__file__ = str(ROOT/'tools/rpc_lockstep_compare.py')
