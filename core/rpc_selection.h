@@ -50,6 +50,7 @@ typedef struct {
 } ArcRpcSelection;
 
 const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_catalogue(size_t *count);
+const ArcRpcFirmwareFingerprint *arc_riscpc_production_catalogue(size_t *count);
 const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_recognize(const ArcDigest *digest,
    const ArcRpcFirmwareFingerprint *catalogue, size_t count);
 ArcRpcCompatibility arc_riscpc_compatibility(bool extended, uint32_t flags);

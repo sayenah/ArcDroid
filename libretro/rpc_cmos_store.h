@@ -65,6 +65,8 @@ bool arc_riscpc_cmos_store_seed(ArcRpcCmosStore *, const uint8_t[240], char *, s
 unsigned arc_riscpc_cmos_layout(const char *name);
 bool arc_riscpc_cmos_hex(const char *text, size_t length, char *out);
 bool arc_riscpc_cmos_checksum(const uint8_t payload[240]);
+/* R-Y1: requested preparation sessions only; physical C0/C1 and 3F. */
+void arc_riscpc_cmos_session_year(uint8_t payload[240], unsigned year);
 /* Generation only: preserve every bit except logical 135 bits 0..2 and checksum. */
 bool arc_riscpc_cmos_two_floppies(unsigned layout, uint8_t payload[240]);
 void arc_riscpc_cmos_required(unsigned layout, uint8_t mask[32]);

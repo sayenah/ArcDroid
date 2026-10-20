@@ -37,7 +37,8 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     assert r.returncode==0 and not list(save.iterdir()),r.stderr
     if kind=='writer':
         # Independently encode an ordinary record with an intentionally invalid
-        # guest checksum: persistence must retain it, never normalise/repair.
+        # guest checksum: the envelope store retains arbitrary payloads;
+        # R-Y1 refreshes the live year and checksum at requested-session start.
         digest=hashlib.sha256((roms/'writer.rom').read_bytes()).digest()
         b=bytearray(512);b[:8]=b'ARCRPCM1';struct.pack_into('<IIIIQ',b,8,1,512,model+1,0x10003,1)
         b[32:72]=b'a'*40;b[72:104]=digest;b[104:344]=bytes([77])*240
@@ -46,7 +47,9 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         run('writer');records=list(base.glob('*.0'))+list(base.glob('*.1'))
         latest=max(records,key=lambda p:struct.unpack_from('<Q',p.read_bytes(),24)[0])
         final=record(latest,b'ARCRPCM1',roms/'writer.rom','a'*40)
-        expected=bytearray(240);expected[47]=1;assert final[104:344]==expected and not (base/'defaults').exists()
+        # The final reopen refreshes the year before any writer instruction.
+        expected=bytearray(240);expected[177]=20;expected[47]=21
+        assert final[104:344]==expected and not (base/'defaults').exists()
         # Keep one valid recovery slot and a corrupt published peer. A live
         # guest may run from the former, but refusal is logged once per load.
         for p in records:p.unlink()
@@ -66,7 +69,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     elif kind in ['empty','scatter','incomplete','late','badchecksum']:
         run('negative');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     else:
-        run();base=save/'arcdroid/cmos-riscpc';slots=list(base.glob('*.1'));defaults=list((base/'defaults').glob('*.1'))
+        run();base=save/'arcdroid/cmos-riscpc';slots=[max([*base.glob('*.0'),*base.glob('*.1')],key=lambda p:struct.unpack_from('<Q',p.read_bytes(),24)[0])];defaults=list((base/'defaults').glob('*.1'))
         assert len(slots)==len(defaults)==1
         b=record(defaults[0],b'ARCRPCD1',roms/(kind+'.rom'))
         expected=bytearray(240);expected[183]=2;expected[47]=3
@@ -79,7 +82,9 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         if kind=='ro350':mask=mask[:24]+b'\xf3'+mask[25:]
         assert b[416:448]==mask and b[448:480]==hashlib.sha256(expected).digest() and not any(b[480:508])
         ordinary=record(slots[0],b'ARCRPCM1',roms/(kind+'.rom'),'a'*40)
-        assert ordinary[104:344]==expected and not any(ordinary[344:508])
+        # R-Y1: shared defaults stay exact; session records refresh C0/C1/3F.
+        session_expected=bytearray(expected);session_expected[177]=20;session_expected[47]=23
+        assert ordinary[104:344]==session_expected and not any(ordinary[344:508])
         if profile=="full":
             # Identical firmware/model/content/epoch and procedure at one versus
             # eight frames per call must produce the entire same default record.

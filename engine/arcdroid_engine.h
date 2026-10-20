@@ -122,6 +122,7 @@ bool arc_engine_active(void);
  * attachment stops/detaches partial ownership; a per-drive mount failure only
  * empties that drive, preserving the running-session insertion contract. */
 bool arc_engine_rpc_start_begin(unsigned,const uint8_t *,size_t,const uint8_t[256],uint64_t,bool,char *,size_t);
+bool arc_engine_rpc_calendar_year(uint64_t epoch,unsigned *year);
 bool arc_engine_rpc_start_step(bool *,char *,size_t);
 bool arc_engine_rpc_start(unsigned model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, bool factory, char *, size_t);

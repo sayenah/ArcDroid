@@ -108,6 +108,18 @@ so the strict host-service guard can distinguish them without exceptions.
 Run C2 supplies epoch plus scheduler time from the real session; reset retains
 volatile CMOS and elapsed RTC time. D2 adds factory capture below.
 
+R3d-4b ruling R-Y1 makes one exception at the preparation boundary, outside
+the device: every ordinary-route or persisted-plan requested session patches
+physical CMOS `0xC0` (binary year modulo 100), `0xC1` (binary century) and
+`0x3F` (the store's checksum, one plus all other payload bytes modulo 256)
+before engine construction and any guest instruction. The year comes from
+the session's already captured local-calendar epoch, with no second host-clock
+read. This is the only session seed patch. Factory/generation captures and
+bare v1 plans retain exact seeds; shared defaults and procedure revision 4
+are unchanged. Running-session reset retains the guest's year; a player-set
+year is replaced at the next load. The PCF8583 still supplies only year modulo
+four, and the guest kernel owns in-session year rollover.
+
 ## Exclusions and verification
 
 Excluded: Qt/GUI; host threads; network/slirp/TAP; HostFS; CD-ROM/ISO; dynarec;

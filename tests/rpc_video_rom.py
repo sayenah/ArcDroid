@@ -32,7 +32,8 @@ def program(model,width,height,depth,hz,scenario):
     g=Guest();dram=model==3 or scenario in ('ring','packed','unaligned','hot-dram');base=0x10000000 if dram else 0x02000000
     g.fill(base,2048,0x76543210 if scenario=='unaligned' else 0x55555555)
     g.fill(base+4096,1024,0xaaaaaaaa)
-    if scenario=='last':g.fill(base+2048,512,0xaaaaaaaa)
+    # The route fixture must expose both colours inside its active 4 KiB ring.
+    if scenario in ('last','route'):g.fill(base+2048,512,0xaaaaaaaa)
     g.fill(0x10010000,64,0x55555555)
     for i in range(256):g.v(0x10000000|i);g.v(i*0x010101)
     # Palette and cursor; explicit bus/RAM flags. Ring is 4096 bytes.

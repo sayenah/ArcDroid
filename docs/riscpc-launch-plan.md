@@ -5,8 +5,10 @@
 This note fixes the contract before implementation, under W2, D-184 and D-185.
 Part 2 uses the frozen R3c-3a run-B CALL extent and passive ARCS query. Gate
 bytes, descriptor ABI, receipt admission and attachment policy do not change.
-Ordinary-load routing belongs to R3d. Launch and prompt cells remain disabled
-in production pending Fable's qualification and promotion.
+R3d-4 routes ordinary content only in gate-open builds and supplies no launch
+plan. Gate-closed ordinary loads keep Arculator. Launch and prompt cells are
+qualified on production firmware (D-203); authored catalogue substitution never
+qualifies those cells. Automatic ordinary-load launch belongs to R3d-5.
 
 ## Helper plan 2
 

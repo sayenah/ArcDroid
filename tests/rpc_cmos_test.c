@@ -81,6 +81,14 @@ int main(void)
     assert(read_reg(5) == 0x29 && read_reg(6) == 0x42);
     arc_rpc_cmos_snapshot(snapshot);
     assert(snapshot[0xc0] == seed[0xc0] && snapshot[0xc1] == seed[0xc1]);
+    /* The chip exposes year modulo four; it never owns the full-year seed
+     * patch, including epochs whose modulo differs from generation's 2000. */
+    const uint64_t years[]={978307200,1009843200,1041379200,1767225600,4102444800};
+    for(unsigned i=0;i<sizeof(years)/sizeof(years[0]);++i){
+        epoch=years[i];elapsed=0;assert(arc_rpc_calendar(epoch,0,&calendar));
+        assert((read_reg(5)>>6)==(calendar.year&3));
+        assert(read_reg(0xc0)==seed[0xc0] && read_reg(0xc1)==seed[0xc1]);
+    }
     arc_rpc_cmos_seed(seed); reseti2c(I2C_PCF8583); arc_rpc_cmos_snapshot(snapshot);
     assert(!memcmp(seed,snapshot,256) && !arc_rpc_cmos_writes());
     epoch = UINT64_MAX;
