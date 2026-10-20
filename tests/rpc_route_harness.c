@@ -28,6 +28,7 @@ static unsigned package_stats,guest_fields;
 static bool tracing,allow_arculator,raw_expected,metadata_only;
 static unsigned private_lines,arculator_starts;
 static bool discarded_failure,ask_chooser,chooser_seen,fault_core;
+static bool trace_logs;
 static unsigned selected_reads;
 static const char *primary_library_path;
 static unsigned registrations,secondary_refusals;
@@ -55,13 +56,18 @@ static bool load_with_calendar(const struct retro_game_info *game)
 static uint64_t trace_hash;
 static void trace(const void *p,size_t n){const unsigned char *b=p;for(size_t i=0;i<n;++i){trace_hash^=b[i];trace_hash*=UINT64_C(1099511628211);}}
 static unsigned writes,package_opens,notices,videos,audios,running,arculator_writes,observer_bind,drift;
+static bool check_raster;
+static unsigned raster_fields;
 static bool callbacks_ready,legacy_interface,failed;
 static const char *system_directory;
 static char last_notice[1024],failure_id[128];
 static struct retro_disk_control_ext_callback disks;
 static void audit(const char *path,unsigned mode)
 {
-    if(raw_expected && allow_arculator && strstr(path,"/peer.jfd"))discarded_failure=true;
+    const char *leaf=path;
+    for(const char *at=path;*at;++at)if(*at=='/' || *at=='\\')leaf=at+1;
+    if(raw_expected && allow_arculator && !strcmp(leaf,"peer.jfd"))discarded_failure=true;
+    if(trace_logs){fprintf(stderr,"route-vfs: mode=%u discarded-fault=%u path=%s\n",mode,discarded_failure,path);fflush(stderr);}
     if(strstr(path,"/riscpc/boot/"))++package_opens;
     if(preflight_unavailable && strstr(path,"/ro371.rom") && ++selected_reads==2)preflight_ready=true;
     if(change_locator && strstr(path,"/ro371.rom") && ++selected_reads==2){
@@ -72,12 +78,30 @@ static void audit(const char *path,unsigned mode)
 #define ARC_RUNNER_VFS_AUDIT(path,mode) audit(path,mode)
 #define ARC_RUNNER_VFS_WRITE_REFUSE(path) (discarded_failure && strstr(path,"/arcdroid/media/"))
 #include "../tools/rpc_runner_vfs.h"
+static void check_discarded_paths(void)
+{
+    const char *paths[]={"/discarded/set.jfd/peer.jfd","C:\\discarded\\set.jfd\\peer.jfd",
+        "\\\\server\\share\\set.jfd\\peer.jfd","C:\\discarded/set.jfd\\peer.jfd"};
+    raw_expected=allow_arculator=true;
+    for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);++i){
+        discarded_failure=false;audit(paths[i],RETRO_VFS_FILE_ACCESS_READ);
+        assert(discarded_failure && ARC_RUNNER_VFS_WRITE_REFUSE("C:\\save/arcdroid/media/disc.tmp"));
+    }
+    const char *unrelated[]={"C:\\discarded\\set.jfd\\set.jfd","/set.jfd/not-peer.jfd","/set.jfd/peer.jfd.bak"};
+    for(unsigned i=0;i<sizeof(unrelated)/sizeof(unrelated[0]);++i){
+        discarded_failure=false;audit(unrelated[i],RETRO_VFS_FILE_ACCESS_READ);assert(!discarded_failure);
+    }
+    discarded_failure=false;allow_arculator=false;audit(paths[1],RETRO_VFS_FILE_ACCESS_READ);assert(!discarded_failure);
+    allow_arculator=true;raw_expected=false;audit(paths[1],RETRO_VFS_FILE_ACCESS_READ);assert(!discarded_failure);
+    puts("rpc-route: discarded peer fault fires for POSIX, Windows, UNC and mixed paths only in the intended case");
+}
 static struct retro_vfs_file_handle *audited_open(const char *p,unsigned mode,unsigned hints)
 {if(strstr(p,"/unreadable.rom"))return NULL;return vfs_open(p,mode,hints);}
 static int32_t audited_stat(const char *p,int32_t *size){if(strstr(p,"/riscpc/boot/"))++package_stats;if((boot_unreadable && strstr(p,"/HardDisc4.zip")) || (preflight_ready && !strncmp(p,save_directory,strlen(save_directory))))return 0;return vfs_stat(p,size);}
 static void log_capture(enum retro_log_level level,const char *format,...)
 {
-    (void)level;char text[8192];va_list args;va_start(args,format);vsnprintf(text,sizeof(text),format,args);va_end(args);
+    char text[8192];va_list args;va_start(args,format);int length=vsnprintf(text,sizeof(text),format,args);va_end(args);
+    if(trace_logs){fprintf(stderr,"route-log: level=%u formatted-length=%d format=[%s] text=[%s]\n",(unsigned)level,length,format,text);fflush(stderr);}
     if(strstr(text,"RPC secondary load refused before preparation"))++secondary_refusals;
     if(!strncmp(text,"ArcDroid build:",15)){if(!metadata_only)assert(strstr(text,"gate=open"));
         if(fault_core){assert(strstr(text,"substitutions=authored-catalogue,test-faults,test-plans"));
@@ -124,7 +148,18 @@ static bool environment(unsigned command,void *data)
     default:return false;
     }
 }
-static void video(const void *p,unsigned w,unsigned h,size_t pitch){(void)p;(void)w;(void)h;(void)pitch;++videos;if(tracing){trace(&w,sizeof(w));trace(&h,sizeof(h));if(p)for(unsigned y=0;y<h;++y)trace((const unsigned char *)p+y*pitch,w*4);}
+/* Independent route oracle: an 8bpp 4 KiB ring, half 0x55/half 0xaa.
+ * Check every pixel; accepting any nonblack/first field missed a uniform ROM. */
+static void route_raster(const void *p,unsigned w,unsigned h,size_t pitch){
+    if(!check_raster || !running || !p || w!=640 || h!=256)return;
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){
+        uint32_t pixel;memcpy(&pixel,(const unsigned char *)p+y*pitch+x*4,4);
+        unsigned value=((y*w+x)%4096)<2048?0x555555u:0xaaaaaau;
+        if((pixel&0xffffffu)!=value)return;
+    }
+    ++raster_fields;
+}
+static void video(const void *p,unsigned w,unsigned h,size_t pitch){route_raster(p,w,h,pitch);(void)p;(void)w;(void)h;(void)pitch;++videos;if(tracing){trace(&w,sizeof(w));trace(&h,sizeof(h));if(p)for(unsigned y=0;y<h;++y)trace((const unsigned char *)p+y*pitch,w*4);}
     if(p){const unsigned char *row=p;bool nonzero=false;for(unsigned y=0;y<h && !nonzero;++y)for(unsigned x=0;x<w*4;++x)if(row[y*pitch+x]){nonzero=true;break;}if(!allow_arculator && !running)assert(!nonzero);if(nonzero)++guest_fields;}}
 static size_t audio(const int16_t *p,size_t n){if(!allow_arculator && !running)for(size_t i=0;i<n*2;++i)assert(!p[i]);if(tracing)trace(p,n*4);++audios;return n;}
 static void poll(void){}
@@ -173,7 +208,8 @@ static void check_alias(const struct retro_game_info *game,void (*env)(retro_env
 #define LOAD(v,n) do{void *p=symbol(n);assert(p);memcpy(&(v),&p,sizeof(v));}while(0)
 int main(int argc,char **argv)
 {
-    assert(argc==7);primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
+    if(argc==2 && !strcmp(argv[1],"--check-discarded-paths")){check_discarded_paths();return 0;}
+    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));trace_logs=argc==8;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
@@ -208,7 +244,10 @@ int main(int argc,char **argv)
         unload();deinit();vfs_assert_no_open_handles();puts("rpc-route: callback-less primary Arculator load passes");return 0;
     }
     if(!strncmp(argv[5],"failure-",8) || !strcmp(argv[5],"discarded")){
-        bool loaded=load(&game);assert(loaded==allow_arculator);assert(raw_expected?private_lines>0:private_lines==0);if(allow_arculator)assert(arculator_starts==1);
+        bool loaded=load(&game);
+        if(trace_logs){fprintf(stderr,"route-result: loaded=%u arculator-starts=%u discarded-fault=%u private-lines=%u\n",loaded,arculator_starts,discarded_failure,private_lines);fflush(stderr);}
+        assert(loaded==allow_arculator);if(allow_arculator)assert(discarded_failure && arculator_starts==1);
+        assert(raw_expected?private_lines>0:private_lines==0);
         if(loaded)run();unload();deinit();vfs_assert_no_open_handles();return 0;
     }
     if(system_unavailable || !strcmp(argv[5],"missing") || !strncmp(argv[5],"refuse:",7)){
@@ -267,6 +306,18 @@ int main(int argc,char **argv)
     for(unsigned f=0;f<100000 && !running;++f){unsigned v=videos,a=audios;run();assert(videos==v+1 && audios==a+1);}
     assert(running==1 && !arculator_writes && observer_bind);
     check_alias(&game,env,init,reset,run,unload,deinit);
+    if(!strcmp(argv[5],"raster")){
+        check_raster=true;
+        for(unsigned reopen=0;reopen<2;++reopen){
+            raster_fields=0;
+            unsigned frames=0;
+            while(raster_fields<2){assert(frames++<120);run();}
+            printf("rpc-route raster: reopen=%u guest_frames=%u every 640x256 pixel matches 4 KiB ring\n",reopen,frames);
+            unload();
+            if(!reopen){running=0;assert(load(&game));for(unsigned f=0;!running;++f){assert(f<10000);run();}assert(running==1);}
+        }
+        deinit();vfs_assert_no_open_handles();return 0;
+    }
     if(!strcmp(argv[5],"calendar")){
         bool (*ram)(unsigned,uint32_t *);LOAD(ram,"arc_rpc_test_read_ram");
         for(unsigned reopen=0;reopen<2;++reopen){

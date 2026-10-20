@@ -233,3 +233,31 @@ results. The clamp remains as defence in depth. Replacement V6a removes the
 necessary byte-path `next_quad` transition at offset 128 (advancing the address
 without IOMD transfer/wrap handling); the authored `byte-tail` ring checks both
 pixels and quad/hold counts to detect it.
+
+## Ordinary-route frontend raster (R3d-4 run E)
+
+The route-only `route` program uses 640×256 at 60 Hz, 8bpp, a grayscale
+palette and a 4096-byte ring. Bytes 0–2047 are 0x55; bytes 2048–4095 are
+0xaa. Pixel `(x,y)` is therefore RGB 0x555555 if `(640*y+x)%4096 < 2048`,
+otherwise 0xaaaaaa. Its opaque BGRA SHA-256 in screenshot row order is
+`1aad5e3f49d9b588396b52bc7902234a90432207f2ef526db81af38a31895cff`.
+This is derived from the authored memory stream, not captured from an emulator.
+The generic `plain` video fixtures and their goldens are unchanged.
+
+The ordinary ROM first waits four keyboard timer expiries (Delete selects the
+factory path), reads the calendar/checksum over IIC, fills memory, sets the
+palette and DMA/VIDC registers, then loops forever. Video must scan a complete
+field after setup; `status first-field` alone does not establish its contents.
+The Windows script polls decoded raw screenshots for the exact full raster
+within 12 seconds, retains the two-colour check, and uses the matching signature
+for subsequent secondary/rewind and unsupported-command stability checks.
+The host/Linux/Windows CTest route harness checks every pixel of two fields,
+within 120 guest advances, on every qualified CPU/OS pair, first use and reopen.
+
+Previously the route used `plain`: both halves of the active 4 KiB ring were
+0x55; the 0xaa fill started at byte 4096, outside that ring. It produced uniform
+grey forever, including the native Windows first field. The earlier harness
+accepted any nonzero field and did not establish multiple colours. The disc
+status line ending “The guest requested another disc” has signal=none,
+action=inactive, reason=single-media and observation=none:waiting-signal here;
+its fixed suffix is not a guest-progress marker and the ROM issues no FDC command.

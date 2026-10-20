@@ -17,7 +17,8 @@ import time
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('build',type=Path);p.add_argument('plan_core');p.add_argument('core')
 p.add_argument('density',choices=('baseline','every-instruction','full-audit'))
-p.add_argument('--only',default='');a=p.parse_args()
+p.add_argument('--only',default='')
+p.add_argument('--timeout',type=int,default=3600);a=p.parse_args()
 cache=(a.build/'CMakeCache.txt').read_text(encoding='utf-8')
 cmake=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_COMMAND:INTERNAL='))
 tests=json.loads(subprocess.check_output([cmake,'-E','chdir',str(a.build),'ctest','--show-only=json-v1'],text=True, encoding='utf-8'))['tests']
@@ -32,7 +33,7 @@ for test in selected:
     if not component:
         command=[a.core if Path(arg).name.startswith(('arcdroid_libretro_test.','arcdroid_rpcplan_libretro.')) else arg for arg in command]
     begin=time.monotonic()
-    result=subprocess.run(command,capture_output=True,env=env,text=True,timeout=3600, encoding='utf-8')
+    result=subprocess.run(command,capture_output=True,env=env,text=True,timeout=a.timeout, encoding='utf-8')
     elapsed=time.monotonic()-begin;maximum=max(maximum,elapsed)
     if result.returncode:raise RuntimeError((test['name'],a.density,result.returncode,result.stdout[-2000:],result.stderr[-4000:]))
     print('PASS',test['name'],'unchanged standalone component' if component else a.density,round(elapsed,3),flush=True);count+=1

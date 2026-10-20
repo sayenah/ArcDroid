@@ -3543,6 +3543,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_test(NAME rpc-retroarch-notice-privacy COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_rpc_privacy_test.py")
   set_tests_properties(rpc-retroarch-notice-privacy PROPERTIES TIMEOUT 30)
+  add_test(NAME rpc-retroarch-windows-config COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_windows_config_test.py")
+  set_tests_properties(rpc-retroarch-windows-config PROPERTIES TIMEOUT 30)
   add_test(NAME rpc-host-source-guard COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}")
   set_tests_properties(rpc-host-source-guard PROPERTIES TIMEOUT 30)
@@ -3781,6 +3784,7 @@ if(ARCDROID_RPC_AUTHORED_ROUTE)
     add_test(NAME rpc-route-authored COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_test.py"
       $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_rpcroute_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}" "$<BOOL:${ARCDROID_RPC_ORDINARY_LOAD}>" $<TARGET_FILE:arcdroid_rpcroute_fault_libretro>)
     set_tests_properties(rpc-route-authored PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
+    add_test(NAME rpc-route-discarded-paths COMMAND rpc_route_harness --check-discarded-paths)
     add_test(NAME rpc-route-matrix COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_matrix_test.py" "${CMAKE_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:rpc_route_harness> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}")
     set_tests_properties(rpc-route-matrix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
     if(ARCDROID_SANITIZERS)
