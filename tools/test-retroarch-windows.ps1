@@ -1529,14 +1529,16 @@ function Capture-ExpectedVisualSignature($Run, [string]$Name, $Expected) {
     throw "$Name guest-signature step did not reach expected visual_signature=$($Expected.VisualSignature) dimensions=$($Expected.Dimensions) within 12 seconds; observed visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours); retroarch_log_tail=[$logTail]"
 }
 
-function Capture-StableRawScreenshot($Run, [string]$Name) {
+# Ordinary Arculator controls require guest colours as well as stability;
+# a blank startup may also be stable. Other callers retain their prior policy.
+function Capture-StableRawScreenshot($Run, [string]$Name, [int]$MinimumColours = 0) {
     $deadline = [DateTime]::UtcNow.AddSeconds(12)
     $attempt = 0
     $previous = $null
     do {
         $attempt++
         $capture = Capture-RawScreenshot $Run "$Name-$attempt"
-        if ($previous -and
+        if ($previous -and $capture.Colours -ge $MinimumColours -and
             $capture.VisualSignature -eq $previous.VisualSignature -and
             $capture.Dimensions -eq $previous.Dimensions) { return $capture }
         $previous = $capture

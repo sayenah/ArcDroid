@@ -3,6 +3,7 @@
 SPDX-License-Identifier: GPL-2.0-only
 """
 from pathlib import Path
+import hashlib
 import importlib.util
 import re
 import subprocess
@@ -88,6 +89,46 @@ def check_ordinary(lines):
 
 
 class WindowsConfig(unittest.TestCase):
+    def test_authored_raster_wait(self):
+        # Independent 8bpp ring expectation, encoded exactly like the raw
+        # screenshot helper's opaque BGRA rows. Reject the old uniform ROM,
+        # a black pending frame, inverted halves and a one-pixel corruption.
+        expected = b''.join(bytes([0x55 if i % 4096 < 2048 else 0xaa])*3 + b'\xff'
+                            for i in range(640*256))
+        digest = hashlib.sha256(expected).hexdigest()
+        self.assertIn(f"Dimensions = '640x256'; VisualSignature = '{digest}'", ORDINARY)
+        for wrong in (bytes([85,85,85,255])*(640*256), bytes([0,0,0,255])*(640*256),
+                      expected[2048*4:]+expected[:2048*4], b'\x00'+expected[1:]):
+            self.assertNotEqual(hashlib.sha256(wrong).hexdigest(), digest)
+        self.assertIn('Capture-ExpectedVisualSignature $run "rpc-ordinary-guest-$leg" $expectedRaster', ORDINARY)
+        self.assertNotIn('Capture-StableRawScreenshot $run "rpc-ordinary-guest-$leg"', ORDINARY)
+        self.assertIn("$guest.Colours -lt 2", ORDINARY)
+        wait = NATIVE.split('function Capture-ExpectedVisualSignature(', 1)[1].split('function ', 1)[0]
+        for required in ('AddSeconds(12)', 'Capture-RawScreenshot', '$Expected.VisualSignature',
+                         '$Expected.Dimensions', 'throw'):
+            self.assertIn(required, wait)
+        raw = NATIVE.split('function Capture-RawScreenshot(', 1)[1].split('function ', 1)[0]
+        self.assertIn('$Run.Process.HasExited', raw)
+
+    def test_secondary_commands_wait_for_observed_effects(self):
+        preempt = ORDINARY.split('function Invoke-OrdinaryPreemptRefusal(', 1)[1].split('function ', 1)[0]
+        self.assertLess(preempt.index('$boundary ='), preempt.index("Send-MediaCommand $Run 'PREEMPT_TOGGLE'"))
+        self.assertIn('does not support save states', preempt)
+        self.assertIn('$boundary)', preempt)
+        commands = ORDINARY.split('# Initial size-zero run-ahead fails;', 1)[1].split('if ($leg -eq 2)', 1)[0]
+        self.assertIn("Wait-OrdinaryPlayback $run 'PAUSED'", commands)
+        self.assertIn("Wait-OrdinaryPlayback $run 'PLAYING'", commands)
+        self.assertNotIn('Start-Sleep', commands)
+        self.assertEqual(commands.count('Invoke-OrdinaryPreemptRefusal $run'), 2)
+        self.assertIn('Wait-OrdinarySecondaryCount $run ($beforeSecondary + 1)', commands)
+        self.assertIn("'ON' } else { 'OFF'", commands)
+        self.assertIn('Authored no-op', commands)
+        self.assertIn("Capture-ExpectedVisualSignature $run 'rpc-ordinary-after-secondary-refusals' $guest", commands)
+        pause = ORDINARY.split('function Wait-OrdinaryPlayback(', 1)[1].split('function ', 1)[0]
+        for required in ("Send-MediaCommand $Run 'GET_STATUS'", 'AddSeconds(10)',
+                         "'^GET_STATUS '", '$Run.Udp.Receive', 'throw'):
+            self.assertIn(required, pause)
+
     def test_absolute_root_and_real_contention(self):
         resolve = '$ordinaryRoot = (Resolve-Path -LiteralPath $ordinaryRoot).Path'
         self.assertIn(resolve, ORDINARY)
@@ -253,6 +294,12 @@ class SwitchRejection(unittest.TestCase):
         self.assertIn('$finalSwitchResult -cne $switchResult', attempt)
         self.assertIn('$ordinarySwitchDrivable -and $fresh.VisualSignature -ne $ordinaryArcSignature', attempt)
         self.assertIn('$fresh.Colours -lt 2', attempt)
+        self.assertIn("Capture-StableRawScreenshot $run 'rpc-ordinary-after-arculator' 2", attempt)
+        self.assertIn("Capture-StableRawScreenshot $run 'rpc-ordinary-fresh-arculator' 2", attempt)
+        stable = NATIVE.split('function Capture-StableRawScreenshot(', 1)[1].split('Add-Type', 1)[0]
+        self.assertIn('[int]$MinimumColours = 0', stable)
+        self.assertIn('$capture.Colours -ge $MinimumColours', stable)
+        self.assertIn('AddSeconds(12)', stable)
         self.assertIn('RetroArch ${retroArchVersion}: same-process', attempt)
         self.assertIn('Odin3 assisted J6', attempt)
         self.assertIn("Invoke-OrdinaryRefusal $ordinaryCore 'rpc-ordinary-test-j4'", attempt)

@@ -38,6 +38,8 @@ static uint64_t last_session;
 static uint64_t trace_hash;
 static void trace(const void *p,size_t n){const unsigned char *b=p;for(size_t i=0;i<n;++i){trace_hash^=b[i];trace_hash*=UINT64_C(1099511628211);}}
 static unsigned writes,package_opens,notices,videos,audios,running,arculator_writes,observer_bind,drift;
+static bool check_raster;
+static unsigned raster_fields;
 static bool callbacks_ready,legacy_interface,failed;
 static const char *system_directory;
 static char last_notice[1024],failure_id[128];
@@ -128,7 +130,18 @@ static bool environment(unsigned command,void *data)
     default:return false;
     }
 }
-static void video(const void *p,unsigned w,unsigned h,size_t pitch){(void)p;(void)w;(void)h;(void)pitch;++videos;if(tracing){trace(&w,sizeof(w));trace(&h,sizeof(h));if(p)for(unsigned y=0;y<h;++y)trace((const unsigned char *)p+y*pitch,w*4);}
+/* Independent route oracle: an 8bpp 4 KiB ring, half 0x55/half 0xaa.
+ * Check every pixel; accepting any nonblack/first field missed a uniform ROM. */
+static void route_raster(const void *p,unsigned w,unsigned h,size_t pitch){
+    if(!check_raster || !running || !p || w!=640 || h!=256)return;
+    for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){
+        uint32_t pixel;memcpy(&pixel,(const unsigned char *)p+y*pitch+x*4,4);
+        unsigned value=((y*w+x)%4096)<2048?0x555555u:0xaaaaaau;
+        if((pixel&0xffffffu)!=value)return;
+    }
+    ++raster_fields;
+}
+static void video(const void *p,unsigned w,unsigned h,size_t pitch){route_raster(p,w,h,pitch);(void)p;(void)w;(void)h;(void)pitch;++videos;if(tracing){trace(&w,sizeof(w));trace(&h,sizeof(h));if(p)for(unsigned y=0;y<h;++y)trace((const unsigned char *)p+y*pitch,w*4);}
     if(p){const unsigned char *row=p;bool nonzero=false;for(unsigned y=0;y<h && !nonzero;++y)for(unsigned x=0;x<w*4;++x)if(row[y*pitch+x]){nonzero=true;break;}if(!allow_arculator && !running)assert(!nonzero);if(nonzero)++guest_fields;}}
 static size_t audio(const int16_t *p,size_t n){if(!allow_arculator && !running)for(size_t i=0;i<n*2;++i)assert(!p[i]);if(tracing)trace(p,n*4);++audios;return n;}
 static void poll(void){}
@@ -274,6 +287,18 @@ int main(int argc,char **argv)
     for(unsigned f=0;f<100000 && !running;++f){unsigned v=videos,a=audios;run();assert(videos==v+1 && audios==a+1);}
     assert(running==1 && !arculator_writes && observer_bind);
     check_alias(&game,env,init,reset,run,unload,deinit);
+    if(!strcmp(argv[5],"raster")){
+        check_raster=true;
+        for(unsigned reopen=0;reopen<2;++reopen){
+            raster_fields=0;
+            unsigned frames=0;
+            while(raster_fields<2){assert(frames++<120);run();}
+            printf("rpc-route raster: reopen=%u guest_frames=%u every 640x256 pixel matches 4 KiB ring\n",reopen,frames);
+            unload();
+            if(!reopen){running=0;assert(load(&game));for(unsigned f=0;!running;++f){assert(f<10000);run();}assert(running==1);}
+        }
+        deinit();vfs_assert_no_open_handles();return 0;
+    }
     if(!strcmp(argv[5],"calendar")){
         bool (*ram)(unsigned,uint32_t *);LOAD(ram,"arc_rpc_test_read_ram");
         for(unsigned reopen=0;reopen<2;++reopen){

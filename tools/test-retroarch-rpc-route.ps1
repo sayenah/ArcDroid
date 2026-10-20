@@ -87,6 +87,26 @@ function Wait-OrdinaryLog($Run, [string]$Pattern, [int]$AfterLines = 0) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Ordinary-route event timed out: $Pattern"
 }
+# GET_STATUS is supported by the pinned frontend, including while paused.
+# Wait for its reply before issuing commands whose evidence depends on pause;
+# a fixed delay does not establish that no live run-ahead iteration can race.
+function Wait-OrdinaryPlayback($Run, [string]$State) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        Send-MediaCommand $Run 'GET_STATUS'
+        try {
+            $remote = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
+            $reply = [Text.Encoding]::ASCII.GetString($Run.Udp.Receive([ref]$remote))
+            if ($reply -match ('^GET_STATUS ' + $State + ' ')) { return }
+        } catch [Net.Sockets.SocketException] { }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Ordinary-route frontend did not reach $State within 10 seconds: $(Get-RunLogTail $Run)"
+}
+function Invoke-OrdinaryPreemptRefusal($Run) {
+    $boundary = @(Get-Content $Run.RetroLog).Count
+    Send-MediaCommand $Run 'PREEMPT_TOGGLE'
+    [void](Wait-OrdinaryLog $Run '(?m)^\[WARN\] \[Run-Ahead Preemptive\] Preemptive Frames has been disabled because this core does not support save states\.\r?$' $boundary)
+}
 function Get-OrdinarySecondaryCount($Run) {
     if (-not (Test-Path $Run.RetroLog)) { return 0 }
     $pattern = [regex]::Escape('RPC secondary load refused before preparation, guest execution and writable stores.')
@@ -170,24 +190,32 @@ foreach ($leg in @(1, 2)) {
         if ($summary.Length -gt 3900 -or $summary -notmatch 'first_pending_ms=[0-9]+' -or $summary -notmatch 'running_ms=[0-9]+' -or $summary -notmatch 'desktop=unavailable') { throw 'Ordinary-route summary lacks bounded phase evidence' }
         if ($text -notmatch 'catalogue=authored' -or $text -notmatch 'production-observer-cells=0') { throw 'Authored/production qualification identity mismatch' }
         [void](Wait-OrdinaryLog $run 'status first-field:')
-        $guest = Capture-StableRawScreenshot $run "rpc-ordinary-guest-$leg"
+        # Route ROM: guest IIC calendar read, then a 4096-byte 8bpp ring,
+        # first 2048 bytes 0x55, second 2048 bytes 0xaa, at 640x256.
+        # First-field is not a readiness promise. Poll actual decoded pixels
+        # (bounded by the shared 12 s helper), never wait a CI-tuned delay.
+        # SHA-256 is over all opaque BGRA pixels in row order, not PNG bytes.
+        $expectedRaster = @{ Dimensions = '640x256'; VisualSignature = '1aad5e3f49d9b588396b52bc7902234a90432207f2ef526db81af38a31895cff' }
+        $guest = Capture-ExpectedVisualSignature $run "rpc-ordinary-guest-$leg" $expectedRaster
         if ($guest.Colours -lt 2) { throw 'No authored guest raster after START' }
         if ($leg -eq 1) {
             # Initial size-zero run-ahead fails; preempt deinit resets its
             # availability flags. Re-enter with serialization-size-known set.
             $beforeSecondary = Get-OrdinarySecondaryCount $run
-            Send-MediaCommand $run 'PREEMPT_TOGGLE'
+            Invoke-OrdinaryPreemptRefusal $run
             Wait-OrdinarySecondaryCount $run ($beforeSecondary + 1)
             Send-MediaCommand $run 'PAUSE_TOGGLE'
-            Start-Sleep -Milliseconds 300
+            Wait-OrdinaryPlayback $run 'PAUSED'
             foreach ($toggle in @(1, 2)) {
                 $beforeSecondary = Get-OrdinarySecondaryCount $run
-                Send-MediaCommand $run 'PREEMPT_TOGGLE'
-                Start-Sleep -Milliseconds 300
+                Invoke-OrdinaryPreemptRefusal $run
                 Send-MediaCommand $run 'CHEAT_TOGGLE'
                 Wait-OrdinarySecondaryCount $run ($beforeSecondary + 1)
+                $cheatState = if ($toggle -eq 1) { 'ON' } else { 'OFF' }
+                [void](Wait-OrdinaryLog $run ('\[Cheats\] Cheat: #0 \[' + $cheatState + '\]: Authored no-op'))
             }
             Send-MediaCommand $run 'PAUSE_TOGGLE'
+            Wait-OrdinaryPlayback $run 'PLAYING'
             Send-MediaCommand $run 'REWIND'
             [void](Capture-ExpectedVisualSignature $run 'rpc-ordinary-after-secondary-refusals' $guest)
             $text = [string](Get-Content -Raw $run.RetroLog)
@@ -216,7 +244,7 @@ foreach ($leg in @(1, 2)) {
                 $ordinarySwitchEvidence = "R3d-4 RetroArch ${retroArchVersion}: same-process Arculator switch is not drivable by this frontend build (exact LOAD_CONTENT rejection); evidence rests on Odin3 assisted J6 and the harness."
             } elseif ($switchResult -ceq 'strict') {
                 [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM' $switchStart)
-                $after = Capture-StableRawScreenshot $run 'rpc-ordinary-after-arculator'
+                $after = Capture-StableRawScreenshot $run 'rpc-ordinary-after-arculator' 2
                 $ordinaryArcSignature = $after.VisualSignature
                 if ($run.Process.HasExited) { throw 'LOAD_CONTENT relaunched instead of switching' }
                 $ordinarySwitchEvidence = "R3d-4 RetroArch ${retroArchVersion}: same-process Arculator switch observed; raw-pixel baseline captured."
@@ -246,7 +274,7 @@ $run = $null
 try {
     $run = Start-MediaRun ('"' + $ordinaryArc + '"') 'rpc-ordinary-fresh-arculator'
     [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM')
-    $fresh = Capture-StableRawScreenshot $run 'rpc-ordinary-fresh-arculator'
+    $fresh = Capture-StableRawScreenshot $run 'rpc-ordinary-fresh-arculator' 2
     if ($fresh.Colours -lt 2) { throw 'Fresh Arculator control has no guest raster' }
     if ($ordinarySwitchDrivable -and $fresh.VisualSignature -ne $ordinaryArcSignature) { throw 'Arculator pixels differ after RPC switch' }
 } finally { if ($run) { Stop-MediaRun $run } }
