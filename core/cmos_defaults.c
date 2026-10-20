@@ -74,6 +74,14 @@ static const uint8_t *arc_cmos_source(ArcOsClass os, ArcIoClass io)
    }
 }
 
+bool arc_cmos_uses_year(ArcOsClass os)
+{
+   return os == ARC_OS_ARTHUR_030 || os == ARC_OS_ARTHUR_120 ||
+      os == ARC_OS_RISCOS_200 || os == ARC_OS_RISCOS_201 ||
+      os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
+      os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319;
+}
+
 bool arc_cmos_default(ArcOsClass os, ArcIoClass io, uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
 {
    const uint8_t *source;
@@ -177,6 +185,8 @@ bool arc_cmos_boot_stamp_payload(ArcOsClass os, ArcIoClass io,
    /* The launch-owned checksum varies with the helper drive. IDE attachment
     * is also excluded: it is applied only to the live machine. */
    output[arc_cmos_raw_address(239u) - 16u] = 0u;
+   /* R-AY1: calendar bytes cannot invalidate launch-owned state. */
+   output[0xc0u - 16u] = output[0xc1u - 16u] = 0u;
    return true;
 }
 

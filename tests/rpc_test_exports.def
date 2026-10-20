@@ -39,3 +39,25 @@ EXPORTS
 
   ; Bind an authored host-owned attempt for the frontend frame-hook test.
   arc_engine_rpc_launch_bind
+
+  ; AY-1 authored calendar harnesses, non-installed test DLL only.
+  arc_engine_start
+  arc_engine_reset
+  arc_engine_stop
+  arc_engine_run_frame
+  arc_engine_cmos
+  arc_engine_rpc_start
+  arc_engine_rpc_advance
+  arc_cmos_default
+  arc_cmos_machine_image
+  arc_machine_descriptor
+  cmos_test_clock
+  arc_engine_test_cmos_bus_write
+  readmemf_debug
+  arc_boot_observation_format
+  arc_boot_observation_equal
+  arc_libretro_test_session_state
+  arc_libretro_test_choice_path
+  arc_libretro_test_boot_stamp
+  arc_libretro_test_boot_start_stamp
+  arc_libretro_test_boot_record_hit

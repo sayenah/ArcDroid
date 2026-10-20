@@ -3,8 +3,12 @@
 # Run E CMOS recovery and fixed generation epoch
 
 R3d-4b / R-Y1: preparation refreshes physical `0xC0` (binary year modulo 100),
-`0xC1` (binary century) and `0x3F` (one plus every other payload byte, modulo
-256) on each requested session start, before any guest instruction. This is
+`0xC1` (binary century) on each requested session start, before any guest
+instruction. AY-1 / L-1 adjusts `0x3F` by the sum of the two new year bytes
+minus the two old bytes, modulo 256. A valid checksum stays valid; every
+nonzero checksum error stays exactly the same, so a guest-corrupted record
+is never silently healed. The store test exercises all 256 checksum errors
+for every year 1970..2399, with a recomputation mutant. This is
 the only seed patch. The session epoch already encodes local calendar time;
 it is converted without another host-clock read. This supersedes the exact-seed
 rule for these three bytes only, on ordinary and persisted-plan preparations.
@@ -22,9 +26,11 @@ authored guest checks; actual RISC OS OS_Word 14/device evidence remains
 Fable's private leg. Each reset also preserves an intentionally player-edited
 year. Skipping either the preparation patch or its checksum is mutation-tested.
 Under sanitizers the identical workload uses seven pair shards and one switching
-shard. Another 200 preparation RPC/Arculator switches read guest year/checksum. The
+shard; all eight shards are RUN_SERIAL (AY-1 / I-2). Another 200 preparation RPC/Arculator switches read guest year/checksum. The
 ordinary-route harness also checks the guest's IIC result on all seven pairs
-at first use, reset and persisted reopen, using existing read-only test exports.
+at first use, reset and persisted reopen. Its year oracle reads the exact
+captured ordinary-load epoch through a test-only, read-only getter; the
+harness verification clock deliberately advances to the following year.
 Plan/seed tests deliberately expect session payloads to differ from defaults
 only in these three bytes; arbitrary payload bytes remain authoritative.
 
@@ -60,7 +66,9 @@ bytes or provenance epoch, proving semantic validation independently of CRC.
 Header model bytes must encode model+1 for every model. A one-shot corrupted
 candidate readback prevents either existing slot from being retired or replaced.
 The first rejected epoch is 13,569,465,600, one second beyond the declared RTC
-range. Refused-store integration uses a valid fallback and an `ARCCMOS2`
+range. AY-1 L-2 rejects it (and UINT64_MAX) before store acquisition, for both
+resolved ordinary and low-level preparation, with absent and existing records;
+seeds, records and defaults stay unchanged and no engine or VFS handle remains. Refused-store integration uses a valid fallback and an `ARCCMOS2`
 published peer, then runs a writing guest: exactly one notice per load/state,
 no repeated frame or unload notice, and neither file changes. QA mutants
 C05/C07/C10/C11/C14 and the oracle checksum mutant C01 each fail these checks.

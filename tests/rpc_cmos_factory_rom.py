@@ -63,7 +63,11 @@ def factory(kind='full'):
         g.load(6,800);wait=len(g.words);g.read(0,9,0x10);g.emit(0xe3100020);g.branch(wait,0)
         g.mov(0,32);g.store(0,9,0x14);g.emit(0xe2566001);g.branch(wait,1)
         repeat=len(g.words);write(63,[1]);g.branch(repeat)
-    else:g.emit(0xeafffffe)
+    else:
+        if kind=='writer':
+            # Observable completion, independent of the CPU model's I/O timing.
+            g.mov(0,0xa5);g.store(0,8,0x40)
+        g.emit(0xeafffffe)
     sub=len(g.words)
     for p in calls:g.words[p]=0xeb000000|((sub-p-2)&0xffffff)
     g.mov(4,128);bit=len(g.words);g.emit(0xe1100004);g.mov(3,0);g.emit(0x13a03001)

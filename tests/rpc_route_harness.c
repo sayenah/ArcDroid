@@ -34,6 +34,24 @@ static unsigned registrations,secondary_refusals;
 static bool change_locator,system_unavailable;
 static bool boot_unreadable,preflight_unavailable,preflight_ready;
 static uint64_t last_session;
+static unsigned load_year;
+static bool load_calendar, calendar_after_load;
+static unsigned (*captured_year)(void);
+static unsigned calendar_year(void)
+{
+    /* Deliberate New Year at verification: only this test harness's clock
+     * advances; the core must still be judged against its captured load. */
+    return load_year+(unsigned)calendar_after_load;
+}
+static bool (*raw_load)(const struct retro_game_info *);
+static bool load_with_calendar(const struct retro_game_info *game)
+{
+    bool loaded=raw_load(game);
+    /* Use the exact epoch captured by this load, including a load which
+     * crosses midnight before its clock capture. Refusals keep the old oracle. */
+    if(load_calendar && loaded){load_year=captured_year();calendar_after_load=true;}
+    return loaded;
+}
 static uint64_t trace_hash;
 static void trace(const void *p,size_t n){const unsigned char *b=p;for(size_t i=0;i<n;++i){trace_hash^=b[i];trace_hash*=UINT64_C(1099511628211);}}
 static unsigned writes,package_opens,notices,videos,audios,running,arculator_writes,observer_bind,drift;
@@ -164,11 +182,12 @@ int main(int argc,char **argv)
     assert(library);
     void (*env)(retro_environment_t),(*init)(void),(*deinit)(void),(*unload)(void),(*run)(void),(*reset)(void);
     bool (*load)(const struct retro_game_info *),(*serialize)(void *,size_t),(*unserialize)(const void *,size_t);size_t (*state_size)(void);
-    LOAD(env,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(unload,"retro_unload_game");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(primary_load,"retro_load_game");load=load_primary;
+    LOAD(env,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(unload,"retro_unload_game");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(primary_load,"retro_load_game");raw_load=load_primary;load_calendar=!strcmp(argv[5],"calendar");load=load_with_calendar;
+    if(load_calendar)LOAD(captured_year,"arc_libretro_test_rpc_load_year");
     LOAD(api_version,"retro_api_version");LOAD(av_info,"retro_get_system_av_info");LOAD(set_sample,"retro_set_audio_sample");
     LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");
     LOAD(state_size,"retro_serialize_size");LOAD(serialize,"retro_serialize");LOAD(unserialize,"retro_unserialize");
-    if(!fault_core)assert(!symbol("arc_libretro_test_rpc_catalogue") && !symbol("arc_rpc_test_start"));
+    if(!fault_core)assert(!symbol("arc_libretro_test_rpc_catalogue") && !symbol("arc_rpc_test_start") && !symbol("arc_libretro_test_rpc_load_year"));
     else assert(symbol("arc_libretro_test_rpc_catalogue"));
     void (*info)(struct retro_system_info *);LOAD(info,"retro_get_system_info");struct retro_system_info system={0};
     /* Menu LOAD_CORE does an additional metadata probe. Common init's
@@ -256,7 +275,7 @@ int main(int argc,char **argv)
                 uint32_t done=0,year=0,checksum=0;
                 for(unsigned f=0;done!=0xa5;++f){assert(f<1000);run();assert(ram(0x20408,&done));}
                 assert(ram(0x20400,&year) && ram(0x20404,&checksum) && checksum==1);
-                time_t now=time(NULL);struct tm *local=localtime(&now);assert(local && year==(unsigned)local->tm_year+1900);
+                assert(calendar_year()==load_year+1);assert(year==load_year);
                 if(!resetting)reset();
             }
             unload();

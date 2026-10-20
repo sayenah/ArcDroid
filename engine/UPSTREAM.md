@@ -289,3 +289,15 @@ the observed registration boundary on macOS). The registration flag tracks
 host library lifetime, not guest state. All FPA register resets, instruction
 behavior, timing and the exit diagnostic itself remain unchanged. No existing
 test or golden is changed.
+
+AY-1 (2026-10-19) updates `src/cmos.c`/`src/cmos.h`: the PCF8583 date
+register includes the captured local clock's year modulo four. A session-only
+year overlay sets C0/C1 and recomputes the live checksum before the first
+instruction; guest-write tracking keeps that host patch out of persistence
+until the guest writes each byte, and survives reset. The backend selects
+firmware classes; frontend reconstruction supplies the retained live year
+and rebases the overlay on the persisted seed. The A500 kernel also reads
+C0/C1 from EEPROM; its PCF8573 branch receives no hardware year bits. The clock's
+month indexing and Gregorian February length are corrected so December
+rollover advances the RTC year safely. A fixed calendar clock exists only
+under ARCDROID_TEST_FAULTS; shipping builds retain the host local clock.

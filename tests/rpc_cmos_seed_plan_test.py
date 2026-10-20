@@ -16,9 +16,9 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-seed-') as temp:
     run();slots=list(save.rglob('*.0'))+list(save.rglob('*.1'));assert len(slots)==2
     record=max(slots,key=lambda p:struct.unpack_from('<Q',p.read_bytes(),24)[0])
     original=record.read_bytes()
-    # R-Y1 deliberately refreshes only the session year and checksum.
-    expected=bytearray(range(16,256));expected[176:178]=bytes([0,20])
-    expected[47]=(1+sum(expected[:47])+sum(expected[48:]))&255
+    # AY-1 L-1 preserves the intentionally invalid seed checksum's error.
+    expected=bytearray(range(16,256));old=expected[176]+expected[177]
+    expected[176:178]=bytes([0,20]);expected[47]=(expected[47]+20-old)&255
     assert original[104:344]==expected
     assert not list(save.rglob('defaults')),'seed must not generate defaults'
     # A saved record remains authoritative when a different seed is supplied.
