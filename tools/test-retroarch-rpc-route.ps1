@@ -4,6 +4,9 @@ $ordinaryBuild = (Resolve-Path $OrdinaryRouteBuild).Path
 $ordinaryFixtures = Join-Path $ordinaryBuild 'generated/rpc-route'
 $ordinaryRoot = Join-Path $WorkDirectory 'ordinary-route'
 New-Item -ItemType Directory $ordinaryRoot | Out-Null
+# R3d-3 R-10 requires an absolute native lock root. RetroArch passes a
+# relative savefile_directory through unchanged; resolve before deriving it.
+$ordinaryRoot = (Resolve-Path -LiteralPath $ordinaryRoot).Path
 $ordinarySystem = Join-Path $ordinaryRoot 'system'
 Copy-Item -Recurse (Join-Path $ordinaryFixtures 'system') $ordinarySystem
 $ordinarySave = Join-Path $ordinaryRoot 'save'
@@ -61,6 +64,7 @@ libretro_info_path = "$(ConfigPath $infoDirectory)"
 screenshot_directory = "$(ConfigPath $evidenceDirectory)"
 log_verbosity = "true"
 libretro_log_level = "1"
+user_language = "0"
 run_ahead_enabled = "true"
 run_ahead_frames = "1"
 run_ahead_secondary_instance = "true"
@@ -74,6 +78,7 @@ function Wait-OrdinaryLog($Run, [string]$Pattern, [int]$AfterLines = 0) {
         if (Test-Path $Run.RetroLog) {
             $text = [string](Get-Content -Raw $Run.RetroLog)
             if ($AfterLines) { $text = (@(Get-Content $Run.RetroLog | Select-Object -Skip $AfterLines) -join "`n") }
+            if ($text -match 'summary: phase=pending .*state=11 ') { throw "Ordinary-route preparation failed: $(Get-RunLogTail $Run)" }
             if ($text -match $Pattern) { return $text }
             if ($text -match 'Failed to load content') { throw 'Real RetroArch primary ordinary load failed before the expected event' }
         }
@@ -152,6 +157,16 @@ foreach ($leg in @(1, 2)) {
         if ($text -notmatch 'ArcDroid build:.*gate=open' -or
             $text -match 'Failed to load content') { throw 'Gate-open primary was refused or the wrong core was loaded' }
         $summary = [regex]::Match($text, 'summary: phase=pending .*state=10 [^\r\n]*').Value
+        if ($leg -eq 1) {
+            # Namespace mkdir steps also count as wait frames. First use needs
+            # two successful native acquisitions (content/defaults); a genuine
+            # held defaults lock must cause additional non-namespace attempts.
+            $attempts = [regex]::Match($summary, 'lock_attempts=([0-9]+)').Groups[1].Value
+            $waits = [regex]::Match($summary, 'lock_wait_frames=([0-9]+)').Groups[1].Value
+            if (-not $attempts -or [UInt64]$attempts -le 2 -or -not $waits -or [UInt64]$waits -eq 0) { throw 'Defaults lock did not produce genuine pending contention' }
+            "defaults-contention: native_attempts=$attempts wait_frames=$waits; pending black frame and RUNNING after release PASS" |
+                Set-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-ordinary-contention.txt')
+        }
         if ($summary.Length -gt 3900 -or $summary -notmatch 'first_pending_ms=[0-9]+' -or $summary -notmatch 'running_ms=[0-9]+' -or $summary -notmatch 'desktop=unavailable') { throw 'Ordinary-route summary lacks bounded phase evidence' }
         if ($text -notmatch 'catalogue=authored' -or $text -notmatch 'production-observer-cells=0') { throw 'Authored/production qualification identity mismatch' }
         [void](Wait-OrdinaryLog $run 'status first-field:')

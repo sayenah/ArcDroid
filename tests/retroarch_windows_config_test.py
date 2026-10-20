@@ -14,6 +14,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = (ROOT / 'tools/test-retroarch-windows.ps1').read_text(encoding='utf-8')
 ORDINARY = (ROOT / 'tools/test-retroarch-rpc-route.ps1').read_text(encoding='utf-8')
+STANDALONE = (ROOT / 'tools/test-retroarch-rpc-ordinary-windows.ps1').read_text(encoding='utf-8')
 SWITCH_SCRIPT = ROOT / 'tools/check-retroarch-rpc-switch.py'
 spec = importlib.util.spec_from_file_location('ordinary_switch', SWITCH_SCRIPT)
 switch = importlib.util.module_from_spec(spec)
@@ -76,6 +77,8 @@ def check_frontend(lines):
 
 def check_ordinary(lines):
     config = check_frontend(lines)
+    if config.get('user_language') != '0':
+        raise AssertionError('Exact frontend rejection requires English log text')
     # The real lock and store assertions use the configured save root. RA's
     # default per-core subdirectory would give the guest a different directory.
     for key in ('sort_savefiles_enable', 'sort_savefiles_by_content_enable'):
@@ -85,6 +88,43 @@ def check_ordinary(lines):
 
 
 class WindowsConfig(unittest.TestCase):
+    def test_absolute_root_and_real_contention(self):
+        resolve = '$ordinaryRoot = (Resolve-Path -LiteralPath $ordinaryRoot).Path'
+        self.assertIn(resolve, ORDINARY)
+        self.assertLess(ORDINARY.index(resolve), ORDINARY.index('$ordinarySave ='))
+        for name in ('ordinarySystem', 'ordinarySave', 'closedSystem', 'closedSave', 'archiveSave'):
+            self.assertRegex(ORDINARY, rf'\${name} = Join-Path \$ordinaryRoot ')
+        self.assertIn('$pendingOwner.Lock(0, 1)', ORDINARY)
+        self.assertIn('[IO.FileShare]::ReadWrite', ORDINARY)
+        self.assertIn('d-$key-m3-p$procedure-t$timing.lock', ORDINARY)
+        self.assertLess(ORDINARY.index('$pendingOwner.Lock(0, 1)'), ORDINARY.index('"rpc-ordinary-$leg"'))
+        self.assertIn('[UInt64]$attempts -le 2', ORDINARY)
+        self.assertIn('[UInt64]$waits -eq 0', ORDINARY)
+        self.assertIn("'rpc-ordinary-contention.txt'", ORDINARY)
+        wait = ORDINARY.split('function Wait-OrdinaryLog(', 1)[1].split('function Get-OrdinarySecondaryCount', 1)[0]
+        self.assertLess(wait.index('state=11'), wait.index('if ($text -match $Pattern)'))
+
+    def test_standalone_imports_only_existing_helpers(self):
+        block = STANDALONE.split('$helperNames = @(', 1)[1].split('\n)', 1)[0]
+        names = re.findall(r"'([^']+)'", block)
+        definitions = re.findall(r'^function ([\w-]+)\b', NATIVE, re.M)
+        self.assertEqual(len(names), 15)
+        for name in names:
+            self.assertEqual(definitions.count(name), 1, name)
+        self.assertIn('FunctionDefinitionAst', STANDALONE)
+        self.assertIn('[scriptblock]::Create($definitions[0].Extent.Text)', STANDALONE)
+        self.assertIn(". (Join-Path $PSScriptRoot 'test-retroarch-rpc-route.ps1')", STANDALONE)
+        self.assertNotIn('. (Join-Path $PSScriptRoot \'test-retroarch-windows.ps1\')', STANDALONE)
+        self.assertNotIn('Invoke-ArcDroid', names)
+        self.assertIn('WorkDirectory must be new', STANDALONE)
+        self.assertIn('ordinary-transcript.txt', STANDALONE)
+        self.assertIn('R3d-4 ONLY PASS:', STANDALONE)
+        self.assertIn("-ArgumentList '--version'", STANDALONE)
+        self.assertIn("Get-Command python -ErrorAction Stop", STANDALONE)
+        self.assertIn("-Filter '*.dll' -File", STANDALONE)
+        self.assertNotIn('curl.exe', STANDALONE)
+        self.assertIn('test-retroarch-rpc-ordinary-windows.ps1', (ROOT / '.github/workflows/ci.yml').read_text())
+
     def test_working_and_ordinary_configs(self):
         ordinary = template(ORDINARY, 'ordinaryConfig')
         configs = [template(NATIVE, 'config'), ordinary,

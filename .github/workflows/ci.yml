@@ -385,7 +385,7 @@ jobs:
       - name: Parse Windows RetroArch scripts
         shell: pwsh
         run: |
-          foreach ($script in @('tools/test-retroarch-windows.ps1', 'tools/test-retroarch-rpc-privacy.ps1', 'tools/test-retroarch-rpc-route.ps1')) {
+          foreach ($script in @('tools/test-retroarch-windows.ps1', 'tools/test-retroarch-rpc-privacy.ps1', 'tools/test-retroarch-rpc-route.ps1', 'tools/test-retroarch-rpc-ordinary-windows.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path, [ref]$tokens, [ref]$errors) | Out-Null
