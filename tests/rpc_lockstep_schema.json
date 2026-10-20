@@ -34010,6 +34010,12 @@
           "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
           "classification": "baseline M2b member",
           "reason": "Unchanged named member of the merged M2b base; this merge does not redefine its existing state contract."
+        },
+        "ordinary": {
+          "declaration": "bool ordinary",
+          "citation": "docs/riscpc-r3d4-design.md:§9 R-5 and R-8",
+          "classification": "host-only/excluded",
+          "reason": "Immutable ordinary-load provenance controls only non-authoritative pair advice and presentation, never guest state or authoritative store identity."
         }
       },
       "ArcRpcPreparationStats": {
@@ -34543,6 +34549,18 @@
           "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
           "classification": "host-only/excluded",
           "reason": "Frontend timing, phase/cadence, summary or first-field diagnostic accounting; no guest deadlines or persisted identity."
+        },
+        "ordinary": {
+          "declaration": "bool ordinary,manual_noticed",
+          "citation": "docs/riscpc-r3d4-design.md:§9 R-8",
+          "classification": "host-only/excluded",
+          "reason": "Presentation-only provenance: enables the once-per-load manual-start advisory; no guest deadline or input decision."
+        },
+        "manual_noticed": {
+          "declaration": "bool ordinary,manual_noticed",
+          "citation": "docs/riscpc-r3d4-design.md:§9 R-8",
+          "classification": "host-only/excluded",
+          "reason": "Presentation-only once-per-load advisory latch; never controls guest instructions, media, input or authoritative publication."
         }
       }
     },
@@ -37017,10 +37035,10 @@
         "reason": "Unchanged explicitly named object from the merged M2b base; no new exclusion or semantic contract."
       },
       "::arc_base_options": {
-        "declaration": "static const struct retro_core_option_v2_definition arc_base_options[] = { {xxxxxxxxxxxxxxxxxx, xxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxx, NULL}, {xxxxxxx, NULL}, {xxxxxxx, NULL}, {xxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxx, xxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxx, NULL}, {xxxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxx, xxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxxxxx, NULL}, {xxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxx, NULL}, {xxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxx, NULL}, {xxxxxx, NULL}, {xxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxx, NULL}, {xxxxx, NULL}, {xxxxx, NULL}, {xxxxx, NULL}, {xxxxxx, NULL}, {NULL, NULL}}, xxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxx, xxxxx}, {xxxx, xxxxxx}, {xxxx, xxxxxx}, {xxxx, xxxxxx}, {xxxx, xxxxxx}, {NULL, NULL}}, xxxx}, {xxxxxxxxxxxxxxxxx, xxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, xxxxxx}, {xxxxx, xxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxx, xxxxxxxxxx}, {xxxxx, xxxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxx, xxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, xxxxxx}, {xxxxxxxx, xxxxxxxx}, {xxxxxxx, xxxxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxxx, xxxxxxxxxxx}, {xxxxx, xxxxx}, {NULL, NULL}}, xxxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxx, xxxxxxxxxxxxxxx}, {xxxxxxxxxx, xxxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxx, NULL}, {xxxxxxxxxx, NULL}, {xxxxx, NULL}, {NULL, NULL}}, xxxxxxxx}, {xxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, xxxxxx}, {xxxxx, xxxxx}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxx, xxxxxxxxx}, {xxxxxxxxxxxxx, xxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxxx, xxxxxxxxxxx}, {xxxxxxxx, xxxxxxxx}, {NULL, NULL}}, xxxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, xxxxxxxxxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxx}, {xxxxx, xxxxx}, {NULL, NULL}}, xxxxxx}, {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL} }",
-        "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
-        "classification": "baseline M2b object",
-        "reason": "Unchanged explicitly named object from the merged M2b base; no new exclusion or semantic contract."
+        "declaration": "static const struct retro_core_option_v2_definition arc_base_options[] = { {xxxxxxxxxxxxxxxxxx, xxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxx, NULL}, {xxxxxxx, NULL}, {xxxxxxx, NULL}, {xxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxx, xxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxx, NULL}, {xxxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxx, xxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxxx, NULL}, {xxxxxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxxxxx, NULL}, {xxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxx, NULL}, {xxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxx, NULL}, {xxxxxx, NULL}, {xxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxx, NULL}, {xxxxx, NULL}, {xxxxx, NULL}, {xxxxx, NULL}, {xxxxxx, NULL}, {NULL, NULL}}, xxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxx, xxxxx}, {xxxx, xxxxxx}, {xxxx, xxxxxx}, {xxxx, xxxxxx}, {xxxx, xxxxxx}, {NULL, NULL}}, xxxx}, {xxxxxxxxxxxxxxxxx, xxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxx, xxxxxx}, {xxxxx, xxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxxxxxx, xxxxxxxxxx}, {xxxxx, xxxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxx, NULL}, {xxxxxxxxxx, NULL}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxx, xxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxx, xxxxxx}, {xxxxxxxx, xxxxxxxx}, {xxxxxxx, xxxxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxxx, xxxxxxxxxxx}, {xxxxx, xxxxx}, {NULL, NULL}}, xxxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxxxxxx, xxxxxxxxxxxxxxx}, {xxxxxxxxxx, xxxxxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxx, NULL}, {xxxxxxxxxx, NULL}, {xxxxx, NULL}, {NULL, NULL}}, xxxxxxxx}, {xxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx ARC_RPC_ARCHIMEDES_HELP, NULL, NULL, {{xxxxxx, xxxxxx}, {xxxxx, xxxxx}, {NULL, NULL}}, xxxxxx}, {xxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxx, xxxxxxxxx}, {xxxxxxxxxxxxx, xxxxxxxxxxxxx}, {NULL, NULL}}, xxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxxxxxxx, xxxxxxxxxxx}, {xxxxxxxx, xxxxxxxx}, {NULL, NULL}}, xxxxxxxxxxx}, {xxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxx, NULL, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, NULL, NULL, {{xxxxxx, xxxxxxxxxxxxxxxxxxxxxx}, {xxxxxx, xxxxxxxxxxx}, {xxxxx, xxxxx}, {NULL, NULL}}, xxxxxx}, {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL} }",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "R-6/G-2: existing keys, values, defaults and order; only gate-open Archimedes option-help suffixes are added."
       },
       "::arc_options": {
         "declaration": "static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u]",
@@ -37171,6 +37189,54 @@
         "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
         "classification": "immutable-input identity",
         "reason": "Fixed frontend label, safe-error, controller-description or hash-domain initializer; no mutable guest content or process-address identity."
+      },
+      "::arc_rpc_build_descriptor": {
+        "declaration": "static const char arc_rpc_build_descriptor[]=xxxxxxxxxxxxxxxxxxxxxxxxx #if ARC_RPC_ORDINARY_LOAD xxxxxx #else xxxxxxxx #endif xxxxxxxxxxxxx #if ARC_RPC_CATALOGUE_AUTHORED xxxxxxxxxx #else xxxxxxxxxxxx #endif xxxxxx",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "G-1/G-3: retained build capability descriptor derived from target definitions; no guest state."
+      },
+      "arc_rpc_check_selection::ports": {
+        "declaration": "static const struct retro_controller_info ports[]={{types,2},{types,2},{NULL,0}}",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "Fixed RPC port metadata; effective input is compared at the existing applied boundaries."
+      },
+      "arc_rpc_check_selection::types": {
+        "declaration": "static const struct retro_controller_description types[]={{xxxxxxxxxxxxxxxxxxxxxxxxx,ARC_DEVICE_KEYS},{xxxxxxxxxxxxxx,ARC_DEVICE_MOUSE}}",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "Fixed RPC controller enumeration/labels, matching the existing plan route."
+      },
+      "::arc_rpc_override_pending": {
+        "declaration": "static bool arc_rpc_override_pending",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "host-only/excluded",
+        "reason": "R-6: deferred N-9 presentation until the effective Archimedes machine is known; backend choice does not use this flag."
+      },
+      "arc_rpc_check_selection::archives": {
+        "declaration": "static const char *archives[]={xxxxxxxxxxxxxxx,xxxxxxxxxxxxxxxxx}",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "R-4: fixed required archive basenames for read-only first-use preflight."
+      },
+      "arc_message::safe": {
+        "declaration": "static const char *const safe[]={ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx}",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "O-3: fixed safe message literals; player/log presentation only, no guest bytes."
+      },
+      "::arc_rpc_load_entry_ns": {
+        "declaration": "static uint64_t arc_rpc_load_entry_ns",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "host-only/excluded",
+        "reason": "R-4: monotonic load-entry performance timestamp, unrelated to the separately captured guest RTC epoch."
+      },
+      "::arc_rpc_alias_lifecycle": {
+        "declaration": "static bool arc_rpc_alias_lifecycle",
+        "citation": "docs/riscpc-r3d4-design.md:§10; R-1a",
+        "classification": "host-only/excluded",
+        "reason": "Nested RetroArch environment/init/unload/deinit suppression for an aliased secondary while the primary remains loaded; never guest state."
       }
     },
     "tests/arc_test_plan.c": {
@@ -37564,6 +37630,28 @@
         "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
         "classification": "baseline M2b object",
         "reason": "Unchanged explicitly named object from the merged M2b base; no new exclusion or semantic contract."
+      }
+    },
+    "libretro/rpc_staging.h": {
+      "::arc_rpc_staging": {
+        "declaration": "static struct { char bytes[ARC_RPC_STAGE_BYTES]; struct {size_t offset;enum retro_log_level level;bool notice;} event[ARC_RPC_STAGE_EVENTS]; size_t used;unsigned count; bool active,flagged,overflowed,safe_after_overflow; retro_log_printf_t log; } arc_rpc_staging",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "host-only/excluded",
+        "reason": "R-3: copied pre-admission output arena, logger and privacy policy only. It never chooses a successful backend, executes guest instructions or refuses on exhaustion."
+      }
+    },
+    "libretro/rpc_route.c": {
+      "pair_valid::magic": {
+        "declaration": "static const unsigned char magic[8]={xxx,xxx,xxx,xxx,xxx,xxx,xxx,1}",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "D-211/R-5: fixed advisory sidecar version tag; never authoritative for selection, HD or CMOS."
+      },
+      "arc_riscpc_route_epoch_with_clock::lengths": {
+        "declaration": "static const unsigned lengths[]={31,28,31,30,31,30,31,31,30,31,30,31}",
+        "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",
+        "classification": "immutable-input identity",
+        "reason": "Fixed Gregorian month lengths used in host-local civil-time conversion; no retained writable state."
       }
     }
   }

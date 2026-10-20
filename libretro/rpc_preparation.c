@@ -13,6 +13,7 @@ void arc_riscpc_preparation_lockstep_dirty(void){++arc_rpc_lockstep_preparation_
 #define ARC_RPC_PREPARATION_DIRTY() ((void)0)
 #endif
 #include "install_disc.h"
+#include "rpc_route.h"
 #include "install_store.h"
 #include "rpc_launch_helper.h"
 #include "rpc_launch_record_store.h"
@@ -170,7 +171,7 @@ static void failed(ArcRpcPreparation *p,const char *s)
         bool first_loss=!p->ownership_lost;
         p->notice_id="N-18";p->draining=false;p->drain_ok=false;p->ownership_lost=true;
         s="Another app changed ArcDroid's RiscPC save files; this session stopped without saving. Close and reload this content.";
-        if(first_loss && p->host.log)p->host.log(p->host.opaque,"N-18 unsaved: latest CMOS snapshot could not be saved");
+        if(first_loss && p->host.log)p->host.log(p->host.opaque,"N-18 unsaved: The latest RiscPC settings could not be saved.");
     }
     p->retirement_pending=false;
     if(p->attempt.live)arc_riscpc_attempt_interrupt(&p->attempt,ARC_RPC_INTERRUPT_FAULT);
@@ -376,7 +377,7 @@ static void launch_aborted(void *opaque,ArcRpcAttemptInterrupt reason)
     uint64_t started=p->host.clock(p->host.opaque);
     bool completed=arc_riscpc_preparation_complete_publication(p,error,sizeof(error));
     bool saved=completed && arc_riscpc_cmos_store_put(&p->record,latest,NULL,error,sizeof(error));
-    snprintf(p->error,sizeof(p->error),"RiscPC disc rollback failed; session stopped; latest CMOS snapshot %s",saved?"saved":"could not be saved");
+    snprintf(p->error,sizeof(p->error),"RiscPC disc rollback failed; the session stopped. The latest RiscPC settings %s.",saved?"were saved":"could not be saved");
     uint64_t ended=p->host.clock(p->host.opaque),cost=ended>=started?ended-started:0;
     ++p->stats.rollback_exceptions;if(cost>p->stats.rollback_max_ns)p->stats.rollback_max_ns=cost;
     p->notice_id="N-B rollback";failed(p,p->error);
@@ -633,7 +634,16 @@ static void unit(ArcRpcPreparation *p)
         if(!arc_riscpc_cmos_store_put_step(&p->record,&done,p->error,sizeof(p->error)))failed(p,p->error);
         else if(done){memset(p->seed,0,16);memcpy(p->seed+16,p->record.payload,240);after_cmos(p);}break;
     case ARC_RPC_PREP_START:{
-        if(!p->substep){if(!start(p,false))failed(p,p->error);else p->substep=1;break;}
+        if(!p->substep){
+            /* R-Y1: route capture already encodes local calendar time. Never
+             * sample the host clock again or alter the shared default. */
+            unsigned year;
+            if(!arc_engine_rpc_calendar_year(p->request.epoch,&year)){
+                failed(p,"RiscPC session clock is outside the supported range");break;
+            }
+            arc_riscpc_cmos_session_year(p->seed+16,year);
+            if(!start(p,false))failed(p,p->error);else p->substep=1;break;
+        }
         if(p->substep==1){
             if(!arc_engine_rpc_start_step(&done,p->error,sizeof(p->error)))failed(p,p->error);
             else if(done){if(p->host.started)p->host.started(p->host.opaque,false);p->substep=2;}
@@ -692,6 +702,15 @@ static void unit(ArcRpcPreparation *p)
         p->launch_captured=p->launch_prepared && launch_bindings(p,&p->launch_key);
         if(p->launch_prepared){ArcRpcLaunchBinding binding={&p->attempt,&p->controller,launch_revalidate,p,launch_media_changed,launch_aborted,launch_consumed,launch_boundary};
             if(!arc_engine_rpc_launch_bind(&binding)){p->notice_id="N-B launch";failed(p,"RiscPC launch binding failed");break;}}
+        if(p->request.ordinary){
+            arc_io_measure_begin();
+            bool changed=arc_riscpc_pair_admitted(p->save,p->request.key.content,p->request.key.model,(unsigned)p->request.selection.os,&p->content_owner);
+            ArcIoMeasurement advice_io=arc_io_measure_end();
+            p->stats.attachment_operations+=advice_io.operations;p->stats.attachment_bytes+=advice_io.bytes;
+            p->stats.attachment_namespace+=advice_io.namespace_operations;
+            if(owner_lost(&p->content_owner)){failed(p,NULL);break;}
+            if(changed)notice_event(p,"The RiscPC model changed because the available firmware changed. This model uses separate RiscPC settings.",ARC_RPC_NOTICE_ADVISORY,"pair-changed",false);
+        }
         p->state=ARC_RPC_PREP_RUNNING;p->execution_barrier=false;
         if(!p->refusal_reported)notice(p,"",false);
         if(p->launch_unconfigured)notice_event(p,"RiscPC launch delivery is unavailable: helper drive :1 is unconfigured. Manual input remains available.",ARC_RPC_NOTICE_ADVISORY,"launch-unavailable",false);
@@ -847,7 +866,7 @@ bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
     arc_riscpc_preparation_interrupt(p,ARC_RPC_INTERRUPT_RESET);
     if(p->state==ARC_RPC_PREP_RUNNING){
         if(!arc_engine_active() || !arc_engine_is_rpc()){
-            failed(p,"RiscPC reset failed; session stopped; latest CMOS snapshot unavailable");return false;
+            failed(p,"RiscPC reset failed; the session stopped. The latest RiscPC settings were unavailable.");return false;
         }
         uint8_t latest[240];snapshot_cmos(latest);
         arc_engine_rpc_eject(1);
@@ -867,7 +886,7 @@ bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
         if(!ok){
             char snapshot_error[256]={0};bool saved=arc_riscpc_cmos_store_put(&p->record,latest,NULL,snapshot_error,sizeof(snapshot_error));
             char cause[256];snprintf(cause,sizeof(cause),"%s",*p->error?p->error:"RiscPC reset transaction failed");
-            snprintf(p->error,sizeof(p->error),"%s; session stopped; latest CMOS snapshot %s",cause,saved?"saved":"could not be saved");
+            snprintf(p->error,sizeof(p->error),"%s; the session stopped. The latest RiscPC settings %s.",cause,saved?"were saved":"could not be saved");
             failed(p,p->error);
         }else {p->retirement_pending=false;p->execution_barrier=false;}
         return ok;
@@ -1041,7 +1060,7 @@ void arc_riscpc_preparation_failed_frame(ArcRpcPreparation *p)
         ok=arc_riscpc_cmos_store_put_step(&p->record,&done,error,sizeof(error));
         if(ok && done && p->drain_started){
             p->draining=false;p->drain_ok=true;
-            char cause[512];snprintf(cause,sizeof(cause),"%.390s; latest CMOS snapshot saved",p->error);
+            char cause[512];snprintf(cause,sizeof(cause),"%.390s The latest RiscPC settings were saved.",p->error);
             notice_event(p,cause,ARC_RPC_NOTICE_TERMINAL,"N-B drain",true);return;
         }
     }else if(ok && !p->drain_started){
@@ -1049,14 +1068,14 @@ void arc_riscpc_preparation_failed_frame(ArcRpcPreparation *p)
         ok=arc_riscpc_cmos_store_put_begin(&p->record,p->drain_payload,NULL,error,sizeof(error));
         if(ok && !p->record.putting){
             p->draining=false;p->drain_ok=true;
-            char cause[512];snprintf(cause,sizeof(cause),"%.390s; latest CMOS snapshot saved",p->error);
+            char cause[512];snprintf(cause,sizeof(cause),"%.390s The latest RiscPC settings were saved.",p->error);
             notice_event(p,cause,ARC_RPC_NOTICE_TERMINAL,"N-B drain",true);return;
         }
     }else ok=false;
     if(owner_lost(&p->content_owner)){failed(p,NULL);return;}
     if(!ok || p->drain_frames>=60){
         p->draining=false;
-        char cause[512];snprintf(cause,sizeof(cause),"%.380s; latest CMOS snapshot could not be saved",p->error);
+        char cause[512];snprintf(cause,sizeof(cause),"%.380s The latest RiscPC settings could not be saved.",p->error);
         notice_event(p,cause,ARC_RPC_NOTICE_TERMINAL,"N-B drain",true);
     }
 }

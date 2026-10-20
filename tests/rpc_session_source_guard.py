@@ -20,7 +20,7 @@ for path in (root/'libretro').glob('*.c'):
     require(capabilities==(1 if path.name=='arcdroid_libretro.c' else 0),f'{path}: unexpected capability query ({capabilities})')
     observer_cells=re.findall(r'\barc_engine_rpc_observers_capability\s*\(\s*(\w+)\s*\)',text)
     require(len(observer_cells)==len(re.findall(r'\barc_engine_rpc_observers_capability\s*\(',text)),f'{path}: unlisted observer capability expression')
-    require(sorted(observer_cells)==(['ARC_RPC_CELL_REPLACE_A','ARC_RPC_CELL_REPLACE_B'] if path.name=='arcdroid_libretro.c' else []),f'{path}: unexpected observer capability query')
+    require(sorted(observer_cells)==(['ARC_RPC_CELL_REPLACE_A','ARC_RPC_CELL_REPLACE_B','bit'] if path.name=='arcdroid_libretro.c' else []),f'{path}: unexpected observer capability query')
     require('arc_backend' not in text,f'{path}: dispatcher pointer escaped')
     if path.name!='arcdroid_libretro.c':
         require(not re.search(r'\barc_frontend_session_id\s*\(',text),f'{path}: ID authority escaped into storage')
@@ -43,14 +43,23 @@ for name in ('arc_riscpc_preparation_persist','arc_riscpc_preparation_reset','ar
 # Pinned eebfc01 has 15 frontend dispatcher-identity sites: these fourteen
 # predicates plus the now constant maximum-geometry bound. Part 2 adds fourteen
 # input/media/rollback policy sites, pinned below with the original predicates. H-J added consumers
-# of rpc_error, but no additional dispatcher query. Pin their owner as well.
+# of rpc_error, but no additional dispatcher query. R3d-4 adds safe RPC log/
+# error projections at six sites below; pin their owners and literal payloads.
 policy_sites={'arc_disk_insert_entry':1,'arc_disc_commit':5,
-    'arc_disc_observation':1,'arc_disc_setup':1,'arc_rpc_disc_log':1,
-    'arc_disc_boundary':1,'arc_disk_replace':2,'arc_poll_inputs':4,
-    'arc_disk_set_eject':1,'arc_disk_set_index':1,'arc_disk_add':1,'arc_keyboard':1,
-    'retro_reset':1,'retro_run':1}
+    'arc_disc_observation':2,'arc_disc_setup':1,'arc_rpc_disc_log':1,
+    'arc_disc_boundary':2,'arc_disk_replace':4,'arc_poll_inputs':4,
+    'arc_disk_set_eject':2,'arc_disk_set_index':1,'arc_disk_add':1,'arc_keyboard':1,
+    'retro_reset':1,'retro_run':2}
 for name,count in policy_sites.items():
     require(len(re.findall(r'\barc_kind\s*==\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==count,f'{name}: changed session-kind policy census')
+media_error='arc_kind==ARC_SESSION_KIND_RISCPC?"The selected disc could not be loaded. Check that the file is complete and a supported type.":'
+for name,count in [('arc_disk_replace',2),('arc_disk_set_eject',1)]:
+    require(body(name).count(media_error)==count,f'{name}: changed safe RPC media error owner')
+require('arc_kind==ARC_SESSION_KIND_RISCPC?"The emulated RiscPC stopped. Close and reload this content.":' in body('retro_run'),
+        'retro_run: changed safe RPC fault owner')
+for name,signal in [('arc_disc_observation','B'),('arc_disc_boundary','A')]:
+    require(re.search(r'if\([^\n]*arc_kind==ARC_SESSION_KIND_RISCPC\)\s*arc_log\(RETRO_LOG_INFO,\s*"Disc request: signal='+signal,body(name)),
+            f'{name}: changed safe RPC disc log owner')
 for name in ('arc_disc_commit','arc_disk_set_eject','arc_disk_set_index','arc_disk_replace','arc_disk_add','arc_keyboard'):
     require(len(re.findall(r'\barc_kind\s*!=\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==1,f'{name}: changed part 2 non-RPC policy census')
 poll=body('arc_poll_inputs')
@@ -58,6 +67,12 @@ require('bool rpc_error=(arc_kind == ARC_SESSION_KIND_RISCPC);' in poll,'hint/in
 require(len(re.findall(r'\brpc_error\s*=(?!=)',poll))==1,'hint/input RPC owner must not be reassigned')
 for name,cell in [('arc_disc_observation','ARC_RPC_CELL_REPLACE_B'),('arc_disc_boundary','ARC_RPC_CELL_REPLACE_A')]:
     require('arc_engine_rpc_observers_capability('+cell+')' in body(name),f'{name}: changed observer capability owner')
+attach=body('arc_rpc_attach')
+require(re.search(r'#if ARC_RPC_ORDINARY_LOAD\s+if\(!arc_rpc_plan_admitted && arc_log\)\{unsigned cells=0;for\(unsigned bit=1;bit<=128;bit<<=1\)if\(arc_engine_rpc_observers_capability\(bit\)\)cells\|=bit;',attach),
+        'ordinary attach must own the bounded production observer summary')
+require(attach.count('arc_engine_rpc_observers_capability(')==1 and
+        '"RPC route: production-observer-cells=%u\\n",cells' in attach,
+        'observer summary must only report the effective cells')
 require(front.count('arc_session_id_allocate(&arc_session_ids, &arc_session_id)')==3,'one admission per frontend route plus direct-engine test seam')
 require('static ArcSessionIdSource arc_session_ids;' in front,'library-local counter')
 require(not re.search(r'arc_session_ids\s*(?:=|\.)',front),'counter must survive init/deinit')
@@ -80,4 +95,4 @@ for directory in ('core','libretro'):
     for path in (root/directory).glob('*.[ch]'):
         if path.name in ('arc_session.c','arc_session.h','arcdroid_libretro.c'):continue
         require(not re.search(r'\b(?:ArcSessionIdSource|arc_frontend_session_id|arc_session_ids)\b',path.read_text()),f'{path}: persisted ID dependency')
-print('session identity source guard: original + part 2 policy predicates + constant AV bound; hint/reset/log owners; two observer cells; preparation ownership exception; library-local nonpersisted IDs')
+print('session identity source guard: original + part 2 policy predicates + constant AV bound; hint/reset/log owners; two observer cells and ordinary attach summary; preparation ownership exception; library-local nonpersisted IDs')

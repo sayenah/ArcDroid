@@ -2,8 +2,9 @@
 
 # RiscPC session preparation (D-168, D-170, D-171, D-172)
 
-Written before implementation, against `d374114`. Shipping ordinary loads keep
-Arculator. The shipping-source module is dormant; plan v2 is its low-level client.
+Written before implementation, against `d374114`. Gate-closed ordinary loads keep
+Arculator. Gate-open ordinary loads use the production host; plan v2 remains a
+test-only low-level client.
 The original scheduler/resource description below records that implementation;
 the Run A host contract supersedes its eager live-publication policy and defines
 the proposed host/reset/notice behavior before host implementation.

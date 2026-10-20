@@ -23,6 +23,11 @@ static void digest_bytes(const char *s,uint8_t *p)
 { for(unsigned i=0;i<32;++i)p[i]=(uint8_t)(nibble(s[2*i])*16+nibble(s[2*i+1])); }
 bool arc_riscpc_cmos_checksum(const uint8_t p[240])
 { unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=p[i];return (uint8_t)sum==p[47]; }
+void arc_riscpc_cmos_session_year(uint8_t p[240],unsigned year)
+{
+    p[176]=(uint8_t)(year%100);p[177]=(uint8_t)(year/100);
+    unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=p[i];p[47]=(uint8_t)sum;
+}
 bool arc_riscpc_cmos_two_floppies(unsigned layout,uint8_t p[240])
 {
     if(!p || layout<1 || layout>3 || !arc_riscpc_cmos_checksum(p))return false;

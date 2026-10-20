@@ -90,7 +90,7 @@ static void host_run_b(const uint8_t *rom,size_t size,ArcRpcPreparationHost host
         assert(!arc_engine_rpc_advance(10000));arc_riscpc_host_maintenance(frontend_test_host);
         assert(arc_riscpc_preparation_draining(p) && strcmp(host_display,retained) && !strstr(host_display,"snapshot"));
         assert(!strchr(host_display,'\n'));arc_riscpc_host_pending_frame(frontend_test_host);
-        assert(strstr(host_display,"; latest CMOS snapshot could not be saved") && !strchr(host_display,'\n'));b_free(false);
+        assert(strstr(host_display," The latest RiscPC settings could not be saved.") && !strchr(host_display,'\n'));b_free(false);
     }
     puts("Run B F5 exception-1/fallback-resend, S3: fault immediately replaces refusal; exact 60/120/180 fallback refreshes, trimmed cause");
     /* Stepped S-4 has no namespace operation on begin, nor a completed generation. */

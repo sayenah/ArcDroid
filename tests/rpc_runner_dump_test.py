@@ -110,7 +110,8 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-runner-disc-') as temp:
     for _ in range(2):
         result=subprocess.run(args,capture_output=True,text=True)
         assert result.returncode==0,result.stderr+result.stdout
-        assert 'cells=0x34' in result.stderr and 'signal=A gate=seen name=Two' in result.stderr
+        assert 'cells=0x34' in result.stderr and 'signal=A gate=seen active=1 notified=0 candidate=2 action=resolved reason=unique observation=A:seen. The guest requested another disc.' in result.stderr,result.stderr
+        assert 'name=Two' not in result.stderr,'RPC log exposed a guest disc name'
         assert 'candidate=2 action=resolved reason=unique' in result.stderr
         assert 'action=inserted reason=unique' in result.stderr and 'Disc 2 inserted' in result.stderr,result.stderr
         assert 'user-error-open' not in result.stderr and 'identity-unknown' not in result.stderr

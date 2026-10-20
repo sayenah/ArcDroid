@@ -1,7 +1,8 @@
 # RiscPC revision-2 startup gate (R3c-3a)
 
 This note fixes the interface before implementation. All guest code is
-ArcDroid-authored GPL-2.0-only. Ordinary loads and Arculator remain unchanged.
+ArcDroid-authored GPL-2.0-only. Gate-closed ordinary loads and Arculator remain unchanged. Gate-open ordinary
+RiscPC loads attach the generated helper with no launch plan.
 Revision eligibility is provenance, never evidence of delivery.
 
 ## Run B freeze decisions (D-185; specified before code)

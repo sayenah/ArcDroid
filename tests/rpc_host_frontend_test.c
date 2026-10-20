@@ -10,6 +10,8 @@ static struct retro_disk_control_ext_callback disks;
 static struct retro_keyboard_callback keyboard;
 static unsigned videos,audios,polls,av_calls,controllers,descriptors,summary_lines,freeze_notices[4];
 static uint64_t audio_frames,pixel_hash=1469598103934665603ULL,sound_hash=1469598103934665603ULL;
+static bool projection_override;
+static const char *projection_axis;
 static bool shipping,failed,changed,write_off,last_catalogue_message,matrix_mode,following_arculator,direct_start_compat;
 static char terminal[512];
 static unsigned privacy_ext,privacy_legacy,privacy_notice,privacy_ext_notice,privacy_legacy_notice;
@@ -48,6 +50,8 @@ static bool host_environment(unsigned command,void *data)
     if(command==RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES){*(uint64_t *)data=UINT64_C(1)<<RETRO_DEVICE_KEYBOARD;return true;}
     if(command==RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE){*(bool *)data=changed;changed=false;return true;}
     if(command==RETRO_ENVIRONMENT_GET_VARIABLE){struct retro_variable *v=data;
+        if(projection_override && !strcmp(v->key,projection_axis)){v->value=!strcmp(projection_axis,"arcdroid_cpu")?"ARM2":!strcmp(projection_axis,"arcdroid_os")?"RISC OS 2.00":"A3000";return true;}
+        if(projection_override && (!strcmp(v->key,"arcdroid_machine") || !strcmp(v->key,"arcdroid_cpu") || !strcmp(v->key,"arcdroid_os"))){v->value="Auto";return true;}
         if(!strcmp(v->key,"arcdroid_disk_writes")){v->value=write_off?"off":"shadow";return true;}
         if(!strcmp(v->key,"arcdroid_jfd_write_protect")){v->value=write_off?"off":"as-imaged";return true;}
         if(!strcmp(v->key,"arcdroid_short_tail")){v->value=write_off?"zero-filled":"missing";return true;}
@@ -85,9 +89,12 @@ static size_t host_audio(const int16_t *data,size_t frames)
     hash(&sound_hash,data,frames*4);return frames;
 }
 static void host_poll(void){++polls;}
+static bool host_secondary_environment(unsigned command,void *data)
+{return host_environment(command,data);}
 int main(int argc,char **argv)
 {
-    assert(argc==6);matrix_mode=!strncmp(argv[5],"matrix:",7);shipping=!strcmp(argv[5],"shipping");extended_messages=strstr(argv[5],"fallback")==NULL;system_directory=argv[3];assert(canonical(argv[4],save_directory));
+    assert(argc==6);matrix_mode=!strncmp(argv[5],"matrix:",7);shipping=!strncmp(argv[5],"shipping",8);projection_override=strstr(argv[5],"override")!=NULL;extended_messages=strstr(argv[5],"fallback")==NULL;system_directory=argv[3];assert(canonical(argv[4],save_directory));
+    projection_axis=strstr(argv[5],"override-cpu")?"arcdroid_cpu":strstr(argv[5],"override-os")?"arcdroid_os":"arcdroid_machine";
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
@@ -100,8 +107,32 @@ int main(int argc,char **argv)
     LOAD(get_av,"retro_get_system_av_info");LOAD(set_environment,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");
     LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");
     phase=no_phase;if(!shipping){LOAD(phase,"arc_test_plan_cmos_phase");}
-    set_environment(host_environment);init();set_video(host_video);set_audio(host_audio);set_poll(host_poll);set_input(input);
-    struct retro_game_info game={.path=argv[2]};assert(load(&game));
+    bool reordered=strstr(argv[5],"reordered")!=NULL;
+    set_environment(host_environment);init();
+    struct retro_game_info game={.path=argv[2]};
+    if(reordered)assert(load(&game));
+    set_video(host_video);set_audio(host_audio);set_poll(host_poll);set_input(input);
+    if(!reordered)assert(load(&game));
+    if(!strcmp(argv[5],"shipping-replace")){
+        /* No run/reset/unload can persist the outgoing session first. The
+         * distinct replacement has a different CMOS key, including at deinit. */
+        char replacement[4096];snprintf(replacement,sizeof(replacement),"%s/replacement.adf",system_directory);
+        struct retro_game_info next={.path=replacement};assert(load(&next));
+        unload();deinit();vfs_assert_no_open_handles();
+        puts("closed shipping: live session replaced before its first frame");return 0;
+    }
+    if(reordered){
+        if(!shipping){
+            struct retro_disk_control_ext_callback registered=disks;unsigned summaries=summary_lines;
+            assert(!load(&game)); /* A successfully loaded but pending plan is live. */
+            set_environment(host_secondary_environment);init();assert(!load(&game));
+            run();reset();unload();deinit();
+            assert(!videos && !audios && summary_lines==summaries && !memcmp(&registered,&disks,sizeof(disks)));
+            set_environment(host_environment);
+        }
+        following_arculator=true;for(unsigned f=0;f<5;++f)run();assert(videos==5 && audios==5);
+        unload();deinit();vfs_assert_no_open_handles();puts("RetroArch primary order: load before callbacks, five frames and clean teardown pass");return 0;
+    }
     if(!strncmp(argv[5],"message-",8)){
         for(unsigned i=0;i<65;++i)run();
         bool legacy=!strcmp(argv[5],"message-legacy");
@@ -195,7 +226,7 @@ int main(int argc,char **argv)
         struct retro_system_av_info av;get_av(&av);
         if(!strncmp(argv[5],"rate",4))assert(fabs(av.timing.fps-atof(argv[5]+4))<0.01);
         for(unsigned i=0;i<65;++i){unsigned v=videos,a=audios;run();assert(videos==v+1 && audios==a+1);}
-        assert(av_calls==prior_av && strstr(terminal,"snapshot saved"));
+        assert(av_calls==prior_av && strstr(terminal,"RiscPC settings were saved"));
         double expected=65*48000.0/av.timing.fps;
         assert(fabs((double)(audio_frames-initial_samples)-expected)<=1.0);
         reset();assert(phase()==1);
