@@ -41,7 +41,9 @@ def cases(root, profile):
         save.mkdir()
         result = subprocess.run([sys.argv[1], str(system), str(save), str(quantum),
                                  'budgets', '0', '0'], capture_output=True,
-                                text=True, timeout=240)
+                                # W10b C: sanitizer 240.84 s censored at 240;
+                                # twice that observation, rounded to a minute.
+                                text=True, timeout=540 if profile == 'sanitizer' else 240)
         require(result.returncode == 0, result.stdout + result.stderr)
         stats = next(json.loads(line) for line in result.stdout.splitlines()
                      if line.startswith('{'))

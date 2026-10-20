@@ -51,7 +51,7 @@ jobs:
       - name: Asset guard
         run: tools/check-assets.sh
       - name: Configure
-        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ON' || 'OFF' }}
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=OFF
       - name: Build
         run: cmake --build build/host --verbose
       - name: Shipping source I/O guard self-test
@@ -84,6 +84,61 @@ jobs:
           python3 tests/rpc_host_frontend_test.py build/host/rpc_host_frontend_test build/host/arcdroid_libretro.so build/host/tests/fixtures/generated shipping-legacy build/ordinary-open/arcdroid_libretro.so
           python3 tests/rpc_host_frontend_test.py build/host/rpc_host_frontend_test build/host/arcdroid_libretro.so build/host/tests/fixtures/generated shipping-override build/ordinary-open/arcdroid_libretro.so
           python3 tests/rpc_route_metadata_test.py build/ordinary-open/rpc_route_harness build/host/arcdroid_libretro.so build/ordinary-open/arcdroid_libretro.so build/r3d4-base/arcdroid_libretro.so
+      - name: ccache statistics
+        if: always()
+        run: ccache -s
+
+  host-lockstep-local:
+    # W10b C: maximum observed durations; one golden at a time per runner.
+    # Ordinary host tests and the emitter CI subset stay in the host job.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 295
+    strategy:
+      fail-fast: false
+      # Six other jobs + at most fourteen shard jobs stays within twenty,
+      # even without relying on the Windows -> RetroArch dependency.
+      max-parallel: 14
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache llvm
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-lockstep-local-gcc-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          restore-keys: |
+            ${{ runner.os }}-lockstep-local-gcc-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+      - name: Configure local lockstep tests and registration reference
+        run: |
+          cmake -S . -B build/lockstep-local -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=ON
+          cmake -S . -B build/lockstep-reference -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=OFF
+      - name: Local lockstep shard coverage and mutant guard
+        run: |
+          python3 -B tools/check-lockstep-shards.py --self-test
+          python3 -B tools/check-lockstep-shards.py --on build/lockstep-local --off build/lockstep-reference --shard-count ${{ strategy.job-total }}
+      - name: Build
+        run: cmake --build build/lockstep-local --parallel 4
+      - name: Local lockstep shard
+        # Estimates remain below 240 min. Allow W4's 244 min per-test
+        # censored-observation limit to take effect within the 295 min job.
+        timeout-minutes: 270
+        run: ctest -j 2 --test-dir build/lockstep-local --output-on-failure --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$' --output-junit shard-${{ matrix.shard }}.xml
+      - name: Upload shard timings and failure logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lockstep-local-shard-${{ matrix.shard }}
+          path: |
+            build/lockstep-local/shard-${{ matrix.shard }}.xml
+            build/lockstep-local/Testing/Temporary/LastTest*.log
+          if-no-files-found: warn
       - name: ccache statistics
         if: always()
         run: ccache -s
