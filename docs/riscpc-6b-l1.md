@@ -498,3 +498,18 @@ Odin3, L1 off (every cache linear) against the way0-hint core (run C variant cor
 | ldm-stm8 | −1.70 % / −1.77 % | −1.94 % / −1.76 % | 0.50 % / 0.50 % | no regression |
 
 **Outcome by the frozen rule: not confirmed** (regressions on stream-sa110 and stream-arm710 in both orders; hot to be retested). L1 does not merge at this head. **Fable's ruling (run F):** the cost is consistent with QA S-2 (hint and mirror maintenance on every fill and invalidate for gates that never read them) and with the hint check after a way-0 miss on miss-heavy streams. Run F removes all hint and mirror maintenance for linear gates (ARM710, ARM7500, and any linear SA-110 configuration), keeps exactness, and minimises the way-0-miss path cost on SA-110 without changing its lookup order; then a fresh rule-4 confirmation run on all six workloads (the frozen rule and bands unchanged; this run's data is not reused).
+
+## Rule-4 confirmation run 2 (S70, recorded by Fable)
+
+Odin3, L1 off (every cache linear) against the way0-hint core, both built from run F (`c57c707`), the same six frozen workloads, two six-run orders each, 120 s idle, the same frozen analysis and D-201 bands; no run flagged by the clock-step rule (private `.work/s70/l1conf2/`). Δ = (B − A)/A, p50 / p95:
+
+| Workload | Order 1 | Order 2 | Band₅₀ / band₉₅ (D-201) | Outcome |
+|---|---|---|---|---|
+| 031 | −10.59 % / −10.86 % | −11.54 % / −11.33 % | 0.80 % / 0.62 % | gain |
+| hot | −0.00 % / +0.11 % | −0.04 % / −0.14 % | 0.90 % / 0.99 % | no regression |
+| warm | −2.18 % / −2.32 % | −1.61 % / −0.77 % | 0.50 % / 0.50 % | no regression |
+| stream-sa110 | +0.03 % / −1.76 % | +0.01 % / +0.42 % | 0.50 % / 0.50 % | no regression |
+| stream-arm710 | −0.03 % / +0.14 % | −0.09 % / −0.03 % | 0.78 % / 0.50 % | no regression |
+| ldm-stm8 | −2.88 % / −2.79 % | −2.14 % / −2.21 % | 0.50 % / 0.50 % | no regression |
+
+**Outcome by the frozen rule: confirmed.** Run F removed the stream regressions of the first confirmation (stream-sa110 +0.76 % / +1.00 % p50 then, +0.03 % / +0.01 % now; stream-arm710 +0.88 % / +0.82 % then, −0.03 % / −0.09 % now) and kept the 031 gain. L1 merges at run F's head after it is merged with `main` and its full local PR tier passes (D-212); S1 follows.
