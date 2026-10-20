@@ -3500,6 +3500,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_test(NAME rpc-retroarch-notice-privacy COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_rpc_privacy_test.py")
   set_tests_properties(rpc-retroarch-notice-privacy PROPERTIES TIMEOUT 30)
+  add_test(NAME rpc-retroarch-windows-config COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_windows_config_test.py")
+  set_tests_properties(rpc-retroarch-windows-config PROPERTIES TIMEOUT 30)
   add_test(NAME rpc-host-source-guard COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}")
   set_tests_properties(rpc-host-source-guard PROPERTIES TIMEOUT 30)

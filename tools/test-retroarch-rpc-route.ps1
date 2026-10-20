@@ -29,10 +29,17 @@ arcdroid_machine = "Auto"
 arcdroid_cpu = "Auto"
 arcdroid_os = "Auto"
 '@ | Set-Content -Encoding ASCII $ordinaryOptions
+# Match the working native legs: CI exposes Microsoft's OpenGL 1.1 renderer.
+# RA's gl driver saves a fallback config and exits(1) on that renderer; it does
+# not continue with the fallback. GDI also preserves the raw screenshot path.
 @"
-video_driver = "gl"
+video_driver = "gdi"
 audio_driver = "sdl2"
 audio_enable = "true"
+record_driver = "wav"
+midi_driver = "null"
+midi_input = "Null"
+midi_output = "Null"
 input_driver = "dinput"
 video_fullscreen = "false"
 video_windowed_fullscreen = "false"
@@ -47,6 +54,8 @@ core_options_path = "$(ConfigPath $ordinaryOptions)"
 system_directory = "$(ConfigPath $ordinarySystem)"
 savefile_directory = "$(ConfigPath $ordinarySave)"
 savestate_directory = "$(ConfigPath $ordinarySave)"
+sort_savefiles_enable = "false"
+sort_savefiles_by_content_enable = "false"
 libretro_directory = "$(ConfigPath $coreDirectory)"
 libretro_info_path = "$(ConfigPath $infoDirectory)"
 screenshot_directory = "$(ConfigPath $evidenceDirectory)"
@@ -59,11 +68,12 @@ rewind_enable = "true"
 "@ | Set-Content -Encoding ASCII $ordinaryConfig
 $config = '"' + (Resolve-Path $ordinaryConfig).Path + '"'
 $core = $ordinaryCore
-function Wait-OrdinaryLog($Run, [string]$Pattern) {
+function Wait-OrdinaryLog($Run, [string]$Pattern, [int]$AfterLines = 0) {
     $deadline = [DateTime]::UtcNow.AddSeconds(180)
     do {
         if (Test-Path $Run.RetroLog) {
             $text = [string](Get-Content -Raw $Run.RetroLog)
+            if ($AfterLines) { $text = (@(Get-Content $Run.RetroLog | Select-Object -Skip $AfterLines) -join "`n") }
             if ($text -match $Pattern) { return $text }
             if ($text -match 'Failed to load content') { throw 'Real RetroArch primary ordinary load failed before the expected event' }
         }
@@ -111,6 +121,7 @@ try {
 } finally { if ($run) { Stop-MediaRun $run } }
 $config = '"' + (Resolve-Path $ordinaryConfig).Path + '"'
 $core = $ordinaryCore
+$ordinarySwitchDrivable = $true
 foreach ($leg in @(1, 2)) {
     $run = $null
     $pendingOwner = $null
@@ -169,30 +180,60 @@ foreach ($leg in @(1, 2)) {
             if ([regex]::Matches($text, 'summary: phase=pending .*state=10 ').Count -ne 1) { throw 'A secondary reached RUNNING' }
         }
         if ($leg -eq 2) {
-            # No relaunch fallback: this exact process must load Arculator.
+            # Fable: only the exact frontend rejection permits a not-drivable
+            # result. Same-process R3d-4 evidence rests on Odin3 assisted J6
+            # and the harness. Recognised commands keep the strict checks;
+            # there is no relaunch fallback and no timeout/crash exception.
             Copy-Item (Join-Path $InputDirectory 'arcdroid-test.rom') (Join-Path $ordinarySystem 'arcdroid/firmware/authored-arculator.rom')
             $ordinaryArc = (Resolve-Path (Join-Path $InputDirectory 'arcdroid-test.adf')).Path
-            Send-MediaCommand $run "LOAD_CONTENT $(ConfigPath $ordinaryCore)|$(ConfigPath $ordinaryArc)"
-            [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM')
-            $after = Capture-StableRawScreenshot $run 'rpc-ordinary-after-arculator'
-            $ordinaryArcSignature = $after.VisualSignature
+            $loadCommand = "LOAD_CONTENT $(ConfigPath $ordinaryCore)|$(ConfigPath $ordinaryArc)"
+            $switchStart = @(Get-Content $run.RetroLog).Count
+            Send-MediaCommand $run $loadCommand
+            $rejection = '[WARN] Unrecognized command "' + $loadCommand + '" received.'
+            [void](Wait-OrdinaryLog $run ('(?m)^' + [regex]::Escape($rejection) + '\r?$|Firmware: ArcDroid test ROM') $switchStart)
+            $switchResult = & python -B (Join-Path $PSScriptRoot 'check-retroarch-rpc-switch.py') $run.RetroLog `
+                --after-lines $switchStart --command $loadCommand --core ((Resolve-Path $ordinaryCore).Path)
+            if ($LASTEXITCODE -ne 0) { throw 'Ordinary switch log classification failed' }
             if ($run.Process.HasExited) { throw 'LOAD_CONTENT relaunched instead of switching' }
+            if ($switchResult -ceq 'unsupported') {
+                $ordinarySwitchDrivable = $false
+                [void](Capture-ExpectedVisualSignature $run 'rpc-ordinary-command-unsupported' $guest)
+                $ordinarySwitchEvidence = "R3d-4 RetroArch ${retroArchVersion}: same-process Arculator switch is not drivable by this frontend build (exact LOAD_CONTENT rejection); evidence rests on Odin3 assisted J6 and the harness."
+            } elseif ($switchResult -ceq 'strict') {
+                [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM' $switchStart)
+                $after = Capture-StableRawScreenshot $run 'rpc-ordinary-after-arculator'
+                $ordinaryArcSignature = $after.VisualSignature
+                if ($run.Process.HasExited) { throw 'LOAD_CONTENT relaunched instead of switching' }
+                $ordinarySwitchEvidence = "R3d-4 RetroArch ${retroArchVersion}: same-process Arculator switch observed; raw-pixel baseline captured."
+            } else { throw 'Unknown ordinary switch classification' }
+            Write-Host $ordinarySwitchEvidence
+            $ordinarySwitchEvidence | Set-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-ordinary-switch.txt')
         }
     } finally {
         if ($pendingOwner) { $pendingOwner.Dispose() }
         if ($run) { Stop-MediaRun $run }
+    }
+    if ($leg -eq 2) {
+        # Include late load/error lines through clean QUIT, not just the first
+        # reply. A rejection cannot excuse a later core change or load failure.
+        $finalSwitchResult = & python -B (Join-Path $PSScriptRoot 'check-retroarch-rpc-switch.py') $run.RetroLog `
+            --after-lines $switchStart --command $loadCommand --core ((Resolve-Path $ordinaryCore).Path)
+        if ($LASTEXITCODE -ne 0 -or $finalSwitchResult -cne $switchResult) { throw 'Ordinary switch outcome changed before QUIT' }
     }
     if ($leg -eq 1) {
         Remove-Item (Join-Path $ordinarySystem 'arcdroid/riscpc/boot/HardDisc4.zip'), (Join-Path $ordinarySystem 'arcdroid/riscpc/boot/PlingSystem.zip')
     }
 }
 # Fresh-process Arculator control with the same core/config; compare raw pixels.
+# An exact frontend rejection leaves RPC running, so that path has no switched
+# Arculator image to compare. Its fresh Arculator control must still render.
 $run = $null
 try {
     $run = Start-MediaRun ('"' + $ordinaryArc + '"') 'rpc-ordinary-fresh-arculator'
     [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM')
     $fresh = Capture-StableRawScreenshot $run 'rpc-ordinary-fresh-arculator'
-    if ($fresh.VisualSignature -ne $ordinaryArcSignature) { throw 'Arculator pixels differ after RPC switch' }
+    if ($fresh.Colours -lt 2) { throw 'Fresh Arculator control has no guest raster' }
+    if ($ordinarySwitchDrivable -and $fresh.VisualSignature -ne $ordinaryArcSignature) { throw 'Arculator pixels differ after RPC switch' }
 } finally { if ($run) { Stop-MediaRun $run } }
 function Invoke-OrdinaryRefusal([string]$Library, [string]$Name, [string]$Pattern) {
     $refusalLog = Join-Path $evidenceDirectory "$Name.log"
@@ -235,5 +276,5 @@ if (Test-Path (Join-Path $archiveSave 'arcdroid/hd-riscpc')) { throw 'Missing ar
 # J3 uses the unmodified gate-open SHIPPING DLL, with an empty firmware folder.
 Get-ChildItem (Join-Path $ordinarySystem 'arcdroid/firmware') | Remove-Item
 Invoke-OrdinaryRefusal (Join-Path $ordinaryBuild 'arcdroid_libretro.dll') 'rpc-ordinary-shipping-j3' 'N-1: Needs RiscPC'
-'R3d-4 test-core: first use, archive-free reopen, primary run-ahead/rewind refusal, same-process Arculator switch and raw-pixel baseline; shipping J3. J4 is test-core evidence.' |
+'R3d-4 test-core: first use, archive-free reopen, primary run-ahead/rewind refusal and fresh Arculator control; switch outcome in rpc-ordinary-switch.txt; shipping J3. J4 is test-core evidence.' |
     Set-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-ordinary-result.txt')
