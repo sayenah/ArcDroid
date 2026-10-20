@@ -156,17 +156,18 @@ if(TARGET arcdroid_rpclockstep_libretro)
     list(APPEND RPC_LOCKSTEP_GOLDENS rpc-factory-capture-2 rpc-factory-capture-3)
     foreach(density IN ITEMS baseline every-instruction full-audit)
       foreach(golden IN LISTS RPC_LOCKSTEP_GOLDENS)
-        # Completed local goldens reached 2829.44 s in that nightly. Keep
-        # their subprocess budget below the existing 6060 s CTest limit,
-        # with >2x that measured maximum (W4), including dense AV model 3.
+        # Other local goldens reached 2984.51 s in 39343599455. Their
+        # existing budgets still cover >2x that maximum (W4), including
+        # dense AV model 3; leave the non-heavy limits unchanged.
         set(rpc_lockstep_golden_timeout 6000)
         set(rpc_lockstep_ctest_timeout 6060)
         if(golden MATCHES "^rpc-plan-av-[012]$")
-          # W10b / nightly 39258331010, -j4: six subprocess timeouts at
-          # 3600.40--3600.44 s (completion unknown). W4: next whole minute
-          # above twice the censored maximum, plus one minute for the wrapper.
-          set(rpc_lockstep_golden_timeout 7260)
-          set(rpc_lockstep_ctest_timeout 7320)
+          # W10b B / 39343599455 at -j4: completed AV max 6865.94 s;
+          # four concurrent AV cases hit 7260.44--7260.51 s (censored).
+          # W4: round twice the censored max up to a minute, plus a minute
+          # for the wrapper. A shared lock prevents AV/AV contention.
+          set(rpc_lockstep_golden_timeout 14580)
+          set(rpc_lockstep_ctest_timeout 14640)
         endif()
         add_test(NAME rpc-lockstep-golden-${density}-${golden} COMMAND "${Python3_EXECUTABLE}" -B
           "${RPC_LOCKSTEP_PY}/rpc_lockstep_goldens_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
@@ -174,6 +175,10 @@ if(TARGET arcdroid_rpclockstep_libretro)
           ${density} --only ${golden} --timeout ${rpc_lockstep_golden_timeout})
         set_tests_properties(rpc-lockstep-golden-${density}-${golden} PROPERTIES
           TIMEOUT ${rpc_lockstep_ctest_timeout})
+        if(golden MATCHES "^rpc-plan-av-[012]$")
+          set_property(TEST rpc-lockstep-golden-${density}-${golden}
+            APPEND PROPERTY RESOURCE_LOCK rpc-lockstep-heavy-av)
+        endif()
       endforeach()
     endforeach()
     # Label the entire option's registration delta, independently of the plan:

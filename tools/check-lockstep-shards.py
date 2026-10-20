@@ -15,6 +15,8 @@ import sys
 
 
 LOCAL = "rpc-lockstep-local"
+HEAVY_AV = re.compile(r"^rpc-lockstep-golden-.*-rpc-plan-av-[012]$")
+HEAVY_AV_LOCK = "rpc-lockstep-heavy-av"
 
 
 def verify_workflow(workflow, count):
@@ -60,6 +62,11 @@ def verify(on, off, shards):
     for tests, enabled in ((on, True), (off, False)):
         for test in tests:
             name = test["name"]
+            if enabled and HEAVY_AV.fullmatch(name):
+                locks = next((p["value"] for p in test.get("properties", [])
+                              if p["name"] == "RESOURCE_LOCK"), [])
+                if HEAVY_AV_LOCK not in locks:
+                    errors.append("missing shared AV resource lock: " + name)
             labels = next((p["value"] for p in test.get("properties", []) if p["name"] == "LABELS"), [])
             actual = {label for label in labels if label == LOCAL or label.startswith(LOCAL + "-")}
             expected = set()
@@ -96,6 +103,27 @@ def self_test():
         if not verify(*args):
             raise RuntimeError("surviving mutant: " + name)
         print("killed:", name)
+    av_on = copy.deepcopy(on)
+    av_names = ["rpc-lockstep-golden-baseline-rpc-plan-av-0",
+                "rpc-lockstep-golden-full-audit-rpc-plan-av-1"]
+    for item, name in zip(av_on[1:], av_names):
+        item["name"] = name
+        item["properties"].append({"name": "RESOURCE_LOCK", "value": [HEAVY_AV_LOCK]})
+    av_shards = [[av_names[0]], [av_names[1]]]
+    if verify(av_on, off, av_shards):
+        raise RuntimeError("valid shared AV lock refused")
+    for kind in ("missing AV lock", "different AV lock", "separate lock per AV test"):
+        wrong = copy.deepcopy(av_on)
+        if kind == "missing AV lock":
+            wrong[1]["properties"].pop()
+        elif kind == "different AV lock":
+            wrong[1]["properties"][-1]["value"] = ["different-av-lock"]
+        else:
+            for i, item in enumerate(wrong[1:]):
+                item["properties"][-1]["value"] = [f"per-test-av-lock-{i}"]
+        if not any(e.startswith("missing shared AV resource lock:") for e in verify(wrong, off, av_shards)):
+            raise RuntimeError("surviving mutant: " + kind)
+        print("killed:", kind)
     workflow = "  host-lockstep-local:\n        shard: [0, 1]\n    run: ctest --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$'\n"
     if verify_workflow(workflow, 2):
         raise RuntimeError("valid workflow refused")

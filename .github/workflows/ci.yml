@@ -68,7 +68,7 @@ jobs:
         run: ccache -s
 
   host-lockstep-local:
-    # W10b: fixed partition from nightly 39258331010 at the same -j4 load.
+    # W10b B: partition from 39343599455 at -j4, with heavy AV serialized.
     # Ordinary host tests and the emitter CI subset stay in the host job.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -76,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4]
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
@@ -102,7 +102,9 @@ jobs:
       - name: Build
         run: cmake --build build/lockstep-local --parallel 4
       - name: Local lockstep shard
-        timeout-minutes: 240
+        # Estimates remain below 240 min. Allow W4's 244 min per-test
+        # censored-observation limit to take effect within the 295 min job.
+        timeout-minutes: 270
         run: ctest -j 4 --test-dir build/lockstep-local --output-on-failure --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$' --output-junit shard-${{ matrix.shard }}.xml
       - name: Upload shard timings and failure logs
         if: always()
