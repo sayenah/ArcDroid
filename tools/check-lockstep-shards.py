@@ -15,6 +15,7 @@ import sys
 
 
 LOCAL = "rpc-lockstep-local"
+EXCLUSIVE_LOCK = "rpc-lockstep-local-exclusive"
 HEAVY_AV = re.compile(r"^rpc-lockstep-golden-.*-rpc-plan-av-[012]$")
 HEAVY_AV_LOCK = "rpc-lockstep-heavy-av"
 
@@ -30,6 +31,15 @@ def verify_workflow(workflow, count):
         return ["workflow shard IDs differ from manifest"]
     if "-L '^rpc-lockstep-local-${{ matrix.shard }}$'" not in job[1] or "--no-tests=error" not in job[1]:
         return ["workflow shard selection changed"]
+    if "run: ctest -j 2 --test-dir" not in job[1]:
+        return ["workflow shard parallelism changed"]
+    maximum = re.search(r"^      max-parallel: ([1-9][0-9]*)$", job[1], re.M)
+    if maximum is None:
+        return ["missing shard concurrency cap"]
+    jobs = workflow.split("\njobs:\n", 1)[-1]
+    other_jobs = len(re.findall(r"^  [\w-]+:\n", jobs, re.M)) - 1
+    if min(count, int(maximum[1])) + other_jobs > 20:
+        return ["nightly concurrency exceeds twenty jobs"]
     return []
 
 
@@ -73,6 +83,10 @@ def verify(on, off, shards):
             if enabled and name in local:
                 expected.add(LOCAL)
                 expected.update(f"{LOCAL}-{i}" for i, shard in enumerate(shards) if name in shard)
+                locks = next((p["value"] for p in test.get("properties", [])
+                              if p["name"] == "RESOURCE_LOCK"), [])
+                if EXCLUSIVE_LOCK not in locks:
+                    errors.append("missing exclusive golden resource lock: " + name)
             if actual != expected:
                 errors.append(f"incorrect shard labels: {name}: {sorted(actual)} != {sorted(expected)}")
     return errors
@@ -80,7 +94,10 @@ def verify(on, off, shards):
 
 def self_test():
     def test(name, labels=()):
-        return {"name": name, "properties": [{"name": "LABELS", "value": list(labels)}]}
+        properties = [{"name": "LABELS", "value": list(labels)}]
+        if LOCAL in labels:
+            properties.append({"name": "RESOURCE_LOCK", "value": [EXCLUSIVE_LOCK]})
+        return {"name": name, "properties": properties}
     off = [test("ordinary")]
     on = off + [test("local-a", (LOCAL, LOCAL + "-0")), test("local-b", (LOCAL, LOCAL + "-1"))]
     shards = [["local-a"], ["local-b"]]
@@ -103,34 +120,53 @@ def self_test():
         if not verify(*args):
             raise RuntimeError("surviving mutant: " + name)
         print("killed:", name)
+    for kind in ("missing exclusive golden lock", "different lock per golden"):
+        wrong = copy.deepcopy(on)
+        for index, item in enumerate(wrong[1:]):
+            item["properties"][-1]["value"] = [] if kind.startswith("missing") else [f"private-golden-{index}"]
+        if not any(e.startswith("missing exclusive golden resource lock:") for e in verify(wrong, off, shards)):
+            raise RuntimeError("surviving mutant: " + kind)
+        print("killed:", kind)
     av_on = copy.deepcopy(on)
     av_names = ["rpc-lockstep-golden-baseline-rpc-plan-av-0",
                 "rpc-lockstep-golden-full-audit-rpc-plan-av-1"]
     for item, name in zip(av_on[1:], av_names):
         item["name"] = name
-        item["properties"].append({"name": "RESOURCE_LOCK", "value": [HEAVY_AV_LOCK]})
+        item["properties"][-1]["value"].append(HEAVY_AV_LOCK)
     av_shards = [[av_names[0]], [av_names[1]]]
     if verify(av_on, off, av_shards):
         raise RuntimeError("valid shared AV lock refused")
     for kind in ("missing AV lock", "different AV lock", "separate lock per AV test"):
         wrong = copy.deepcopy(av_on)
         if kind == "missing AV lock":
-            wrong[1]["properties"].pop()
+            wrong[1]["properties"][-1]["value"].remove(HEAVY_AV_LOCK)
         elif kind == "different AV lock":
-            wrong[1]["properties"][-1]["value"] = ["different-av-lock"]
+            wrong[1]["properties"][-1]["value"] = [EXCLUSIVE_LOCK, "different-av-lock"]
         else:
             for i, item in enumerate(wrong[1:]):
-                item["properties"][-1]["value"] = [f"per-test-av-lock-{i}"]
+                item["properties"][-1]["value"] = [EXCLUSIVE_LOCK, f"per-test-av-lock-{i}"]
         if not any(e.startswith("missing shared AV resource lock:") for e in verify(wrong, off, av_shards)):
             raise RuntimeError("surviving mutant: " + kind)
         print("killed:", kind)
-    workflow = "  host-lockstep-local:\n        shard: [0, 1]\n    run: ctest --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$'\n"
+    workflow = "  host-lockstep-local:\n      max-parallel: 14\n        shard: [0, 1]\n    run: ctest -j 2 --test-dir build/example --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$'\n"
     if verify_workflow(workflow, 2):
         raise RuntimeError("valid workflow refused")
     for matrix in ("[0]", "[0, 0]", "[1, 2]"):
         if not verify_workflow(workflow.replace("[0, 1]", matrix), 2):
             raise RuntimeError("surviving workflow matrix mutant")
     print("killed: omitted, repeated and shifted workflow shard IDs")
+    if not verify_workflow(workflow.replace("ctest -j 2", "ctest -j 4"), 2):
+        raise RuntimeError("surviving parallelism mutant")
+    crowded = workflow.replace("max-parallel: 14", "max-parallel: 21").replace("[0, 1]", str(list(range(21))))
+    if "nightly concurrency exceeds twenty jobs" not in verify_workflow(crowded, 21):
+        raise RuntimeError("surviving concurrency mutant")
+    crowded = workflow.replace("[0, 1]", str(list(range(17))))
+    crowded += "".join(f"  other-{i}:\n    runs-on: ubuntu-24.04\n" for i in range(7))
+    if "nightly concurrency exceeds twenty jobs" not in verify_workflow(crowded, 17):
+        raise RuntimeError("surviving other-job concurrency mutant")
+    if not verify_workflow(workflow.replace("      max-parallel: 14\n", ""), 2):
+        raise RuntimeError("surviving uncapped concurrency mutant")
+    print("killed: changed parallelism, excess matrix/other-job concurrency and missing concurrency cap")
     print("lockstep shard guard: self-test passed")
 
 

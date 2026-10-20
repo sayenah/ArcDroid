@@ -68,15 +68,18 @@ jobs:
         run: ccache -s
 
   host-lockstep-local:
-    # W10b B: partition from 39343599455 at -j4, with heavy AV serialized.
+    # W10b C: maximum observed durations; one golden at a time per runner.
     # Ordinary host tests and the emitter CI subset stay in the host job.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 295
     strategy:
       fail-fast: false
+      # Six other jobs + at most fourteen shard jobs stays within twenty,
+      # even without relying on the Windows -> RetroArch dependency.
+      max-parallel: 14
       matrix:
-        shard: [0, 1, 2, 3, 4]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
@@ -105,7 +108,7 @@ jobs:
         # Estimates remain below 240 min. Allow W4's 244 min per-test
         # censored-observation limit to take effect within the 295 min job.
         timeout-minutes: 270
-        run: ctest -j 4 --test-dir build/lockstep-local --output-on-failure --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$' --output-junit shard-${{ matrix.shard }}.xml
+        run: ctest -j 2 --test-dir build/lockstep-local --output-on-failure --no-tests=error -L '^rpc-lockstep-local-${{ matrix.shard }}$' --output-junit shard-${{ matrix.shard }}.xml
       - name: Upload shard timings and failure logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

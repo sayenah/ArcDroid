@@ -156,11 +156,11 @@ if(TARGET arcdroid_rpclockstep_libretro)
     list(APPEND RPC_LOCKSTEP_GOLDENS rpc-factory-capture-2 rpc-factory-capture-3)
     foreach(density IN ITEMS baseline every-instruction full-audit)
       foreach(golden IN LISTS RPC_LOCKSTEP_GOLDENS)
-        # Other local goldens reached 2984.51 s in 39343599455. Their
-        # existing budgets still cover >2x that maximum (W4), including
-        # dense AV model 3; leave the non-heavy limits unchanged.
-        set(rpc_lockstep_golden_timeout 6000)
-        set(rpc_lockstep_ctest_timeout 6060)
+        # W10b C / 39360258323: other goldens reached 4854.42 s.
+        # W4: double that measured maximum and round up to a minute;
+        # retain another minute for the Python wrapper.
+        set(rpc_lockstep_golden_timeout 9720)
+        set(rpc_lockstep_ctest_timeout 9780)
         if(golden MATCHES "^rpc-plan-av-[012]$")
           # W10b B / 39343599455 at -j4: completed AV max 6865.94 s;
           # four concurrent AV cases hit 7260.44--7260.51 s (censored).
@@ -186,6 +186,10 @@ if(TARGET arcdroid_rpclockstep_libretro)
     get_property(rpc_lockstep_local_tests DIRECTORY PROPERTY TESTS)
     list(REMOVE_ITEM rpc_lockstep_local_tests ${rpc_lockstep_before_local})
     set_property(TEST ${rpc_lockstep_local_tests} APPEND PROPERTY LABELS rpc-lockstep-local)
+    # W10b C: all density checks contend for CPU/memory bandwidth, not only
+    # AV. One golden at a time per runner, independently of CTest's -j value.
+    set_property(TEST ${rpc_lockstep_local_tests} APPEND PROPERTY
+      RESOURCE_LOCK rpc-lockstep-local-exclusive)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
       "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpc-lockstep-local-shards.json")
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpc-lockstep-local-shards.json" rpc_lockstep_shard_plan)
