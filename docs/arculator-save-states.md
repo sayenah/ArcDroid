@@ -257,23 +257,31 @@ copied modules reached by default run-ahead, cheats and failed-preempt routes,
 including RiscPC and preservation of primary Disc Control callbacks.
 
 CMOS and raw Original/shadow files use two-slot durable frontiers under
-arcdroid/state-stores/. CMOS retains the eager intent/applied protocol. A raw
-store without previous state history follows main's native sector writes. At
-admission it caches committed bytes and a labelled 64-bit sector fingerprint;
-writes mark sectors only. Its first-ever save reads only changed sectors and
-publishes a validated 168-byte ACFR2 checkpoint (phase 3). This is an
-accidental-edit check, not authentication. No older state exists before that
-checkpoint. Once a store has state history, later writes and later opens retain
-the durable protocol; skipping new state use cannot permit old states to roll it
-back. This qualification matters for write-cost measurements.
+arcdroid/state-stores/. Run M replaces full-image redo with range redo. A
+captured store writes a validated intent containing only the changed range,
+its offset and resulting sector fingerprint, writes and flushes that range in
+the target, then acknowledges the same generation. Cold preparation replays
+pending ranges; hot state loading only validates, never repairs. Existing
+ACFR2 full-image intent/applied/checkpoint records remain readable. ACFR3
+records preserve their generations and Original-media identity.
 
-Subsequent intent/applied records include the full after-image. Intent is durable
-before native target mutation; applied acknowledgement follows flush. Cold
-preparation redoes interrupted intents. Applied/checkpoint bytes changed
-externally are adopted at a newer frontier without overwriting the edit; a hot
-state load only refuses. State loads never repair native files. Native authority
-and untracked caches do not rewind. Persistent store history is retained across
-module/session lifetimes.
+A raw store with no capture in this session follows main's native sector path.
+If a previous session left a sealed checkpoint, a durable 168-byte unsealed
+epoch invalidates it **before** this session's first native write. This happens
+once, including for ABA writes, and is checked before any target side effect.
+No state can be captured or loaded at an unsealed epoch. Its subsequent writes
+need no additional metadata I/O. Admission caches native bytes and the labelled
+64-bit sector fingerprint; native writes mark touched sectors. Capture reads
+only those sectors, updates the fingerprint and seals a new checkpoint. An
+unchanged reopened checkpoint can still load its existing states. Once capture or a successful load
+has activated protection in this session, every real write uses range redo.
+The native cache, dirty index, captured/unsealed flags and generation never
+rewind and are released at session reset. This fingerprint checks accidental
+edits, not authentication. Applied/checkpoint bytes changed externally are
+adopted at a newer frontier on cold reopen; a hot load refuses. An unsealed
+epoch already invalidates all earlier states regardless of the target bytes.
+Changed unsealed Original media establish their current content identity on
+reopen, preventing a replacement from inheriting an earlier CMOS/base binding.
 
 Original-media guest writes change the source file's hash. Its first identity
 is therefore retained with the durable frontier across its own acknowledged
@@ -863,3 +871,75 @@ The Run L caller sequences were checked against the pinned primary sources:
 [preempt callback overrides and availability restoration](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L1292-L1370),
 and [primary cheat calls followed by secondary creation](https://github.com/libretro/RetroArch/blob/v1.22.2/runloop.c#L7164-L7231).
 These are authored interface models, not a claim of a live RetroArch device run.
+
+## Run M frontier design as built
+
+ACFR3 keeps the existing 160-byte checksummed header. Phases 1/2 have a
+16-byte range prefix (offset and resulting fingerprint), followed by the exact
+write payload; the header records resulting extent and whether this was a
+truncating open. Phases 3/4 are 168-byte sealed/unsealed checkpoints. Parsing
+checks phase-specific lengths, offset/range/extent, truncation and both CRCs
+before recovery. The two slots and candidate readback/rename ordering remain.
+A fixed-size 512-byte write therefore reads 2 × (160 + 16 + 512) = **1,376 B**
+and writes those two records plus 512 = **1,888 B**, for either an 819,200-byte
+or 1,638,400-byte image. It touches only affected 512-byte fingerprint leaves;
+there is no image allocation, copy, scan or rewrite on that path. Resize and
+truncation use their actual resulting extents. The native stream ends at the
+guest's logical position. A staged truncation also removes the old native tail.
+
+Uncaptured writes are 0 B read / 512 B written, with one additional 168 B read
+and written on the first write that invalidates a previous session's sealed
+checkpoint. First-batch cost and I/O include that invalidation; steady write
+cost is compared with main's unchanged native I/O functions. Capture and
+frontier publication visit only changed sectors (plus fixed metadata); repeated
+capture after range writes uses the already updated native cache. Cold reopen
+and hot load still validate the entire native image to detect external edits.
+Their work is outside the guest-sector-write path.
+
+The tests cover fresh/post-capture/reused-folder writes on both image sizes,
+a second process using the same folder, exact I/O counts, legacy ACFR2 recovery,
+ABA refusal across reopen, six invalidation cases and eleven
+range-publication cases, truncation, and existing actual SIGKILL
+publication checks. Failed rollback is tested with restored and fake polling,
+and with early null/zero-size refusals followed by a valid retry. These latter
+calls deliberately test the public API's fail-closed policy beyond RetroArch's
+normal error recovery.
+
+QA mutant M6 (remove the outer finish) has no distinguishing RetroArch 1.22.2
+sequence: real writes are eager; a restored exceptional queue is drained by
+`arc_state_boundary_frame` at real-frame entry; fake frames retain speculation
+until successful rollback replaces the queue. No real-frame body stages a
+queue. Thus every real exit already has an empty queue; the outer finish is a
+defence for future paths, retained and source-guarded. In [RetroArch 1.22.2
+runahead.c](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c),
+`runahead_core_run_use_last_input` restores callbacks before rollback;
+`runahead_load_state` sends failure through `runahead_err`, disabling run-ahead
+and removing its hooks. The new fake-poll and early-refusal tests pin M7 and M11
+even for a frontend that attempts further calls after failure.
+
+Speculative raw writes use a sparse namespace view: the already admitted native
+cache supplies unchanged bytes and the existing ordered log supplies changed
+ranges. A sector write neither reads nor copies the image; subsequent reads
+copy only their requested span and overlay matching logged writes in order.
+Files without a coherent authority cache defer native reads to the requested
+read spans; opening their staged view queries size without reading the image.
+The wire format remains the operation log. Loads can reconstruct ordinary owned
+views, preserving canonical save/load/save bytes and the existing ownership
+limits. Rename and resize materialize only when those operations need an owned
+view. Overlays remain correct after a failed partial publication because replay
+of the complete retained log over its committed prefix is idempotent. Reset
+clears views before releasing the native caches. The public write-path check
+runs fifteen save/fake-frame/rollback samples for each image size and checks
+zero native bytes read or written by the speculative write batch. Unit tests
+cover overlapping and unaligned ranges, complete readback, canonical restoration,
+rename, resize, truncating open and discard. These tests also exposed and fixed
+the staged/publication VFS truncate result check: the vendored libretro contract
+returns zero on success, rather than the requested length.
+
+The Run K frontend A/B fixture deliberately changes only its two host frontier
+records from ACFR2 to ACFR3. Run M's supplemental comparison validates both
+checksums, generations, phases, identities, full extents, truncation, fingerprints
+and every 256-byte CMOS payload byte in both slots. All other persisted files
+and frontend observations remain byte-identical; no file is excluded. Current
+closed/open gate comparisons retain exact file-byte equality. The Run M report
+records both timing windows and leaves warm load ≤5 ms open on the shared Mac.

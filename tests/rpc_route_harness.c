@@ -62,7 +62,7 @@ static int32_t audited_stat(const char *p,int32_t *size){if(strstr(p,"/riscpc/bo
 static void log_capture(enum retro_log_level level,const char *format,...)
 {
     (void)level;char text[8192];va_list args;va_start(args,format);vsnprintf(text,sizeof(text),format,args);va_end(args);
-    if(strstr(text,"RPC secondary load refused before preparation"))++secondary_refusals;
+    if(strstr(text,"secondary load refused before preparation"))++secondary_refusals;
     if(!strncmp(text,"ArcDroid build:",15)){if(!metadata_only && !ss1_case)assert(strstr(text,"gate=open"));
         if(fault_core){assert(strstr(text,"substitutions=authored-catalogue,test-faults,test-plans"));
             if(symbol("arc_route_probe_position"))assert(strstr(text,",read-only-position,unit-clock"));}

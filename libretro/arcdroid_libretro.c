@@ -7755,7 +7755,6 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
    search.best_available_priority = 100u;
-   if (arc_loaded) arc_persist_cmos();
    arc_loaded = false;
    arc_release_session();
    arc_video_width = ARC_WIDTH; arc_video_height = ARC_HEIGHT; arc_video_rate = ARC_RATE;
@@ -8348,7 +8347,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
    if(arc_loaded || arc_rpc_plan_admitted || arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance()) {
       /* R-SS3g: all content and both gate states, before any release/staging. */
-      if(arc_log)arc_log(RETRO_LOG_INFO,"RPC secondary load refused before preparation, guest execution and writable stores.\n");
+      if(arc_log)arc_log(RETRO_LOG_INFO,"%s secondary load refused before preparation, guest execution and writable stores.\n",
+         arc_kind==ARC_SESSION_KIND_RISCPC?"RiscPC":
+         arc_kind==ARC_SESSION_KIND_ARCULATOR?"Archimedes":"Archimedes/RiscPC");
       return false;
    }
 #if ARC_RPC_ORDINARY_LOAD
@@ -8357,7 +8358,6 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 #if defined(ARCDROID_TEST_PLANS)
    if (game && arc_test_plan_path(game->path)) {
       uint64_t load_entry_ns=arc_riscpc_preparation_clock(NULL);
-      if (arc_loaded) arc_persist_cmos();
       arc_loaded = false;
       arc_release_session();
       arc_video_width = ARC_WIDTH; arc_video_height = ARC_HEIGHT; arc_video_rate = 60.0;

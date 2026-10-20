@@ -15,8 +15,8 @@
 typedef struct {
    char path[4096];
    uint8_t *data;
-   size_t size;
-   bool removed,directory;
+   size_t size,base_size;
+   bool removed,directory,sparse,cached;
 } StateFile;
 typedef struct StateOperation {
    struct StateOperation *next;
@@ -50,6 +50,8 @@ static bool state_io_speculating,state_io_failed;
 static void state_frontier_bind(StateHandle *handle);
 static bool state_frontier_known(StateHandle *handle);
 static int64_t state_frontier_write(StateHandle *handle,const void *data,size_t bytes);
+static bool state_frontier_prepare(StateHandle *handle);
+static bool state_frontier_cached(const char *path,const uint8_t **data,size_t *bytes,bool clean);
 static void state_frontier_observe(StateHandle *handle,int64_t at,const void *data,size_t bytes,bool truncate);
 static StateFile *state_file(const char *path)
 { for(unsigned i=0;i<state_io_file_count;++i)if(!strcmp(path,state_io_files[i].path))return &state_io_files[i];return NULL; }
@@ -85,6 +87,48 @@ static bool state_read_native_limit(const char *path,uint8_t **data,size_t *size
 }
 static bool state_read_native(const char *path,uint8_t **data,size_t *size)
 { return state_read_native_limit(path,data,size,STATE_IO_BYTES); }
+/* Overlay ordered writes on a native authority cache, or read only requested
+ * base spans when there is no coherent cache. A sector write never reads or
+ * copies the image. The wire remains the existing operation log. */
+static bool state_view_read(const StateFile *f,size_t at,void *output,size_t bytes)
+{
+   if(!bytes)return true;
+   if(!f->sparse){memcpy(output,f->data+at,bytes);return true;}
+   memset(output,0,bytes);
+   if(at<f->base_size) {
+      size_t n=f->base_size-at;if(n>bytes)n=bytes;
+      if(f->cached) {
+         const uint8_t *base=NULL;size_t size=0;
+         if(!state_frontier_cached(f->path,&base,&size,false)||at>size||n>size-at)return false;
+         memcpy(output,base+at,n);
+      } else {
+         struct retro_vfs_file_handle *file=state_io_native->open(f->path,RETRO_VFS_FILE_ACCESS_READ,0);
+         bool okay=file&&state_io_native->seek&&state_io_native->read&&
+            state_io_native->seek(file,(int64_t)at,RETRO_VFS_SEEK_POSITION_START)>=0&&state_io_native->read(file,output,n)==(int64_t)n;
+         if(file&&state_io_native->close(file))okay=false;
+         if(!okay)return false;
+      }
+   }
+   for(StateOperation *op=state_io_head;op;op=op->next)if(op->kind==2u&&!strcmp(op->path,f->path)) {
+      size_t start=(size_t)op->offset,end=start+op->bytes;
+      size_t low=at>start?at:start,high=at+bytes<end?at+bytes:end;
+      if(low<high)memcpy((uint8_t *)output+low-at,op->data+low-start,high-low);
+   }
+   return true;
+}
+static bool state_view_base(StateFile *f,const char *path)
+{
+   if(state_frontier_cached(path,NULL,&f->size,true))f->cached=true;
+   else {
+      struct retro_vfs_file_handle *file=state_io_native->open(path,RETRO_VFS_FILE_ACCESS_READ,0);
+      if(!file)return false;
+      int64_t n=state_io_native->size?state_io_native->size(file):-1;
+      bool okay=n>=0&&(uint64_t)n<=STATE_IO_BYTES;
+      if(state_io_native->close(file))okay=false;
+      if(!okay)return false;f->size=(size_t)n;
+   }
+   f->base_size=f->size;f->sparse=true;return true;
+}
 static StateFile *state_materialize(const char *path,bool create,bool truncate)
 {
    StateFile *f=state_file(path);
@@ -92,10 +136,10 @@ static StateFile *state_materialize(const char *path,bool create,bool truncate)
       if(state_io_file_count>=STATE_IO_FILES){state_io_failed=true;return NULL;}
       f=&state_io_files[state_io_file_count];memset(f,0,sizeof(*f));
       if(!state_path(f->path,path)){state_io_failed=true;return NULL;}
-      if(!truncate&&!state_read_native(path,&f->data,&f->size)&&!create)return NULL;
+      if(!truncate&&!state_view_base(f,path)&&!create)return NULL;
       ++state_io_file_count;
    } else if(f->removed&&!create)return NULL;
-   if(truncate||f->removed){free(f->data);f->data=NULL;f->size=0;f->removed=false;}
+   if(truncate||f->removed){free(f->data);f->data=NULL;f->size=0;f->removed=false;f->sparse=false;f->cached=false;f->base_size=0;}
    return f;
 }
 static const char *state_get_path(struct retro_vfs_file_handle *file)
@@ -120,6 +164,7 @@ static struct retro_vfs_file_handle *state_open(const char *path,unsigned mode,u
       h->needs_truncate=true;
       /* Defer the single truncating target open until its intent is durable. */
    } else {
+      if(truncate&&!state_frontier_prepare(h)){free(h);return NULL;}
       h->native=state_io_native->open(path,mode,hints);
       if(!h->native){free(h);return NULL;}
       if(truncate)state_frontier_observe(h,0,NULL,0,true);
@@ -163,7 +208,7 @@ static int64_t state_read(struct retro_vfs_file_handle *file,void *output,uint64
    if(f) {
       if(f->removed||f->directory||h->position<0||(uint64_t)h->position>f->size)return -1;
       size_t n=f->size-(size_t)h->position;if(bytes<n)n=(size_t)bytes;
-      if(n)memcpy(output,f->data+(size_t)h->position,n);got=(int64_t)n;
+      if(!state_view_read(f,(size_t)h->position,output,n))return -1;got=(int64_t)n;
    } else {
       if(!h->native||!state_io_native->read||!state_io_native->seek)return -1;
       if(h->native_position!=h->position&&state_io_native->seek(h->native,h->position,RETRO_VFS_SEEK_POSITION_START)<0)return -1;
@@ -182,16 +227,20 @@ static int64_t state_write(struct retro_vfs_file_handle *file,const void *input,
       if(!f||f->directory)return -1;
       size_t end=(size_t)h->position+(size_t)bytes;
       if(end>f->size) {
-         uint8_t *p=realloc(f->data,end?end:1u);if(!p){state_io_failed=true;return -1;}
-         memset(p+f->size,0,end-f->size);f->data=p;f->size=end;
+         if(!f->sparse) {
+            uint8_t *p=realloc(f->data,end?end:1u);if(!p){state_io_failed=true;return -1;}
+            memset(p+f->size,0,end-f->size);f->data=p;
+         }
+         f->size=end;
       }
       if(!state_record(2,h->path,NULL,h->mode,h->position,input,(size_t)bytes))return -1;
-      if(bytes)memcpy(f->data+(size_t)h->position,input,(size_t)bytes);
+      if(bytes&&!f->sparse)memcpy(f->data+(size_t)h->position,input,(size_t)bytes);
       h->position+=(int64_t)bytes;return (int64_t)bytes;
    }
    if(state_frontier_known(h))return state_frontier_write(h,input,(size_t)bytes);
    if(!h->native||!state_io_native->write||!state_io_native->seek)return -1;
    if(h->native_position!=h->position&&state_io_native->seek(h->native,h->position,RETRO_VFS_SEEK_POSITION_START)<0)return -1;
+   if(!state_frontier_prepare(h))return -1;
    int64_t n=state_io_native->write(h->native,input,bytes);
    if(n>0){state_frontier_observe(h,h->position,input,(size_t)n,false);h->position+=n;}
    h->native_position=h->position;return n;
@@ -219,7 +268,7 @@ static int state_rename(const char *path,const char *target)
    StateFile *source=state_materialize(path,false,false);if(!source||source->directory)return -1;
    StateFile *dest=state_materialize(target,true,true);if(!dest)return -1;
    uint8_t *copy=malloc(source->size?source->size:1u);if(!copy){state_io_failed=true;return -1;}
-   memcpy(copy,source->data,source->size);
+   if(!state_view_read(source,0,copy,source->size)){free(copy);state_io_failed=true;return -1;}
    if(!state_record(5,path,target,0,0,NULL,0)){free(copy);return -1;}
    dest->data=copy;dest->size=source->size;source->removed=true;return 0;
 }
@@ -230,10 +279,19 @@ static int64_t state_truncate(struct retro_vfs_file_handle *file,int64_t length)
    if(!state_io_speculating)return h->native&&state_io_native->truncate?state_io_native->truncate(h->native,length):-1;
    if(length<0||(uint64_t)length>STATE_IO_BYTES)return -1;
    StateFile *f=state_materialize(h->path,true,false);if(!f)return -1;
-   uint8_t *p=realloc(f->data,length?(size_t)length:1u);if(!p){state_io_failed=true;return -1;}
-   if((size_t)length>f->size)memset(p+f->size,0,(size_t)length-f->size);
+   uint8_t *p;
+   if(f->sparse) {
+      p=malloc(length?(size_t)length:1u);if(!p){state_io_failed=true;return -1;}
+      size_t n=f->size;if(n>(size_t)length)n=(size_t)length;
+      if(!state_view_read(f,0,p,n)){free(p);state_io_failed=true;return -1;}
+      if((size_t)length>n)memset(p+n,0,(size_t)length-n);
+      f->sparse=false;
+   } else {
+      p=realloc(f->data,length?(size_t)length:1u);if(!p){state_io_failed=true;return -1;}
+      if((size_t)length>f->size)memset(p+f->size,0,(size_t)length-f->size);
+   }
    f->data=p;f->size=(size_t)length;
-   return state_record(6,h->path,NULL,h->mode,length,NULL,0)?length:-1;
+   return state_record(6,h->path,NULL,h->mode,length,NULL,0)?0:-1;
 }
 static int32_t state_stat(const char *path,int32_t *size)
 {
@@ -339,7 +397,7 @@ bool arc_state_io_publish(void)
          if(f&&op->kind==2)okay=state_seek(f,op->offset,RETRO_VFS_SEEK_POSITION_START)==op->offset;
          if(f&&op->kind==2) { ((StateHandle*)f)->needs_truncate=!(op->mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING);okay=okay&&state_write(f,op->data,op->bytes)==(int64_t)op->bytes; }
          if(f&&op->kind==3)okay=state_io_native->flush&&state_flush(f)==0;
-         if(f&&op->kind==6)okay=state_io_native->truncate&&state_truncate(f,op->offset)==op->offset;
+         if(f&&op->kind==6)okay=state_io_native->truncate&&state_truncate(f,op->offset)==0;
          if(f&&state_close(f))okay=false;
       } else if(op->kind==4)okay=state_io_native->remove(op->path)==0;
       else if(op->kind==5)okay=state_io_native->rename(op->path,op->target)==0;
@@ -460,7 +518,7 @@ static StateFile *replacement_file(StateIoReplacement *r,const char *path,bool c
       r->view_bytes+=f->size;
       ++r->count;
    } else if(f->removed&&!create)return NULL;
-   if(truncate||f->removed){(void)arc_state_ownership_resize(r->state,f->size,0);r->view_bytes-=f->size;free(f->data);f->data=NULL;f->size=0;f->removed=false;}
+   if(truncate||f->removed){(void)arc_state_ownership_resize(r->state,f->size,0);r->view_bytes-=f->size;free(f->data);f->data=NULL;f->size=0;f->removed=false;f->sparse=false;f->cached=false;f->base_size=0;}
    return f;
 }
 static bool replacement_views(StateIoReplacement *r)

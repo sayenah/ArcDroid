@@ -247,21 +247,60 @@ if(ss1_mode) {
             assert(set_vfs&&open_main&&set_observer&&observer&&main_path.seek&&main_path.write&&main_path.flush&&close_main);
             set_vfs(&vfs);set_observer(observer());main_path.file=open_main(staged(0),true);assert(main_path.file);
          }
-         (void)ss1_write_batch(&current); /* First-touch and stdio warm-up. */
-         for(unsigned i=0;i<15u;++i){
-            if(comparison)reference[i*2u]=ss1_write_batch(&main_path);
-            ss1_native_read_bytes=ss1_native_write_bytes=0;samples[i]=ss1_write_batch(&current);
-            assert(!ss1_native_read_bytes&&ss1_native_write_bytes==256u*512u);
-            if(comparison)reference[i*2u+1u]=ss1_write_batch(&main_path);
+         size_t capacity=retro_serialize_size();uint8_t *captured=malloc(capacity);assert(captured);
+         const char *stages[]={"uncaptured","post-capture","reused-folder"};
+         for(unsigned stage=0;stage<3u;++stage) {
+            if(stage==1u)assert(retro_serialize(captured,capacity));
+            if(stage==2u) {
+               if(comparison){assert(close_main(main_path.file));main_path.file=NULL;}
+               retro_unload_game();phase=PHASE_LOAD;assert(retro_load_game(&game));phase=PHASE_RUN;
+               current.file=raw_file(0);assert(current.file);
+               if(comparison){
+                  void *(*open_main)(const char *,bool)=dlsym(comparison,"arc_io_open_file");
+                  main_path.file=open_main(staged(0),true);assert(main_path.file);
+               }
+            }
+            ss1_native_read_bytes=ss1_native_write_bytes=0;
+            uint64_t first_ns=ss1_write_batch(&current); /* Includes first-write invalidation on reuse. */
+            uint64_t first_reads=ss1_native_read_bytes,first_writes=ss1_native_write_bytes;
+            uint64_t reads=stage==1u?1376u:0u,writes=stage==1u?1888u:512u;
+            assert(first_reads==256u*reads+(stage==2u?168u:0u)||
+               (stage==0u&&first_reads==168u)); /* The folder may already have state history. */
+            assert(first_writes==256u*writes+(first_reads==168u?168u:0u));
+            for(unsigned i=0;i<15u;++i){
+               if(comparison)reference[i*2u]=ss1_write_batch(&main_path);
+               ss1_native_read_bytes=ss1_native_write_bytes=0;samples[i]=ss1_write_batch(&current);
+               assert(ss1_native_read_bytes==256u*reads&&ss1_native_write_bytes==256u*writes);
+               if(comparison)reference[i*2u+1u]=ss1_write_batch(&main_path);
+            }
+            qsort(samples,15u,sizeof(*samples),ss1_ns_order);
+            printf("SS1 sector IO: stage=%s machine=%s medium=%llu read=%llu written=%llu per sector; first-batch-read=%llu first-batch-written=%llu first-batch-mean=%llu ns; p50=%llu ns",
+               stages[stage],option_machine,(unsigned long long)digest_file(staged(0)).size,
+               (unsigned long long)reads,(unsigned long long)writes,(unsigned long long)first_reads,
+               (unsigned long long)first_writes,(unsigned long long)first_ns,(unsigned long long)samples[7]);
+            if(comparison){
+               qsort(reference,30u,sizeof(*reference),ss1_ns_order);
+               uint64_t band=reference[26]-reference[3];
+               printf(" main-p50=%llu ns main-p10/p90=%llu/%llu ns noise=%llu ns\n",(unsigned long long)reference[15],(unsigned long long)reference[3],(unsigned long long)reference[26],(unsigned long long)band);fflush(stdout);
+               if(stage!=1u)assert(samples[7]<=reference[26]+band);
+            }else puts(" (main time comparison not requested)");
+         }
+         if(comparison){assert(close_main(main_path.file));assert(!dlclose(comparison));}
+         /* RetroArch's save -> fake frame -> restored callbacks -> rollback.
+          * Rewind each sample, so the runtime log budget is never accumulated
+          * across independent predictions. Include the first staged raw write. */
+         retro_run();assert(retro_serialize(captured,capacity));uint64_t native=ss1_native_mutations;
+         for(unsigned i=0;i<15u;++i) {
+            retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_fake_input);retro_run();
+            current.file=raw_file(0);assert(current.file);ss1_native_read_bytes=ss1_native_write_bytes=0;
+            samples[i]=ss1_write_batch(&current);
+            assert(!ss1_native_read_bytes&&!ss1_native_write_bytes&&ss1_native_mutations==native);
+            retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
+            assert(retro_unserialize(captured,capacity));current.file=raw_file(0);assert(current.file);
          }
          qsort(samples,15u,sizeof(*samples),ss1_ns_order);
-         printf("SS1 no-state sector IO: machine=%s medium=%llu bytes read=0 written=512 per sector; p50=%llu ns",option_machine,(unsigned long long)digest_file(staged(0)).size,(unsigned long long)samples[7]);
-         if(comparison){
-            qsort(reference,30u,sizeof(*reference),ss1_ns_order);
-            uint64_t band=reference[26]-reference[3];
-            printf(" main-p50=%llu ns main-p10/p90=%llu/%llu ns noise=%llu ns\n",(unsigned long long)reference[15],(unsigned long long)reference[3],(unsigned long long)reference[26],(unsigned long long)band);fflush(stdout);
-            assert(samples[7]<=reference[26]+band);assert(close_main(main_path.file));assert(!dlclose(comparison));
-         }else puts(" (main time comparison not requested)");
+         printf("SS1 sector IO: stage=speculative machine=%s read=0 written=0 per sector; p50=%llu ns; 15 actual fake-frame/rollback sequences, no publication\n",option_machine,(unsigned long long)samples[7]);
+         free(captured);
          assert(!ss1_context_queries);retro_unload_game();continue;
       }
       if(!strcmp(argv[5],"--ss1-replacement")) {
@@ -354,12 +393,27 @@ if(ss1_mode) {
          cpu_n=cpu_snapshot(cpu_before,sizeof(cpu_before));
          uint8_t bad[40]={0};assert(!retro_unserialize(bad,sizeof(bad)));
          for(unsigned i=0;i<4u;++i)retro_run();
+         retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_fake_input);
+         for(unsigned i=0;i<4u;++i)retro_run();
+         retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
          assert(cpu_snapshot(cpu_after,sizeof(cpu_after))==cpu_n&&!memcmp(cpu_before,cpu_after,cpu_n));
          assert(ss1_native_mutations==native&&pending());
          assert(!retro_unserialize(buffer,bound));
          retro_reset();retro_run();assert(retro_serialize(buffer,bound));
+         for(unsigned early=0;early<2u;++early) {
+            retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_fake_input);retro_run();
+            assert(write_cmos(216u,(uint8_t)(0x66u+early)));persist();assert(pending());
+            retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
+            cpu_n=cpu_snapshot(cpu_before,sizeof(cpu_before));native=ss1_native_mutations;
+            assert(!retro_unserialize(early?buffer:NULL,early?0u:bound));
+            assert(!retro_unserialize(buffer,bound)); /* Only reset/reload may recover. */
+            retro_set_input_poll(ss1_fake_poll);retro_run();retro_set_input_poll(poll);retro_run();
+            assert(cpu_snapshot(cpu_after,sizeof(cpu_after))==cpu_n&&!memcmp(cpu_before,cpu_after,cpu_n));
+            assert(ss1_native_mutations==native&&pending());
+            retro_reset();retro_run();assert(retro_serialize(buffer,bound));
+         }
          retro_unload_game();free(buffer);
-         puts("SS1 failed rollback: no publication or guest execution until reset; reset recovers");continue;
+         puts("SS1 failed rollback: real and fake polls cannot execute or publish until reset; reset recovers");continue;
       }
       if(!strcmp(argv[5],"--ss1-preempt")) {
          bool (*pending)(void)=dlsym(module,"arc_state_io_pending");

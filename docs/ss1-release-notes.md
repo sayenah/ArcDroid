@@ -42,7 +42,7 @@ blocks later mutations and shows one warning.
 A state cannot roll persisted discs or CMOS back. Loading or rewinding older
 than a committed store frontier refuses. Raw media without state history keep
 ordinary sector IO until their first-ever snapshot establishes a durable
-checkpoint. Stores with existing state history keep protection on later opens.
+checkpoint. Stores with existing state history keep stale-state protection on later opens: the first new native write invalidates the old checkpoint once, and a new capture seals the next checkpoint. Captured writes use sector-sized redo records.
 Capture emits dirty sectors against immutable media identities. Preserve the
 save directory, including CMOS/raw frontier sidecars under
 arcdroid/state-stores/ and immutable state-base.adf files. Original media retain

@@ -55,5 +55,8 @@ for mode,media_class,machines,media in [
                 # globals. Keep memory/UB checks; disable only the C++ ODR-name
                 # diagnostic for this actual two-module lifecycle probe.
                 env['ASAN_OPTIONS']=env.get('ASAN_OPTIONS','')+':detect_odr_violation=0'
-            print(run([a.harness,a.core,a.fixtures/'arcdroid-test.rom',content,root,
-                       '--ss1-'+mode,machine],env,timeout=600 if mode=='video' else 90),flush=True)
+            command=[a.harness,a.core,a.fixtures/'arcdroid-test.rom',content,root,'--ss1-'+mode,machine]
+            print(run(command,env,timeout=600 if mode=='video' else 90),flush=True)
+            if mode=='write-path':
+                print('New process reusing the same save folder:',flush=True)
+                print(run(command,env,timeout=90),flush=True)

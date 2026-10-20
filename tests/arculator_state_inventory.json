@@ -2,7 +2,7 @@
   "license": "GPL-2.0-only",
   "version": 1,
   "grounding_commit": "0aa4c93eaec4",
-  "status": "SS-1 Run L: Run K exact guest state retained; R3d-4 source closure reviewed, lifecycle authority remains host-only in both gate states.",
+  "status": "SS-1 Run M: exact guest state unchanged; native frontier range redo, cached fingerprint and unsealed/captured epochs reviewed as host authority.",
   "cmake_source_commands": [
     "add_library ( arcdroid_sanitizer_compile INTERFACE )",
     "add_library ( arcdroid_sanitizer_link INTERFACE )",
@@ -20103,9 +20103,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { char path [ 4096 ] , stem [ 4096 ] , identity [ 41 ] ; uint64_t generation ; ArcDigest origin ; unsigned active ; bool failed , lazy , tracking_failed ; uint8_t * untracked ; uint16_t * untracked_index ; size_t untracked_bytes , untracked_count ; uint64_t fingerprint ; } StateFrontier ;",
+        "declaration": "typedef struct { char path [ 4096 ] , stem [ 4096 ] , identity [ 41 ] ; uint64_t generation ; ArcDigest origin ; unsigned active ; bool failed , lazy , tracking_failed , captured , unsealed ; uint8_t * untracked ; uint16_t * untracked_index ; size_t untracked_bytes , untracked_count ; uint64_t fingerprint ; } StateFrontier ;",
         "classification": "host-only",
-        "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
+        "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
       },
       {
         "kind": "declaration",
@@ -20126,12 +20126,6 @@
         "reason": "Native registry revision or load-time session capacity/media budget; authoritative host lifetime is never rewound."
       },
       {
-        "kind": "allocation:arc_state_io_store",
-        "declaration": "calloc ( STATE_FRONTIER_HEADER + bytes , 1 )",
-        "classification": "derived-on-load",
-        "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
-      },
-      {
         "kind": "allocation:arc_state_io_store_lazy",
         "declaration": "calloc ( sectors ? sectors : 1u , 3u )",
         "classification": "derived-on-load",
@@ -20139,9 +20133,21 @@
       },
       {
         "kind": "allocation:state_frontier_write",
-        "declaration": "calloc ( STATE_FRONTIER_HEADER + after , 1 )",
-        "classification": "derived-on-load",
-        "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
+        "declaration": "calloc ( after ? after : 1u , 1 )",
+        "classification": "host-only",
+        "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
+      },
+      {
+        "kind": "allocation:state_frontier_write",
+        "declaration": "realloc ( f - > untracked , after )",
+        "classification": "host-only",
+        "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
+      },
+      {
+        "kind": "allocation:state_frontier_write",
+        "declaration": "calloc ( length , 1 )",
+        "classification": "host-only",
+        "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
       }
     ],
     "libretro/arc_state_io.c": [
@@ -20237,9 +20243,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { char path [ 4096 ] ; uint8_t * data ; size_t size ; bool removed , directory ; } StateFile ;",
-        "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "declaration": "typedef struct { char path [ 4096 ] ; uint8_t * data ; size_t size , base_size ; bool removed , directory , sparse , cached ; } StateFile ;",
+        "classification": "derived-on-load",
+        "reason": "Run M reviewed staged namespace: exact logical bytes derive from the native authority cache and serialized operation log; sparse/base pointers never enter wire data, and resized views remain ownership-bounded."
       },
       {
         "kind": "layout",
@@ -20321,6 +20327,18 @@
       },
       {
         "kind": "declaration",
+        "declaration": "static bool state_frontier_prepare ( StateHandle * handle ) ;",
+        "classification": "host-only",
+        "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static bool state_frontier_cached ( const char * path , const uint8_t * * data , size_t * bytes , bool clean ) ;",
+        "classification": "derived-on-load",
+        "reason": "Run M reviewed staged namespace: exact logical bytes derive from the native authority cache and serialized operation log; sparse/base pointers never enter wire data, and resized views remain ownership-bounded."
+      },
+      {
+        "kind": "declaration",
         "declaration": "static void state_frontier_observe ( StateHandle * handle , int64_t at , const void * data , size_t bytes , bool truncate ) ;",
         "classification": "host-only",
         "reason": "Reviewed declaration or record layout; named objects and reachable_storage classify cache, measurement and native authority members individually. Guard changes to all preprocessor arms."
@@ -20360,6 +20378,12 @@
         "declaration": "malloc ( source - > size ? source - > size : 1u )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
+      },
+      {
+        "kind": "allocation:state_truncate",
+        "declaration": "malloc ( length ? ( size_t ) length : 1u )",
+        "classification": "derived-on-load",
+        "reason": "Run M reviewed staged namespace: exact logical bytes derive from the native authority cache and serialized operation log; sparse/base pointers never enter wire data, and resized views remain ownership-bounded."
       },
       {
         "kind": "allocation:state_truncate",
@@ -38571,13 +38595,6 @@
     },
     {
       "source": "libretro/arc_state_frontier.inc",
-      "owner": "arc_state_io_store",
-      "call": "calloc ( STATE_FRONTIER_HEADER + bytes , 1 )",
-      "classification": "derived-on-load",
-      "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
-    },
-    {
-      "source": "libretro/arc_state_frontier.inc",
       "owner": "arc_state_io_store_lazy",
       "call": "calloc ( sectors ? sectors : 1u , 3u )",
       "classification": "host-only",
@@ -38586,9 +38603,23 @@
     {
       "source": "libretro/arc_state_frontier.inc",
       "owner": "state_frontier_write",
-      "call": "calloc ( STATE_FRONTIER_HEADER + after , 1 )",
-      "classification": "derived-on-load",
-      "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
+      "call": "calloc ( after ? after : 1u , 1 )",
+      "classification": "host-only",
+      "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
+    },
+    {
+      "source": "libretro/arc_state_frontier.inc",
+      "owner": "state_frontier_write",
+      "call": "realloc ( f - > untracked , after )",
+      "classification": "host-only",
+      "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
+    },
+    {
+      "source": "libretro/arc_state_frontier.inc",
+      "owner": "state_frontier_write",
+      "call": "calloc ( length , 1 )",
+      "classification": "host-only",
+      "reason": "Run M reviewed native frontier authority: cached committed image and dirty-sector index never rewind; range redo scratch and checkpoint lifecycle flags are host-only, bounded by STATE_IO_BYTES, discarded at session reset. Snapshots carry only the durable generation."
     },
     {
       "source": "libretro/arc_state_io.c",
@@ -38624,6 +38655,13 @@
       "call": "malloc ( source - > size ? source - > size : 1u )",
       "classification": "derived-on-load",
       "reason": "Codec/VFS transaction allocation: scratch is freed on completion, while restored file mirrors, strings, heaps and pending queues transfer to the explicitly listed retained owners only on successful commit."
+    },
+    {
+      "source": "libretro/arc_state_io.c",
+      "owner": "state_truncate",
+      "call": "malloc ( length ? ( size_t ) length : 1u )",
+      "classification": "derived-on-load",
+      "reason": "Run M reviewed staged namespace: exact logical bytes derive from the native authority cache and serialized operation log; sparse/base pointers never enter wire data, and resized views remain ownership-bounded."
     },
     {
       "source": "libretro/arc_state_io.c",

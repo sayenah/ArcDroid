@@ -1,9 +1,11 @@
 #include "arc_io.h"
 /* ArcDroid durable CMOS/raw frontiers. GPL-2.0-only.
- * Two validated slots hold a full redo image. An intent is durable before a
- * target can be truncated or written. An applied record of the same generation
- * acknowledges the flush. Recovery replays a pending intent; an acknowledged
- * image changed outside this protocol fails closed. */
+ * Two validated slots hold a range redo. An intent is durable before the
+ * changed range is written, then an applied record acknowledges its flush.
+ * ACFR2 full-image records remain readable. ACFR3 carries offset, resulting
+ * sector fingerprint and changed bytes; checkpoint records carry only a hash.
+ * A reopened lazy disc invalidates its checkpoint once before ordinary native
+ * writes, and seals a new one on capture. No state can name that unsealed epoch. */
 #define STATE_FRONTIERS 68u
 #define STATE_FRONTIER_HEADER 160u
 typedef struct {
@@ -11,7 +13,7 @@ typedef struct {
    uint64_t generation;
    ArcDigest origin;
    unsigned active;
-   bool failed,lazy,tracking_failed;
+   bool failed,lazy,tracking_failed,captured,unsealed;
    uint8_t *untracked;uint16_t *untracked_index;
    size_t untracked_bytes,untracked_count;uint64_t fingerprint;
 } StateFrontier;
@@ -24,6 +26,14 @@ static void frontier_put64(uint8_t *p,uint64_t n)
 { for(unsigned i=0;i<8u;++i)p[i]=(uint8_t)(n>>(8u*i)); }
 static StateFrontier *state_frontier_find(const char *path)
 { for(unsigned i=0;i<state_frontier_count;++i)if(!strcmp(state_frontiers[i].path,path))return &state_frontiers[i];return NULL; }
+static bool state_frontier_cached(const char *path,const uint8_t **data,size_t *bytes,bool clean)
+{
+   StateFrontier *f=state_frontier_find(path);
+   if(!f||!f->untracked||(clean&&(f->failed||f->tracking_failed||f->untracked_count)))return false;
+   /* After a partial publication the cache can already contain a prefix of
+    * the queued writes. Overlaying the complete retained log is idempotent. */
+   if(data)*data=f->untracked;*bytes=f->untracked_bytes;return true;
+}
 static void state_frontier_bind(StateHandle *handle)
 {
    StateFrontier *f=state_frontier_find(handle->path);
@@ -34,7 +44,7 @@ static bool state_frontier_known(StateHandle *handle)
 {
    if(handle->frontier_revision!=state_frontier_revision)state_frontier_bind(handle);
    StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
-   return f&&(!f->lazy||f->generation||f->failed);
+   return f&&(!f->lazy||f->captured||f->failed);
 }
 static bool frontier_bound(const StateFrontier *f)
 {
@@ -48,8 +58,8 @@ static bool frontier_pending(const StateFrontier *f)
    return false;
 }
 /* A labelled sector fingerprint is an accidental-edit check for the initial
- * frontier, not an authentication mechanism. Later commits retain the existing
- * intent/applied redo protocol. No state exists before this first frontier. */
+ * frontier, not an authentication mechanism. Updating it visits only sectors
+ * touched by a write. It also checks external edits on a cold reopen/hot load. */
 static uint64_t frontier_sector_fingerprint(const uint8_t *data,size_t bytes,size_t sector)
 {
    uint64_t h=UINT64_C(0x9e3779b97f4a7c15)^(uint64_t)sector;
@@ -69,7 +79,7 @@ static uint64_t frontier_fingerprint(const uint8_t *data,size_t bytes)
 static void state_frontier_observe(StateHandle *handle,int64_t at,const void *data,size_t bytes,bool truncate)
 {
    StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
-   if(!f||!f->lazy||f->generation||f->tracking_failed||f->failed)return;
+   if(!f||!f->lazy||f->captured||f->tracking_failed||f->failed)return;
    if(truncate||at<0||(uint64_t)at>f->untracked_bytes||bytes>f->untracked_bytes-(size_t)at){f->tracking_failed=true;return;}
    if(!bytes)return;
    size_t sectors=(f->untracked_bytes+511u)/512u;
@@ -120,18 +130,54 @@ static bool frontier_publish(StateFrontier *f,uint8_t *record,size_t bytes)
 static bool frontier_parse(const StateFrontier *f,const uint8_t *p,size_t bytes)
 {
    if(bytes<STATE_FRONTIER_HEADER)return false;
-   bool origin=p[96]!=0;
+   bool origin=p[96]!=0,range=!memcmp(p,"ACFR3\0\0\0",8);
    for(unsigned i=96;i<136u;++i) {
       if(origin?(!((p[i]>='0'&&p[i]<='9')||(p[i]>='a'&&p[i]<='f'))):p[i]!=0)return false;
    }
-   if(frontier_get64(p+136)>UINT32_MAX||frontier_get64(p+144)>STATE_IO_BYTES)return false;
-   if(memcmp(p,"ACFR2\0\0\0",8)||
+   uint64_t kind=frontier_get64(p+16),extent=frontier_get64(p+32);
+   if(frontier_get64(p+136)>UINT32_MAX||frontier_get64(p+144)>STATE_IO_BYTES||
+      (!range&&memcmp(p,"ACFR2\0\0\0",8))||
       memcmp(p+40,f->identity,40)||frontier_get64(p+24)!=bytes-STATE_FRONTIER_HEADER||
-      !frontier_get64(p+8)||frontier_get64(p+16)<1||frontier_get64(p+16)>3||
-      (frontier_get64(p+16)==3&&bytes!=STATE_FRONTIER_HEADER+8u)||
-      frontier_get64(p+32)>STATE_IO_BYTES||frontier_get64(p+24)>STATE_IO_BYTES)return false;
+      !frontier_get64(p+8)||kind<1u||kind>(range?4u:3u)||
+      (kind>=3u&&bytes!=STATE_FRONTIER_HEADER+8u)||
+      extent>STATE_IO_BYTES||frontier_get64(p+24)>STATE_IO_BYTES)return false;
+   if(range&&kind<=2u) {
+      if(bytes<STATE_FRONTIER_HEADER+16u||frontier_get64(p+152)>1u)return false;
+      uint64_t at=frontier_get64(p+STATE_FRONTIER_HEADER),n=bytes-STATE_FRONTIER_HEADER-16u;
+      if(at>extent||n>extent-at||(frontier_get64(p+152)&&at+n!=extent))return false;
+   }
    return frontier_get64(p+80)==frontier_header_crc(p)&&
       frontier_get64(p+88)==arc_crc32(p+STATE_FRONTIER_HEADER,bytes-STATE_FRONTIER_HEADER);
+}
+static bool frontier_checkpoint(StateFrontier *f,uint64_t generation,unsigned kind)
+{
+   uint8_t record[STATE_FRONTIER_HEADER+8u]={0};
+   memcpy(record,"ACFR3\0\0\0",8);frontier_put64(record+8,generation);frontier_put64(record+16,kind);
+   frontier_put64(record+24,8);frontier_put64(record+32,f->untracked_bytes);memcpy(record+40,f->identity,40);
+   frontier_origin_write(record,&f->origin);frontier_put64(record+STATE_FRONTIER_HEADER,f->fingerprint);
+   char directory[4096];int n=snprintf(directory,sizeof(directory),"%s/arcdroid/state-stores",state_io_root_path);
+   return n>0&&(size_t)n<sizeof(directory)&&arc_io_make_path(directory)&&frontier_publish(f,record,sizeof(record));
+}
+/* No state exists at an unsealed generation. Invalidate once BEFORE the first
+ * native mutation, including after a cold reopen. Subsequent writes retain
+ * main's seek/write/flush path; dirty sectors are read only at capture. */
+static bool state_frontier_prepare(StateHandle *handle)
+{
+   StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
+   if(!f)return true;
+   if(f->failed)return false;
+   if(!f->lazy||f->captured||!f->generation||f->unsealed)return true;
+   if(f->generation==UINT64_MAX||!frontier_checkpoint(f,f->generation+1u,4u)){f->failed=true;return false;}
+   f->unsealed=true;return true;
+}
+static bool frontier_same(const uint8_t *record,size_t length,const uint8_t *data,size_t bytes)
+{
+   unsigned kind=(unsigned)frontier_get64(record+16);
+   if(kind==4u)return true; /* Deliberately unsealed; cannot be loaded. */
+   bool range=!memcmp(record,"ACFR3\0\0\0",8);
+   if(kind==3u||range)return bytes==frontier_get64(record+32)&&frontier_fingerprint(data,bytes)==
+      frontier_get64(record+STATE_FRONTIER_HEADER+(kind==3u?0u:8u));
+   return bytes==length-STATE_FRONTIER_HEADER&&!memcmp(data,record+STATE_FRONTIER_HEADER,bytes);
 }
 void arc_state_io_forget_stores(void)
 { for(unsigned i=0;i<state_frontier_count;++i){free(state_frontiers[i].untracked);free(state_frontiers[i].untracked_index);}
@@ -166,60 +212,68 @@ bool arc_state_io_store(const char *path,const char *identity)
       uint8_t *record=records[newest];f->generation=frontier_get64(record+8);f->active=newest;
       memcpy(f->origin.sha1,record+96,40);f->origin.sha1[40]=0;
       f->origin.crc32=(uint32_t)frontier_get64(record+136);f->origin.size=(size_t)frontier_get64(record+144);
-      size_t expected=lengths[newest]-STATE_FRONTIER_HEADER;uint8_t *current=NULL;size_t bytes=0;
+      uint64_t kind=frontier_get64(record+16);
+      bool range=!memcmp(record,"ACFR3\0\0\0",8);
+      uint8_t *current=NULL;size_t bytes=0;
       bool read=state_read_native(path,&current,&bytes);
-      bool checkpoint=frontier_get64(record+16)==3;
-      bool same=checkpoint?(read&&bytes==frontier_get64(record+32)&&frontier_fingerprint(current,bytes)==frontier_get64(record+STATE_FRONTIER_HEADER)):
-         (read&&bytes==expected&&!memcmp(current,record+STATE_FRONTIER_HEADER,expected));
-      if(!same) {
-         if(frontier_get64(record+16)!=1) {
-            /* A normal content reopen may observe an external edit (including
-             * a CMOS record which the existing seed/healing path will repair).
-             * Adopt those bytes at a new frontier; never overwrite the edit
-             * from the previous acknowledged redo image. */
-            int32_t size=0;int32_t flags=state_io_native->stat?state_io_native->stat(path,&size):0;
-            if((!read&&(flags&RETRO_VFS_STAT_IS_VALID))||f->generation==UINT64_MAX)f->failed=true;
-            else {
-               uint8_t *observed=calloc(STATE_FRONTIER_HEADER+bytes,1);
-               if(!observed)f->failed=true;
-               else {
-                  memcpy(observed,record,STATE_FRONTIER_HEADER);frontier_put64(observed+8,f->generation+1u);
-                  memset(&f->origin,0,sizeof(f->origin));frontier_origin_write(observed,&f->origin);
-                  frontier_put64(observed+16,2);frontier_put64(observed+24,bytes);frontier_put64(observed+32,bytes);
-                  if(bytes)memcpy(observed+STATE_FRONTIER_HEADER,current,bytes);
-                  if(!frontier_publish(f,observed,STATE_FRONTIER_HEADER+bytes))f->failed=true;
-                  free(observed);
-               }
-            }
-         } else if(!frontier_write_all(path,record+STATE_FRONTIER_HEADER,expected))f->failed=true;
+      if(kind==1u) {
+         bool okay;
+         if(range) {
+            size_t at=(size_t)frontier_get64(record+STATE_FRONTIER_HEADER),n=lengths[newest]-STATE_FRONTIER_HEADER-16u;
+            unsigned mode=RETRO_VFS_FILE_ACCESS_WRITE;
+            if(!frontier_get64(record+152))mode|=RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING;
+            struct retro_vfs_file_handle *file=state_io_native->open(path,mode,0);
+            okay=file&&state_io_native->seek(file,(int64_t)at,RETRO_VFS_SEEK_POSITION_START)>=0&&
+               state_io_native->write(file,record+STATE_FRONTIER_HEADER+16u,n)==(int64_t)n&&state_io_native->flush(file)==0;
+            if(file&&state_io_native->close(file))okay=false;
+         } else okay=frontier_write_all(path,record+STATE_FRONTIER_HEADER,lengths[newest]-STATE_FRONTIER_HEADER);
+         free(current);current=NULL;bytes=0;
+         read=okay&&state_read_native(path,&current,&bytes);
+         if(!read||!frontier_same(record,lengths[newest],current,bytes))f->failed=true;
+         if(!f->failed){frontier_put64(record+16,2);if(!frontier_publish(f,record,lengths[newest]))f->failed=true;}
+      } else if(kind!=4u&&(!read||!frontier_same(record,lengths[newest],current,bytes))) {
+         /* Adopt an external edit on normal reopen at a NEW frontier. Never
+          * replay an acknowledged redo over the user's edited image. */
+         int32_t size=0;int32_t flags=state_io_native->stat?state_io_native->stat(path,&size):0;
+         if((!read&&(flags&RETRO_VFS_STAT_IS_VALID))||f->generation==UINT64_MAX)f->failed=true;
+         else {
+            memset(&f->origin,0,sizeof(f->origin));f->untracked_bytes=bytes;f->fingerprint=frontier_fingerprint(current,bytes);
+            if(!frontier_checkpoint(f,f->generation+1u,3u))f->failed=true;
+         }
       }
-      free(current);
-      if(!f->failed&&frontier_get64(record+16)==1) {
-         frontier_put64(record+16,2);if(!frontier_publish(f,record,lengths[newest]))f->failed=true;
-      }
+      f->unsealed=kind==4u;
+      f->untracked=current;f->untracked_bytes=bytes;f->fingerprint=frontier_fingerprint(current,bytes);
+      /* No checkpoint acknowledged the subsequent native writes. Their bytes
+       * (or an external replacement) now establish Original-media identity,
+       * just as on the ordinary no-state path. Never bind a replacement to
+       * the previous content's CMOS or immutable base. */
+      if(f->unsealed&&(bytes!=frontier_get64(record+32)||
+         f->fingerprint!=frontier_get64(record+STATE_FRONTIER_HEADER)))memset(&f->origin,0,sizeof(f->origin));
    } else if(present[0]||present[1])f->failed=true;
-   free(records[0]);free(records[1]);return !f->failed;
+   free(records[0]);free(records[1]);
+   if(!f->untracked&&!f->failed) {
+      if(!state_read_native(path,&f->untracked,&f->untracked_bytes)) {
+         int32_t size=0;if(state_io_native->stat&&(state_io_native->stat(path,&size)&RETRO_VFS_STAT_IS_VALID))f->failed=true;
+      }
+      f->fingerprint=frontier_fingerprint(f->untracked,f->untracked_bytes);
+   }
+   return !f->failed;
 }
 bool arc_state_io_store_lazy(const char *path,const char *identity)
 {
    if(!arc_state_io_store(path,identity))return false;
    StateFrontier *f=state_frontier_find(path);if(f->lazy)return !f->failed;
    f->lazy=true;
-   if(!f->generation){
-      if(!state_read_native(path,&f->untracked,&f->untracked_bytes))f->tracking_failed=true;
-      else {
-         f->fingerprint=frontier_fingerprint(f->untracked,f->untracked_bytes);
-         size_t sectors=(f->untracked_bytes+511u)/512u;
-         f->untracked_index=calloc(sectors?sectors:1u,3u);
-         if(!f->untracked_index)f->tracking_failed=true;
-      }
-   }
+   size_t sectors=(f->untracked_bytes+511u)/512u;
+   f->untracked_index=calloc(sectors?sectors:1u,3u);
+   if(!f->untracked_index)f->tracking_failed=true;
    return !f->failed;
 }
 static bool frontier_activate(StateFrontier *f)
 {
-   if(!f->lazy||f->generation)return !f->failed;
+   if(!f->lazy||f->captured)return !f->failed;
    if(f->tracking_failed)return false;
+   if(f->generation&&!f->unsealed&&!f->untracked_count){f->captured=true;return !f->failed;}
    if(f->untracked_count){
       struct retro_vfs_file_handle *file=state_io_native->open(f->path,RETRO_VFS_FILE_ACCESS_READ,0);
       bool okay=file!=NULL;
@@ -233,59 +287,69 @@ static bool frontier_activate(StateFrontier *f)
       if(file&&state_io_native->close(file))okay=false;
       if(!okay){f->tracking_failed=true;return false;}
    }
-   uint8_t record[STATE_FRONTIER_HEADER+8u]={0};
-   memcpy(record,"ACFR2\0\0\0",8);frontier_put64(record+8,1);frontier_put64(record+16,3);
-   frontier_put64(record+24,8);frontier_put64(record+32,f->untracked_bytes);memcpy(record+40,f->identity,40);
-   frontier_origin_write(record,&f->origin);frontier_put64(record+STATE_FRONTIER_HEADER,f->fingerprint);
-   char directory[4096];int n=snprintf(directory,sizeof(directory),"%s/arcdroid/state-stores",state_io_root_path);
+   if(f->generation==UINT64_MAX)return false;
    bool speculative=state_io_speculating;state_io_speculating=false;
-   bool okay=n>0&&(size_t)n<sizeof(directory)&&arc_io_make_path(directory)&&frontier_publish(f,record,sizeof(record));
+   bool okay=frontier_checkpoint(f,f->generation+1u,3u);
    state_io_speculating=speculative;
    if(!okay)f->failed=true;
-   free(f->untracked);free(f->untracked_index);f->untracked=NULL;f->untracked_index=NULL;f->untracked_bytes=f->untracked_count=0;return okay;
+   else {f->captured=true;f->unsealed=false;}
+   free(f->untracked_index);f->untracked_index=NULL;f->untracked_count=0;return okay;
 }
 static int64_t state_frontier_write(StateHandle *handle,const void *data,size_t bytes)
 {
    StateFrontier *f=handle->frontier_slot<state_frontier_count?&state_frontiers[handle->frontier_slot]:NULL;
    if(!f||f->failed||f->generation==UINT64_MAX||handle->position<0||bytes>STATE_IO_BYTES||
       (uint64_t)handle->position>STATE_IO_BYTES-bytes)return -1;
-   uint8_t *old=NULL;size_t old_bytes=0;
-   if(!handle->needs_truncate&&!state_read_native(handle->path,&old,&old_bytes))return -1;
-   size_t after=(size_t)handle->position+bytes;
-   if(!handle->needs_truncate&&after<old_bytes)after=old_bytes;
-   uint8_t *record=calloc(STATE_FRONTIER_HEADER+after,1);if(!record){free(old);return -1;}
-   memcpy(record,"ACFR2\0\0\0",8);frontier_put64(record+8,f->generation+1u);frontier_put64(record+16,1);
-   frontier_put64(record+24,after);frontier_put64(record+32,old_bytes);memcpy(record+40,f->identity,40);
-   frontier_origin_write(record,&f->origin);
-   if(old_bytes)memcpy(record+STATE_FRONTIER_HEADER,old,old_bytes);
-   if(bytes)memcpy(record+STATE_FRONTIER_HEADER+(size_t)handle->position,data,bytes);
-   free(old);
+   size_t at=(size_t)handle->position,after=at+bytes;
+   if(!handle->needs_truncate&&after<f->untracked_bytes)after=f->untracked_bytes;
+   /* Only a resize/truncate changes allocation. Fixed-size guest sectors patch
+    * the native cache and fingerprint in place, touching the changed sectors. */
+   size_t first=at/512u,last=(at+bytes+511u)/512u;
+   uint64_t fingerprint=f->fingerprint;
+   if(handle->needs_truncate) {
+      uint8_t *next=calloc(after?after:1u,1);if(!next)return -1;
+      free(f->untracked);f->untracked=next;f->untracked_bytes=after;
+      fingerprint=0;first=0;last=(after+511u)/512u;
+   } else {
+      if(after>f->untracked_bytes) {
+         first=f->untracked_bytes/512u;if(at/512u<first)first=at/512u;
+      }
+      for(size_t i=first;i<last&&i*512u<f->untracked_bytes;++i){
+         size_t n=f->untracked_bytes-i*512u;if(n>512u)n=512u;
+         fingerprint^=frontier_sector_fingerprint(f->untracked+i*512u,n,i);
+      }
+      if(after>f->untracked_bytes) {
+         uint8_t *next=realloc(f->untracked,after);if(!next)return -1;
+         memset(next+f->untracked_bytes,0,after-f->untracked_bytes);f->untracked=next;f->untracked_bytes=after;
+      }
+   }
+   if(bytes)memcpy(f->untracked+at,data,bytes);
+   for(size_t i=first;i<last;++i){size_t n=after-i*512u;if(n>512u)n=512u;
+      fingerprint^=frontier_sector_fingerprint(f->untracked+i*512u,n,i);}
+   size_t length=STATE_FRONTIER_HEADER+16u+bytes;
+   uint8_t *record=calloc(length,1);if(!record){f->failed=true;return -1;}
+   memcpy(record,"ACFR3\0\0\0",8);frontier_put64(record+8,f->generation+1u);frontier_put64(record+16,1);
+   frontier_put64(record+24,16u+bytes);frontier_put64(record+32,after);memcpy(record+40,f->identity,40);
+   frontier_origin_write(record,&f->origin);frontier_put64(record+152,handle->needs_truncate?1u:0u);
+   frontier_put64(record+STATE_FRONTIER_HEADER,at);frontier_put64(record+STATE_FRONTIER_HEADER+8u,fingerprint);
+   if(bytes)memcpy(record+STATE_FRONTIER_HEADER+16u,data,bytes);
    char directory[4096];int n=snprintf(directory,sizeof(directory),"%s/arcdroid/state-stores",state_io_root_path);
-   bool okay=n>0&&(size_t)n<sizeof(directory)&&!state_io_speculating;
-   /* Directory preparation cannot modify the target bytes. */
-   if(okay)okay=arc_io_make_path(directory);
-   if(okay)okay=frontier_publish(f,record,STATE_FRONTIER_HEADER+after);
+   bool okay=n>0&&(size_t)n<sizeof(directory)&&!state_io_speculating&&arc_io_make_path(directory);
+   if(okay)okay=frontier_publish(f,record,length);
    if(okay) {
       if(handle->needs_truncate) {
          if(handle->native)state_io_native->close(handle->native);
-         handle->native=state_io_native->open(handle->path,handle->mode,0);
+         handle->native=state_io_native->open(handle->path,handle->mode&~RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING,0);
       }
-      okay=handle->native&&state_io_native->seek(handle->native,0,RETRO_VFS_SEEK_POSITION_START)>=0&&
-         state_io_native->write(handle->native,record+STATE_FRONTIER_HEADER,after)==(int64_t)after&&
-         state_io_native->flush(handle->native)==0;
-      /* The redo writes the whole image, but this stream's guest write only
-       * advanced by bytes. Keep tell/relative seeks at that logical position,
-       * including the first state capture after a committed sector write. */
-      int64_t position=handle->position+(int64_t)bytes;
-      if(okay)okay=state_io_native->seek(handle->native,position,RETRO_VFS_SEEK_POSITION_START)>=0;
-      if(okay)handle->native_position=position;
+      okay=handle->native&&state_io_native->seek(handle->native,(int64_t)at,RETRO_VFS_SEEK_POSITION_START)>=0&&
+         state_io_native->write(handle->native,data,bytes)==(int64_t)bytes&&state_io_native->flush(handle->native)==0;
+      if(okay)handle->native_position=handle->position+(int64_t)bytes;
    }
-   if(okay){frontier_put64(record+16,2);okay=frontier_publish(f,record,STATE_FRONTIER_HEADER+after);}
-   if(okay&&state_io_commit_observer)
-      state_io_commit_observer(handle->path,record+STATE_FRONTIER_HEADER,after);
+   if(okay){frontier_put64(record+16,2);okay=frontier_publish(f,record,length);}
+   if(okay&&state_io_commit_observer)state_io_commit_observer(handle->path,f->untracked,after);
    free(record);
    if(!okay){f->failed=true;return -1;}
-   handle->position+=(int64_t)bytes;handle->needs_truncate=false;
+   f->fingerprint=fingerprint;handle->position+=(int64_t)bytes;handle->needs_truncate=false;
    return handle->native?(int64_t)bytes:-1;
 }
 static bool frontier_current(const StateFrontier *f,uint64_t *generation)
@@ -310,12 +374,15 @@ static bool frontier_current(const StateFrontier *f,uint64_t *generation)
    if(newest&&(frontier_get64(newest+16)==2u||frontier_get64(newest+16)==3u)) {
       uint8_t *target=NULL;size_t bytes=0;
       bool read=state_read_native(f->path,&target,&bytes);
-      okay=frontier_get64(newest+16)==3u?
-         (read&&bytes==frontier_get64(newest+32)&&frontier_fingerprint(target,bytes)==frontier_get64(newest+STATE_FRONTIER_HEADER)):
-         (read&&bytes==newest_size-STATE_FRONTIER_HEADER&&!memcmp(target,newest+STATE_FRONTIER_HEADER,bytes));
+      okay=read&&frontier_same(newest,newest_size,target,bytes);
       free(target);
    }
    free(newest);return okay&&*generation>=f->generation;
+}
+static void frontier_restore_commit(void *opaque)
+{
+   StateFrontier *f=opaque;f->captured=true;
+   free(f->untracked_index);f->untracked_index=NULL;f->untracked_count=0;
 }
 void arc_state_io_frontiers(ArcState *s)
 {
@@ -330,6 +397,8 @@ void arc_state_io_frontiers(ArcState *s)
       if(arc_state_loading(s)&&arc_state_pass(s)&&!frontier_current(f,&generation))
          arc_state_fail(s,"store frontier unreadable");
       arc_state_expect(s,name,&generation,sizeof(generation));
+      if(arc_state_loading(s)&&arc_state_pass(s)&&f->lazy)
+         arc_state_action(s,frontier_restore_commit,NULL,f);
       if(f->failed)arc_state_fail(s,"store frontier unavailable");
    }
 }

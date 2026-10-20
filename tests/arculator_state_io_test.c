@@ -325,11 +325,190 @@ static void test_lazy_raw_frontier(void)
    arc_state_io_speculate(true);raw_write(0x54u);assert(arc_state_io_publish());arc_state_io_speculate(false);
    indexed_reads=indexed_writes=0;size_t bytes;uint8_t *saved=capture(&bytes);
    assert(indexed_writes==168u&&indexed_reads==168u+512u); /* Small checkpoint plus one written sector, no image scan. */
-   setup();assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));assert(restore(saved,bytes));
-   raw_write(0x63u);raw_write(0x54u);unsigned before=mutations;
+   /* Once captured, each write uses two 688-byte range records and the
+    * 512-byte sector, independent of the 800 KiB image extent. */
+   indexed_reads=indexed_writes=0;
+   for(unsigned i=0;i<16u;++i)raw_write(i&1u?0x54u:0x63u);
+   assert(indexed_reads==16u*1376u&&indexed_writes==16u*1888u);
+   indexed_reads=indexed_writes=0;size_t latest_bytes;uint8_t *latest=capture(&latest_bytes);
+   assert(!indexed_reads&&!indexed_writes); /* Already cached; no image scan. */
+   unsigned before=mutations;assert(!restore(saved,bytes)&&before==mutations);
+   setup();arc_io_set_vfs(arc_state_io_attach(&measured));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));assert(restore(latest,latest_bytes));
+   indexed_reads=indexed_writes=0;raw_write(0x54u);
+   assert(indexed_reads==1376u&&indexed_writes==1888u); /* Loading also re-arms range protection. */
+   free(latest);latest=capture(&latest_bytes);
+   setup();arc_io_set_vfs(arc_state_io_attach(&measured));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+   /* A new session with old state history invalidates that history once,
+    * before writing. The unchanged reuse is still loadable until that write. */
+   indexed_reads=indexed_writes=0;raw_write(0x63u);
+   assert(indexed_reads==168u&&indexed_writes==168u+512u);
+   indexed_reads=indexed_writes=0;
+   for(unsigned i=0;i<16u;++i)raw_write(i&1u?0x54u:0x63u);
+   assert(!indexed_reads&&indexed_writes==16u*512u);
+   before=mutations;assert(!restore(latest,latest_bytes)&&before==mutations);
+   /* ABA and cold reopen cannot reseal an invalidated state. */
+   setup();arc_io_set_vfs(arc_state_io_attach(&measured));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+   before=mutations;assert(!restore(latest,latest_bytes)&&before==mutations);
+   free(latest);raw_write(0x63u);raw_write(0x54u);before=mutations;
    assert(!restore(saved,bytes)&&before==mutations); /* ABA is still an older frontier. */
    free(saved);free(original);arc_state_io_clear();arc_state_io_forget_stores();arc_io_state_clear();clear_files();
-   puts("lazy raw frontier: main's exact sector IO before states, 168-byte first checkpoint, cold reopen and ABA refusal");
+   puts("lazy raw frontier: main's exact sector IO before states, 168-byte first checkpoint, post-capture sector redo, reused-folder native writes, cold reopen and ABA refusal");
+}
+static void test_sparse_raw_view(void)
+{
+   clear_files();setup();arc_io_state_clear();uint8_t original[4096],expected[4096],observed[4096],patch[700];
+   for(unsigned i=0;i<sizeof(original);++i)original[i]=(uint8_t)(i*13u+7u);
+   memcpy(expected,original,sizeof(expected));memset(patch,0x64,sizeof(patch));
+   add_file("media","raw.adf",original,sizeof(original));struct retro_vfs_interface measured=vfs;
+   measured.read=indexed_read;measured.write=indexed_write;
+   arc_io_set_vfs(arc_state_io_attach(&measured));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+   size_t clean_bytes;uint8_t *clean=capture(&clean_bytes);unsigned before=mutations;
+   indexed_reads=indexed_writes=0;arc_state_io_speculate(true);
+   ArcIoFile *f=arc_io_open_file("media/raw.adf",true);assert(f);
+   assert(arc_io_seek_file(f,500,RETRO_VFS_SEEK_POSITION_START)==500);
+   assert(arc_io_write_file(f,patch,sizeof(patch))==sizeof(patch));memcpy(expected+500,patch,sizeof(patch));
+   memset(patch,0x75,20);assert(arc_io_seek_file(f,800,RETRO_VFS_SEEK_POSITION_START)==800);
+   assert(arc_io_write_file(f,patch,20)==20);memcpy(expected+800,patch,20);
+   assert(arc_io_seek_file(f,0,RETRO_VFS_SEEK_POSITION_START)==0&&arc_io_read_file(f,observed,sizeof(observed))==sizeof(observed));
+   assert(!memcmp(expected,observed,sizeof(expected))&&!indexed_reads&&!indexed_writes&&before==mutations);
+   size_t bytes,again_bytes;uint8_t *saved=capture(&bytes);assert(!indexed_reads&&!indexed_writes&&before==mutations);
+   assert(restore(saved,bytes));assert(arc_io_seek_file(f,0,RETRO_VFS_SEEK_POSITION_START)==0);
+   assert(arc_io_read_file(f,observed,sizeof(observed))==sizeof(observed)&&!memcmp(expected,observed,sizeof(expected)));
+   uint8_t *again=capture(&again_bytes);assert(bytes==again_bytes&&!memcmp(saved,again,bytes));free(again);
+   assert(arc_state_io_publish());arc_state_io_speculate(false);int raw=locate("media/raw.adf");
+   assert(raw>=0&&!memcmp(files[raw].bytes,expected,sizeof(expected)));
+   assert(arc_io_close_file(f));free(saved);free(clean);arc_state_io_forget_stores();arc_io_state_clear();clear_files();
+   puts("sparse raw speculation: unaligned/overlapping writes, readback and capture use zero native IO; canonical restored view and publication exact");
+}
+static void test_sparse_namespace(void)
+{
+   for(unsigned mode=0;mode<3u;++mode) {
+      clear_files();setup();uint8_t original[2048],expected[2048];memset(original,0x31,sizeof(original));memcpy(expected,original,sizeof(original));
+      add_file("media","raw.adf",original,sizeof(original));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      arc_state_io_binding(1,"media/moved.adf");size_t clean_bytes;uint8_t *clean=capture(&clean_bytes);
+      unsigned before=mutations;arc_state_io_speculate(true);raw_write(0x63);memset(expected+512,0x63,512);
+      const char *read_path="media/raw.adf";size_t expected_bytes=sizeof(expected);
+      if(mode==0u){assert(io_proxy->rename("media/raw.adf","media/moved.adf")==0);read_path="media/moved.adf";}
+      else if(mode==1u){
+         ArcIoFile *f=arc_io_open_file(read_path,true);assert(f&&arc_io_truncate_file(f,600)&&arc_io_truncate_file(f,1200));
+         assert(arc_io_close_file(f));memset(expected+600,0,600);expected_bytes=1200;
+      } else {assert(arc_io_write_all(read_path,expected,256));expected_bytes=256;}
+      void *view;size_t n;assert(arc_io_read_all(read_path,&view,&n)&&n==expected_bytes&&!memcmp(view,expected,n));free(view);
+      assert(mutations==before);size_t bytes;uint8_t *saved=capture(&bytes);assert(restore(saved,bytes));
+      assert(arc_io_read_all(read_path,&view,&n)&&n==expected_bytes&&!memcmp(view,expected,n));free(view);
+      uint8_t *again=capture(&n);assert(n==bytes&&!memcmp(saved,again,n));free(again);free(saved);
+      assert(restore(clean,clean_bytes)&&mutations==before);free(clean);
+      int raw=locate("media/raw.adf");assert(raw>=0&&files[raw].size==sizeof(original)&&!memcmp(files[raw].bytes,original,sizeof(original)));
+      arc_state_io_clear();arc_state_io_forget_stores();clear_files();
+   }
+   /* VFS truncate returns zero, both while staging and during publication. */
+   setup();uint8_t data[2048]={0};add_file("media","plain.adf",data,sizeof(data));
+   arc_state_io_speculate(true);ArcIoFile *f=arc_io_open_file("media/plain.adf",true);
+   assert(f&&arc_io_truncate_file(f,600)&&arc_io_close_file(f)&&arc_state_io_publish());arc_state_io_speculate(false);
+   int plain=locate("media/plain.adf");assert(plain>=0&&files[plain].size==600u);
+   arc_state_io_forget_stores();clear_files();
+   puts("sparse namespace: rename, shrink/extend, truncating open and canonical reload; discard changes no native bytes; VFS truncate publication succeeds");
+}
+static void test_sparse_failed_publication(void)
+{
+   unsigned cases=0;
+   for(unsigned step=1;step<40u;++step) {
+      clear_files();setup();uint8_t original[2048],expected[2048],sector[512];memset(original,0x31,sizeof(original));memcpy(expected,original,sizeof(original));
+      add_file("media","raw.adf",original,sizeof(original));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      size_t bytes;uint8_t *saved=capture(&bytes);free(saved);arc_state_io_speculate(true);
+      ArcIoFile *f=arc_io_open_file("media/raw.adf",true);assert(f);
+      for(unsigned i=1;i<=2u;++i) {
+         memset(sector,(int)(0x42u+i),sizeof(sector));memcpy(expected+i*512u,sector,512);
+         assert(arc_io_seek_file(f,(int64_t)(i*512u),RETRO_VFS_SEEK_POSITION_START)>=0&&arc_io_write_file(f,sector,512)==512&&arc_io_flush_file(f));
+      }
+      assert(arc_io_close_file(f));fail_mutation=mutations+step;bool published=arc_state_io_publish(),interrupted=!fail_mutation;fail_mutation=0;
+      unsigned before=mutations;void *view;size_t n;
+      assert(arc_io_read_all("media/raw.adf",&view,&n)&&n==sizeof(expected)&&!memcmp(view,expected,n)&&mutations==before);free(view);
+      if(!published)assert(arc_state_io_pending());
+      arc_state_io_clear();arc_state_io_forget_stores();++cases;
+      if(!interrupted){assert(published);break;}
+   }
+   clear_files();printf("sparse failed publication: %u interruption points retain exact readback over committed prefixes, without further native mutations\n",cases);
+}
+static void test_legacy_frontier(void)
+{
+   /* Existing ACFR2 full-image applied and pending records must reopen, then
+    * use the bounded ACFR3 range representation without resetting generation. */
+   for(unsigned kind=1;kind<=3u;++kind) {
+      clear_files();setup();uint8_t original[2048],record[2208]={0};memset(original,0x31,sizeof(original));
+      add_file("media","raw.adf",original,sizeof(original));
+      char identity[41],name[96];arc_sha1_hex("RAW:authored",12,identity);
+      memcpy(record,"ACFR2",5);codec_u64(record+8,7);codec_u64(record+16,kind);
+      codec_u64(record+24,kind==3u?8u:sizeof(original));codec_u64(record+32,sizeof(original));memcpy(record+40,identity,40);
+      size_t length=kind==3u?168u:sizeof(record);
+      if(kind==3u) {
+         /* Produce a legacy checkpoint with the same sector-labelled hash via
+          * a real capture, then change only its magic/generation and checksums. */
+         assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));size_t n;uint8_t *state=capture(&n);free(state);
+         snprintf(name,sizeof(name),"save/arcdroid/state-stores/%s.a",identity);int slot=locate(name);assert(slot>=0);
+         memcpy(record+160,files[slot].bytes+160,8);assert(vremove(name)==0);setup();
+      } else {memcpy(record+160,original,sizeof(original));memset(record+160+512,0x42,512);}
+      codec_u64(record+88,arc_crc32(record+160,length-160));
+      uint8_t header[144];memcpy(header,record,80);memcpy(header+80,record+96,64);codec_u64(record+80,arc_crc32(header,sizeof(header)));
+      snprintf(name,sizeof(name),"%s.a",identity);add_file("save/arcdroid/state-stores",name,record,length);
+      if(kind==2u){int raw=locate("media/raw.adf");memcpy(files[raw].bytes,record+160,sizeof(original));}
+      assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      size_t bytes;uint8_t *state=capture(&bytes);assert(restore(state,bytes));free(state);
+      raw_write(0x63);
+      snprintf(name,sizeof(name),"save/arcdroid/state-stores/%s.%c",identity,kind==1u?'b':'a');
+      int applied=locate(name);assert(applied>=0&&files[applied].size==688u&&files[applied].bytes[8]==8u&&!memcmp(files[applied].bytes,"ACFR3",5));
+      setup();assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      int raw=locate("media/raw.adf");assert(raw>=0&&files[raw].bytes[512]==0x63);
+   }
+   arc_state_io_forget_stores();arc_io_state_clear();clear_files();
+   puts("frontier upgrade: ACFR2 intent/applied/checkpoint recover, preserve generations and adopt sector-sized ACFR3 records");
+}
+static void test_reused_invalidation_failures(void)
+{
+   unsigned cases=0;
+   for(unsigned step=1;step<16u;++step) {
+      clear_files();setup();uint8_t original[2048]={0},sector[512];memset(sector,0x63,sizeof(sector));
+      add_file("media","raw.adf",original,sizeof(original));assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      size_t bytes;uint8_t *saved=capture(&bytes);
+      setup();assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      ArcIoFile *f=arc_io_open_file("media/raw.adf",true);assert(f&&arc_io_seek_file(f,512,RETRO_VFS_SEEK_POSITION_START)==512);
+      fail_mutation=mutations+step;size_t wrote=arc_io_write_file(f,sector,sizeof(sector));bool interrupted=!fail_mutation;
+      fail_mutation=0;assert(arc_io_close_file(f));setup();assert(arc_state_io_store_lazy("media/raw.adf","RAW:authored"));
+      unsigned before=mutations;bool accepted=restore(saved,bytes);assert(before==mutations);
+      int raw=locate("media/raw.adf");assert(raw>=0);
+      if(wrote)assert(wrote==512u&&!accepted&&!memcmp(files[raw].bytes+512,sector,512));
+      if(accepted)assert(!memcmp(files[raw].bytes,original,sizeof(original)));
+      free(saved);++cases;if(!interrupted){assert(wrote==512u);break;}
+   }
+   arc_state_io_forget_stores();clear_files();
+   printf("reused-folder invalidation: %u interruption points; no old state accepted after a native write\n",cases);
+}
+static void test_unsealed_original_identity(void)
+{
+   clear_files();setup();uint8_t original[2048];memset(original,0x31,sizeof(original));
+   add_file("media","raw.adf",original,sizeof(original));ArcDigest first=arc_digest(original,sizeof(original)),id=first;
+   assert(arc_state_io_original("media/raw.adf",&id));
+   assert(arc_state_io_store_lazy("media/raw.adf","RAW-ORIGINAL:media/raw.adf"));
+   size_t n;uint8_t *saved=capture(&n);free(saved);
+   setup();id=first;assert(arc_state_io_original("media/raw.adf",&id));
+   assert(arc_state_io_store_lazy("media/raw.adf","RAW-ORIGINAL:media/raw.adf"));raw_write(0x63u);
+   /* Leave the no-state epoch unsealed; then replace bytes outside the core. */
+   int raw=locate("media/raw.adf");assert(raw>=0);files[raw].bytes[0]^=0x42u;
+   ArcDigest replacement=arc_digest(files[raw].bytes,files[raw].size);setup();id=replacement;
+   assert(arc_state_io_original("media/raw.adf",&id)&&!strcmp(id.sha1,replacement.sha1));
+   arc_state_io_forget_stores();clear_files();puts("unsealed Original media: changed bytes establish identity; no previous content CMOS/base binding survives replacement");
+}
+static void test_range_truncation(void)
+{
+   clear_files();setup();uint8_t original[2048]={0},changed[512];memset(changed,0x74,sizeof(changed));
+   add_file("media","raw.adf",original,sizeof(original));assert(arc_state_io_store("media/raw.adf","RAW:authored"));
+   arc_state_io_speculate(true);assert(arc_io_write_all("media/raw.adf",changed,sizeof(changed)));
+   int raw=locate("media/raw.adf");assert(raw>=0&&files[raw].size==sizeof(original));
+   assert(arc_state_io_publish());arc_state_io_speculate(false);
+   assert(files[raw].size==512u&&!memcmp(files[raw].bytes,changed,512));
+   setup();assert(arc_state_io_store("media/raw.adf","RAW:authored"));
+   assert(files[raw].size==512u&&!memcmp(files[raw].bytes,changed,512));
+   arc_state_io_forget_stores();clear_files();puts("range redo: staged truncating writes remove old tails and recover idempotently");
 }
 static void test_failed_publication_order(void)
 {
@@ -349,6 +528,9 @@ static void test_failed_publication_order(void)
    assert(proxy->mkdir("media/new")<0);
    assert(!arc_io_truncate_file(existing,0));
    assert(mutations==before&&arc_state_io_pending()&&!arc_state_io_publish());
+   arc_state_io_speculate(true);void *view=NULL;size_t n=0;
+   assert(arc_io_read_all("media/raw.adf",&view,&n)&&n==sizeof(original)&&((uint8_t *)view)[512]==0x63u);
+   free(view);arc_state_io_speculate(false);assert(mutations==before);
    int raw=locate("media/raw.adf");assert(raw>=0&&!memcmp(files[raw].bytes,original,sizeof(original)));
    assert(arc_io_close_file(existing));arc_state_io_clear();clear_files();
    puts("failed publication: later opens, writes, flushes and namespace changes fail closed in order");
@@ -411,7 +593,7 @@ int main(void)
    test_pending_wire_bound();
    test_failed_publication_order();
    test_dirty_media_index();
-   test_lazy_raw_frontier();
+   test_lazy_raw_frontier();test_sparse_raw_view();test_sparse_namespace();test_sparse_failed_publication();test_legacy_frontier();test_reused_invalidation_failures();test_unsealed_original_identity();test_range_truncation();
    clear_files();setup();test_pending_view_limit();
    clear_files();setup();uint8_t original[2048];memset(original,0x31,sizeof(original));
    add_file("media","raw.adf",original,sizeof(original));
