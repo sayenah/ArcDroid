@@ -36380,6 +36380,24 @@
         "classification": "baseline M2b object",
         "reason": "Unchanged explicitly named object from the merged M2b base; no new exclusion or semantic contract."
       },
+      "::arc_cmos_session_year_valid": {
+        "declaration": "static bool arc_cmos_session_year_valid",
+        "citation": "docs/arculator-calendar.md",
+        "classification": "host-only/excluded",
+        "reason": "Archimedes-only reconstruction cache validity under R-AY1; cleared on content release and never consumed by RiscPC preparation or execution."
+      },
+      "::arc_cmos_session_year": {
+        "declaration": "static uint8_t arc_cmos_session_year[2]",
+        "citation": "docs/arculator-calendar.md",
+        "classification": "host-only/excluded",
+        "reason": "Retains the live Archimedes year across frontend reconstruction under R-AY1. RiscPC uses its own requested epoch; these bytes do not feed RPC guest state."
+      },
+      "::arc_test_rpc_load_epoch": {
+        "declaration": "static uint64_t arc_test_rpc_load_epoch",
+        "citation": "docs/arculator-calendar.md",
+        "classification": "host-only/excluded",
+        "reason": "Test-only read-only copy of the admitted load epoch for the I-1 year oracle. It cannot alter guest execution, RTC state, stores or routing."
+      },
       "::arc_boot_start_stamp": {
         "declaration": "static ArcBootObservation arc_boot_start_stamp",
         "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",

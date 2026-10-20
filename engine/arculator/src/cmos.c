@@ -17,6 +17,13 @@
 #include "config.h"
 #include "timer.h"
 
+/* ArcDroid modification (2026-10-19): session calendar overlay, guest-only
+ * persistence of patched bytes, PCF8583 year bits and Gregorian rollover. */
+static const unsigned year_raw[3] = {0xc0u, 0xc1u, 0x3fu};
+static uint8_t year_original[3];
+static unsigned year_written;
+static int year_overlay;
+
 int cmos_changed = 0;
 int i2c_clock = 1, i2c_data = 1;
 
@@ -83,6 +90,41 @@ void cmos_set_write_guard(const uint8_t mask[32],
 	cmos_write_guard = mask;
 	cmos_guard_callback = callback;
 	cmos_guard_opaque = opaque;
+}
+
+#if defined(ARCDROID_TEST_FAULTS)
+static int test_clock[7];
+void cmos_test_clock(int year, int month, int day, int hour, int minute, int second, int msec)
+{
+	int values[7] = {year, month, day, hour, minute, second, msec};
+	memcpy(test_clock, values, sizeof(test_clock));
+}
+#endif
+
+/* A new engine construction captures a fresh overlay baseline. Frontend
+ * reconstruction supplies its retained live year; backend reset keeps this
+ * overlay and its guest-write tracking without calling this function. */
+void cmos_session_year(int apply, const uint8_t year[2])
+{
+	year_overlay = apply;
+	year_written = 0;
+	if (!year_overlay) return;
+	for (unsigned i = 0; i < 3; ++i) year_original[i] = cmos.ram[year_raw[i]];
+	cmos.ram[0xc0] = year ? year[0] : (uint8_t)(systemtime.year % 100);
+	cmos.ram[0xc1] = year ? year[1] : (uint8_t)(systemtime.year / 100);
+	unsigned sum = 1;
+	for (unsigned raw = 16; raw < 256; ++raw)
+		if (raw != 63) sum += cmos.ram[raw];
+	cmos.ram[63] = (uint8_t)sum;
+}
+
+void cmos_get_persisted_image(uint8_t *data, size_t size)
+{
+	cmos_get_image(data, size);
+	if (!data || !year_overlay) return;
+	for (unsigned i = 0; i < 3; ++i)
+		if (year_raw[i] < size && !(year_written & (1u << i)))
+			data[year_raw[i]] = year_original[i];
 }
 
 static const int rtc_days_in_month[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -177,7 +219,7 @@ static void cmos_get_time()
 		cmos.ram[4] = d | (c << 4);
 		d = systemtime.day % 10;
 		c = systemtime.day / 10;
-		cmos.ram[5] = d | (c << 4);
+		cmos.ram[5] = d | (c << 4) | ((systemtime.year & 3) << 6);
 		d = systemtime.mon % 10;
 		c = systemtime.mon / 10;
 		cmos.ram[6] = d | (c << 4);
@@ -206,7 +248,11 @@ static void cmos_tick(void *p)
 				{
 					systemtime.hour = 0;
 					systemtime.day++;
-					if (systemtime.day > rtc_days_in_month[systemtime.mon])
+					/* The clock stores months 1..12. February follows the full year. */
+					int days = rtc_days_in_month[systemtime.mon - 1];
+					if (systemtime.mon == 2 && systemtime.year % 4 == 0 &&
+					    (systemtime.year % 100 != 0 || systemtime.year % 400 == 0)) ++days;
+					if (systemtime.day > days)
 					{
 						systemtime.day = 1;
 						systemtime.mon++;
@@ -251,6 +297,15 @@ void cmos_init()
 	systemtime.year = cur_time_tm->tm_year + 1900;
 #endif
 
+#if defined(ARCDROID_TEST_FAULTS)
+	if (test_clock[0])
+	{
+		systemtime.year = test_clock[0]; systemtime.mon = test_clock[1];
+		systemtime.day = test_clock[2]; systemtime.hour = test_clock[3];
+		systemtime.min = test_clock[4]; systemtime.sec = test_clock[5];
+		systemtime.msec = test_clock[6];
+	}
+#endif
 	timer_add(&cmos.timer, cmos_tick, NULL, 1);
 }
 
@@ -341,7 +396,12 @@ void cmos_write(uint8_t byte)
 					cmos_guard_callback(cmos_guard_opaque, raw, byte, cmos.ram[raw]);
 				++cmos.addr;
 			}
-			else cmos.ram[(cmos.addr++) & 0xFF] = byte;
+			else
+			{
+				for (unsigned i = 0; i < 3; ++i)
+					if (raw == year_raw[i]) year_written |= 1u << i;
+				cmos.ram[(cmos.addr++) & 0xFF] = byte;
+			}
 		}
 		else if (cmos.device_addr == 0xa2 && machine_type == MACHINE_TYPE_A4)
 		{

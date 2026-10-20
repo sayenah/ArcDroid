@@ -15,6 +15,9 @@ static void checksum(uint8_t image[ARC_CMOS_MACHINE_SIZE])
 
 int main(void)
 {
+   assert(!arc_cmos_uses_year(ARC_OS_UNKNOWN) && !arc_cmos_uses_year(ARC_OS_TEST));
+   for(ArcOsClass os=ARC_OS_RISCOS_311;os<=ARC_OS_ARTHUR_030;++os)
+      assert(arc_cmos_uses_year(os));
    const ArcOsClass oses[] = {ARC_OS_RISCOS_300, ARC_OS_RISCOS_310,
       ARC_OS_RISCOS_311, ARC_OS_RISCOS_319};
    for (unsigned n = 0u; n < 4u; ++n)
@@ -58,6 +61,21 @@ int main(void)
          assert(!arc_cmos_power_on_shift(others[n], image));
          arc_cmos_normalise_payload(payload, others[n], io);
          assert(payload[64u] == 0x5au);
+      }
+   /* Every launch-owned comparison uses this projection. Calendar and its
+    * checksum must not expire stamps, chooser picks or boot records. */
+   for (ArcOsClass os = ARC_OS_TEST; os <= ARC_OS_ARTHUR_030; ++os)
+      for (ArcIoClass io = ARC_IO_OLD_WD1770; io <= ARC_IO_NEW_82C711; ++io) {
+         uint8_t seed[240], a[240], b[240];
+         assert(arc_cmos_default(os, io, seed));
+         seed[176]=25; seed[177]=20;
+         assert(arc_cmos_boot_stamp_payload(os, io, seed, false, a));
+         seed[176]=26; seed[177]=20; seed[47]^=0x5a;
+         assert(arc_cmos_boot_stamp_payload(os, io, seed, true, b));
+         assert(!memcmp(a,b,sizeof(a)));
+         seed[100]^=1;
+         assert(arc_cmos_boot_stamp_payload(os, io, seed, true, b));
+         assert(memcmp(a,b,sizeof(a)));
       }
    ArcInputState state = {0};
    ArcInputEvent event;

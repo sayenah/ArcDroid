@@ -17,3 +17,10 @@ extern int cmos_changed;
 extern int i2c_clock, i2c_data;
 
 #define CMOS_CHANGE_DELAY 10 /*10cs = 100ms*/
+
+/* ArcDroid modification (2026-10-19): live year overlay and guest-only save. */
+void cmos_session_year(int apply, const uint8_t year[2]);
+void cmos_get_persisted_image(uint8_t *data, size_t size);
+#if defined(ARCDROID_TEST_FAULTS)
+void cmos_test_clock(int year, int month, int day, int hour, int minute, int second, int msec);
+#endif

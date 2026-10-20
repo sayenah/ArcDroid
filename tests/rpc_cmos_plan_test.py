@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     if kind=='writer':
         # Independently encode an ordinary record with an intentionally invalid
         # guest checksum: the envelope store retains arbitrary payloads;
-        # R-Y1 refreshes the live year and checksum at requested-session start.
+        # AY-1 L-1 refreshes the year while preserving the checksum error.
         digest=hashlib.sha256((roms/'writer.rom').read_bytes()).digest()
         b=bytearray(512);b[:8]=b'ARCRPCM1';struct.pack_into('<IIIIQ',b,8,1,512,model+1,0x10003,1)
         b[32:72]=b'a'*40;b[72:104]=digest;b[104:344]=bytes([77])*240
@@ -48,6 +48,8 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         latest=max(records,key=lambda p:struct.unpack_from('<Q',p.read_bytes(),24)[0])
         final=record(latest,b'ARCRPCM1',roms/'writer.rom','a'*40)
         # The final reopen refreshes the year before any writer instruction.
+        # The guest writes an otherwise zero payload with valid checksum 1.
+        # Refreshing the century adds 20, retaining that valid checksum.
         expected=bytearray(240);expected[177]=20;expected[47]=21
         assert final[104:344]==expected and not (base/'defaults').exists()
         # Keep one valid recovery slot and a corrupt published peer. A live
