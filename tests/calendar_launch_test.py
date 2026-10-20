@@ -15,8 +15,9 @@ with tempfile.TemporaryDirectory(prefix='arc-calendar-launch-') as temp:
             shutil.copyfile(fixtures/rom,firmware/'authored.rom')
             subprocess.run([exe,core,str(system),str(save),str(fixtures/content),mode,str(base)],
                            env={**os.environ,'ARCDROID_TEST_POWER_ON_SHIFT':'1'},check=True,timeout=90)
-    root=Path(temp)/'session';system=root/'system';save=root/'save'
-    firmware=system/'arcdroid/firmware';firmware.mkdir(parents=True);save.mkdir()
-    (firmware/'authored.rom').write_bytes(calendar_firmware())
-    subprocess.run([exe,core,str(system),str(save),str(fixtures/'arcdroid-test.adf'),'session','2025'],
-                   check=True,timeout=90)
+    for mode,base in (('session',2025),('construction',2025),('construction',2099)):
+        root=Path(temp)/(mode+str(base));system=root/'system';save=root/'save'
+        firmware=system/'arcdroid/firmware';firmware.mkdir(parents=True);save.mkdir()
+        (firmware/'authored.rom').write_bytes(calendar_firmware())
+        subprocess.run([exe,core,str(system),str(save),str(fixtures/'arcdroid-test.adf'),mode,str(base)],
+                       check=True,timeout=90)

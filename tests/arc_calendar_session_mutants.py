@@ -24,10 +24,13 @@ cases=[(label,text,compile,False) for label,text in cases]
 frontend=(root/'libretro/arcdroid_libretro.c').read_text(encoding='utf-8')
 anchor='arc_engine_cmos_resume_year(arc_cmos_session_year_valid?arc_cmos_session_year:NULL);'
 assert frontend.count(anchor)==1
+construction_anchor='   arc_cmos_session_year_valid=arc_engine_cmos_year(arc_cmos_session_year);\n   bool riscos3'
+assert frontend.count(construction_anchor)==1
 cases.extend([
     ('frontend baseline',frontend,frontend_compile,True),
     ('discard live year during frontend reconstruction',frontend.replace(anchor,'arc_engine_cmos_resume_year(NULL);'),frontend_compile,True),
     ('carry year into next load',frontend.replace('   arc_cmos_session_year_valid = false;',''),frontend_compile,True),
+    ('skip construction year cache refresh',frontend.replace(construction_anchor,'   bool riscos3'),frontend_compile,True),
 ])
 with tempfile.TemporaryDirectory(prefix='arc-calendar-wiring-') as temp:
     temp = Path(temp)
@@ -50,4 +53,6 @@ with tempfile.TemporaryDirectory(prefix='arc-calendar-wiring-') as temp:
         if label in ('baseline','frontend baseline'):assert run.returncode==0,run.stdout+run.stderr
         else:
             assert run.returncode!=0,(label,'survived')
+            if label=='skip construction year cache refresh':
+                assert 'live[192]+100u*live[193]==base' in run.stderr,run.stdout+run.stderr
             print('calendar wiring mutant killed: '+label,flush=True)

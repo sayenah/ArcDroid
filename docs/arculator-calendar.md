@@ -23,6 +23,12 @@ checksum, covering boot stamps, chooser selections and boot records across
 New Year. Synthetic fixtures cover these contracts in CI; private firmware
 probes remain local.
 
+On upgrade from a pre-AY-1 build, an existing RISC OS 2/3 boot record has a
+different CMOS stamp because C0/C1 are now excluded. It is discarded once on
+the first load after upgrade; that launch behaves like first use and the boot
+record can be learned again. Remembered chooser picks are unaffected. No
+compatibility conversion is performed.
+
 The guest date interface is documented in the
 [RISC OS PRM, Time and Date](https://www.riscos.com/support/developers/prm/timedate.html).
 

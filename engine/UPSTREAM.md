@@ -301,3 +301,5 @@ C0/C1 from EEPROM; its PCF8573 branch receives no hardware year bits. The clock'
 month indexing and Gregorian February length are corrected so December
 rollover advances the RTC year safely. A fixed calendar clock exists only
 under ARCDROID_TEST_FAULTS; shipping builds retain the host local clock.
+The calendar additions follow the upstream CRLF line endings and tab
+indentation; their formatting correction changes no behavior.

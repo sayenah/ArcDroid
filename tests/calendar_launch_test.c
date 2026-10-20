@@ -68,12 +68,31 @@ int main(int argc,char **argv)
    bool (*image)(uint8_t *);LOAD(image,"arc_engine_test_cmos_image");
    bool (*write)(unsigned,uint8_t);LOAD(write,"arc_engine_test_cmos_bus_write");
    void (*clock)(int,int,int,int,int,int,int);LOAD(clock,"cmos_test_clock");
-   session_mode=!strcmp(argv[5],"session");
+   bool construction_only=!strcmp(argv[5],"construction");
+   session_mode=!strcmp(argv[5],"session") || construction_only;
    p_retro_set_environment(environment);p_retro_set_video_refresh(video);
    p_retro_set_audio_sample_batch(audio);p_retro_set_input_poll(poll);p_retro_set_input_state(input);p_retro_init();
    bool chooser=!strcmp(argv[5],"chooser");
    struct retro_game_info game={.path=argv[4]};
    ArcBootObservation first={0},later={0};char record_path[4096]={0};
+   if(construction_only){
+      void (*stop)(void);LOAD(stop,"arc_engine_stop");
+      uint32_t (*read_word)(uint32_t);LOAD(read_word,"readmemf_debug");
+      clock((int)base,7,15,12,0,0,0);assert(p_retro_load_game(&game));
+      uint8_t live[256];assert(image(live));
+      assert(live[192]==base%100 && live[193]==base/100);
+      /* No retro_run or CMOS synchronization: construction is the only cache
+       * source. A stopped engine makes reset's persistence return early. */
+      stop();assert(!image(live));
+      clock((int)base+4,7,15,12,0,0,0);p_retro_reset();
+      assert(state()==3 && image(live));
+      assert(live[192]+100u*live[193]==base);
+      for(unsigned i=0;read_word(0x02000408)!=0xa5;++i){assert(i<10);p_retro_run();}
+      assert(read_word(0x02000400)==base && read_word(0x02000404)==1);
+      p_retro_unload_game();p_retro_deinit();vfs_assert_no_open_handles();
+      printf("calendar construction cache: %u retained across stopped-engine reset without persistence\n",base);
+      return 0;
+   }
    if(session_mode){
       uint32_t (*read_word)(uint32_t);LOAD(read_word,"readmemf_debug");
       for(unsigned reopen=0;reopen<2;++reopen){
