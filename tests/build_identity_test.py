@@ -224,6 +224,15 @@ static void (*arc_log)(int, const char *, ...) = log_line;
     for job in ('windows','windows-retroarch'):
         section=re.search(r'(?ms)^  '+job+r':\n(.*?)(?=^  [\w-]+:|\Z)',workflow)
         require(section is not None,'missing Windows job')
+        # The MSYS2 shell does not inherit the runner's Git/tool PATH. Both
+        # jobs build exact identities and inspect PE objects before consuming
+        # them, so each must provision its own build and guard tools.
+        installs=re.findall(r'^          install: (.+)$',section[1],re.M)
+        require(len(installs)==1,'missing unambiguous MSYS2 package list: '+job)
+        required={'git',*('mingw-w64-ucrt-x86_64-'+tool for tool in
+                         ('binutils','gcc','cmake','ninja','python'))}
+        missing=required-set(installs[0].split())
+        require(not missing,job+' lacks build/guard packages: '+', '.join(sorted(missing)))
         for key,value in policy.items():
             require(re.search(r'^      '+key+r": ['\"]?"+value+r"['\"]?\s*$",section[1],re.M),
                     'missing pre-checkout Windows Git policy: '+key)
