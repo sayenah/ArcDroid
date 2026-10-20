@@ -3738,6 +3738,7 @@ if(ARCDROID_RPC_AUTHORED_ROUTE)
     add_test(NAME rpc-route-authored COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_test.py"
       $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_rpcroute_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}" "$<BOOL:${ARCDROID_RPC_ORDINARY_LOAD}>" $<TARGET_FILE:arcdroid_rpcroute_fault_libretro>)
     set_tests_properties(rpc-route-authored PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
+    add_test(NAME rpc-route-discarded-paths COMMAND rpc_route_harness --check-discarded-paths)
     add_test(NAME rpc-route-matrix COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_matrix_test.py" "${CMAKE_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:rpc_route_harness> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}")
     set_tests_properties(rpc-route-matrix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
     if(ARCDROID_SANITIZERS)
