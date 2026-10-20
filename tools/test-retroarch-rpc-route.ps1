@@ -54,6 +54,10 @@ network_cmd_port = "55355"
 quit_press_twice = "false"
 cheat_database_path = "$(ConfigPath $ordinaryCheats)"
 core_options_path = "$(ConfigPath $ordinaryOptions)"
+global_core_options = "true"
+game_specific_options = "false"
+auto_overrides_enable = "false"
+config_save_on_exit = "false"
 system_directory = "$(ConfigPath $ordinarySystem)"
 savefile_directory = "$(ConfigPath $ordinarySave)"
 savestate_directory = "$(ConfigPath $ordinarySave)"
@@ -63,6 +67,8 @@ libretro_directory = "$(ConfigPath $coreDirectory)"
 libretro_info_path = "$(ConfigPath $infoDirectory)"
 screenshot_directory = "$(ConfigPath $evidenceDirectory)"
 log_verbosity = "true"
+frontend_log_level = "0"
+log_to_file_timestamp = "false"
 libretro_log_level = "1"
 user_language = "0"
 run_ahead_enabled = "true"
@@ -70,8 +76,30 @@ run_ahead_frames = "1"
 run_ahead_secondary_instance = "true"
 rewind_enable = "true"
 "@ | Set-Content -Encoding ASCII $ordinaryConfig
-$config = '"' + (Resolve-Path $ordinaryConfig).Path + '"'
 $core = $ordinaryCore
+# In RA 1.22.2, core_options_path is only the global fallback unless
+# global_core_options=true; game/folder options have still higher priority.
+# Each process gets a new config/options pair. RA may save that options file
+# at unload, but no later process reads it or a prior core's saved .opt.
+function New-OrdinaryLegConfig([string]$BaseConfig, [string]$Name) {
+    $directory = Join-Path $ordinaryRoot "options-$Name"
+    New-Item -ItemType Directory $directory | Out-Null
+    $legOptions = Join-Path $directory 'options.cfg'
+    Copy-Item -LiteralPath $ordinaryOptions $legOptions
+    $legConfig = Join-Path $directory 'retroarch.cfg'
+    Get-Content -LiteralPath $BaseConfig | Where-Object {
+        $_ -notmatch '^core_options_path\s*='
+    } | Set-Content -Encoding ASCII $legConfig
+    'core_options_path = "' + (ConfigPath $legOptions) + '"' | Add-Content -Encoding ASCII $legConfig
+    return (Resolve-Path -LiteralPath $legConfig).Path
+}
+function Assert-OrdinaryOptions([string]$Log, [string]$Name) {
+    # These frontend DEBUG lines are emitted on the core's GET_VARIABLE calls,
+    # proving delivered values rather than merely inspecting our input file.
+    & python -B (Join-Path $PSScriptRoot 'check-retroarch-rpc-options.py') $Log |
+        Tee-Object -FilePath (Join-Path $evidenceDirectory "$Name-options.txt")
+    if ($LASTEXITCODE -ne 0) { throw "$Name received unexpected core options" }
+}
 function Wait-OrdinaryLog($Run, [string]$Pattern, [int]$AfterLines = 0) {
     $deadline = [DateTime]::UtcNow.AddSeconds(180)
     do {
@@ -135,16 +163,17 @@ savestate_directory = "$(ConfigPath $closedSave)"
 run_ahead_enabled = "false"
 rewind_enable = "false"
 "@ | Add-Content -Encoding ASCII $closedConfig
-$config = '"' + (Resolve-Path $closedConfig).Path + '"'
+$config = '"' + (New-OrdinaryLegConfig $closedConfig 'rpc-ordinary-closed-legacy') + '"'
 $core = (Resolve-Path (Join-Path $InputDirectory 'arcdroid_libretro.dll')).Path
 $run = $null
 try {
     $run = Start-MediaRun ('"' + $ordinaryContent + '"') 'rpc-ordinary-closed-legacy'
+    Assert-OrdinaryOptions $run.RetroLog $run.Name
     [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM')
     $text = [string](Get-Content -Raw $run.RetroLog)
     if ($text -notmatch 'which ArcDroid does not emulate; booting anyway' -or (Test-Path (Join-Path $closedSave 'arcdroid/hd-riscpc'))) { throw 'Closed shipping did not preserve the legacy route/notice' }
 } finally { if ($run) { Stop-MediaRun $run } }
-$config = '"' + (Resolve-Path $ordinaryConfig).Path + '"'
+Assert-OrdinaryOptions $run.RetroLog $run.Name
 $core = $ordinaryCore
 $ordinarySwitchDrivable = $true
 foreach ($leg in @(1, 2)) {
@@ -164,7 +193,9 @@ foreach ($leg in @(1, 2)) {
         $pendingOwner.Lock(0, 1)
     }
     try {
+        $config = '"' + (New-OrdinaryLegConfig $ordinaryConfig "rpc-ordinary-$leg") + '"'
         $run = Start-MediaRun ('"' + $ordinaryContent + '"') "rpc-ordinary-$leg"
+        Assert-OrdinaryOptions $run.RetroLog $run.Name
         if ($leg -eq 1) {
             [void](Wait-OrdinaryLog $run 'N-7: Preparing RiscPC settings for first use')
             if ((Get-Content -Raw $run.RetroLog) -match 'summary: phase=pending .*state=10 ') { throw 'Contention did not hold preparation pending' }
@@ -256,6 +287,7 @@ foreach ($leg in @(1, 2)) {
         if ($pendingOwner) { $pendingOwner.Dispose() }
         if ($run) { Stop-MediaRun $run }
     }
+    Assert-OrdinaryOptions $run.RetroLog $run.Name
     if ($leg -eq 2) {
         # Include late load/error lines through clean QUIT, not just the first
         # reply. A rejection cannot excuse a later core change or load failure.
@@ -272,16 +304,20 @@ foreach ($leg in @(1, 2)) {
 # Arculator image to compare. Its fresh Arculator control must still render.
 $run = $null
 try {
+    $config = '"' + (New-OrdinaryLegConfig $ordinaryConfig 'rpc-ordinary-fresh-arculator') + '"'
     $run = Start-MediaRun ('"' + $ordinaryArc + '"') 'rpc-ordinary-fresh-arculator'
+    Assert-OrdinaryOptions $run.RetroLog $run.Name
     [void](Wait-OrdinaryLog $run 'Firmware: ArcDroid test ROM')
     $fresh = Capture-StableRawScreenshot $run 'rpc-ordinary-fresh-arculator' 2
     if ($fresh.Colours -lt 2) { throw 'Fresh Arculator control has no guest raster' }
     if ($ordinarySwitchDrivable -and $fresh.VisualSignature -ne $ordinaryArcSignature) { throw 'Arculator pixels differ after RPC switch' }
 } finally { if ($run) { Stop-MediaRun $run } }
+Assert-OrdinaryOptions $run.RetroLog $run.Name
 function Invoke-OrdinaryRefusal([string]$Library, [string]$Name, [string]$Pattern) {
+    $legConfig = '"' + (New-OrdinaryLegConfig $archiveConfig $Name) + '"'
     $refusalLog = Join-Path $evidenceDirectory "$Name.log"
     $text = ""
-    $arguments = @("--config=$config", "--libretro=$Library", '--verbose', "--log-file=$refusalLog", '--max-frames=180', ('"' + $ordinaryContent + '"'))
+    $arguments = @("--config=$legConfig", "--libretro=$Library", '--verbose', "--log-file=$refusalLog", '--max-frames=180', ('"' + $ordinaryContent + '"'))
     Wait-RetroArchStartReady
     $refusal = Start-Process $retroArch -ArgumentList $arguments -PassThru -NoNewWindow
     $script:RetroArchStartedProcesses.Add($refusal)
@@ -295,6 +331,7 @@ function Invoke-OrdinaryRefusal([string]$Library, [string]$Name, [string]$Patter
             if ($refusal.HasExited) { break }
             Start-Sleep -Milliseconds 100
         } while ([DateTime]::UtcNow -lt $deadline)
+        Assert-OrdinaryOptions $refusalLog $Name
         if ($text -notmatch $Pattern -or $text -match 'summary: phase=pending .*state=10 ') { throw "$Name did not give its class-A refusal" }
     } finally {
         if (-not $refusal.HasExited) {
@@ -303,6 +340,7 @@ function Invoke-OrdinaryRefusal([string]$Library, [string]$Name, [string]$Patter
             if (-not $refusal.WaitForExit(5000)) { Stop-Process -Id $refusal.Id -Force;$refusal.WaitForExit() }
         }
     }
+    Assert-OrdinaryOptions $refusalLog $Name
 }
 # J4 needs recognised authored firmware and a FRESH store. It is test-core evidence.
 $archiveSave = Join-Path $ordinaryRoot 'missing-archives-save'
@@ -313,7 +351,6 @@ Get-Content $ordinaryConfig | Where-Object { $_ -notmatch '^(savefile_directory|
 savefile_directory = "$(ConfigPath $archiveSave)"
 savestate_directory = "$(ConfigPath $archiveSave)"
 "@ | Add-Content -Encoding ASCII $archiveConfig
-$config = '"' + (Resolve-Path $archiveConfig).Path + '"'
 Invoke-OrdinaryRefusal $ordinaryCore 'rpc-ordinary-test-j4' 'N-6: First use.*HardDisc4.zip and PlingSystem.zip'
 if (Test-Path (Join-Path $archiveSave 'arcdroid/hd-riscpc')) { throw 'Missing archives created a store' }
 # J3 uses the unmodified gate-open SHIPPING DLL, with an empty firmware folder.

@@ -20,6 +20,10 @@ SWITCH_SCRIPT = ROOT / 'tools/check-retroarch-rpc-switch.py'
 spec = importlib.util.spec_from_file_location('ordinary_switch', SWITCH_SCRIPT)
 switch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(switch)
+OPTIONS_SCRIPT = ROOT / 'tools/check-retroarch-rpc-options.py'
+spec = importlib.util.spec_from_file_location('ordinary_options', OPTIONS_SCRIPT)
+options = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(options)
 
 
 def template(source, variable, operation='Set-Content'):
@@ -80,6 +84,11 @@ def check_ordinary(lines):
     config = check_frontend(lines)
     if config.get('user_language') != '0':
         raise AssertionError('Exact frontend rejection requires English log text')
+    for key, value in {'global_core_options': 'true', 'game_specific_options': 'false',
+                       'auto_overrides_enable': 'false', 'config_save_on_exit': 'false',
+                       'frontend_log_level': '0', 'log_to_file_timestamp': 'false'}.items():
+        if config.get(key) != value:
+            raise AssertionError(f'{key} must isolate options and record actual callback values')
     # The real lock and store assertions use the configured save root. RA's
     # default per-core subdirectory would give the guest a different directory.
     for key in ('sort_savefiles_enable', 'sort_savefiles_by_content_enable'):
@@ -191,11 +200,18 @@ class WindowsConfig(unittest.TestCase):
             for key, value in (('video_driver', 'gl'), ('network_cmd_enable', 'false'),
                                ('network_cmd_port', '55356'), ('midi_driver', 'winmm'),
                                ('sort_savefiles_enable', 'true'),
-                               ('sort_savefiles_by_content_enable', 'true')):
+                               ('sort_savefiles_by_content_enable', 'true'),
+                               ('global_core_options', 'false'), ('game_specific_options', 'true'),
+                               ('auto_overrides_enable', 'true'), ('config_save_on_exit', 'true'),
+                               ('frontend_log_level', '1'), ('log_to_file_timestamp', 'true')):
                 mutant = [re.sub(rf'^{key} = .*', f'{key} = "{value}"', line)
                           for line in lines]
                 with self.subTest(key=key), self.assertRaises(AssertionError):
                     check_ordinary(mutant)
+        for key in ('global_core_options', 'game_specific_options', 'auto_overrides_enable',
+                    'config_save_on_exit', 'frontend_log_level', 'log_to_file_timestamp'):
+            with self.subTest(missing=key), self.assertRaises(AssertionError):
+                check_ordinary([line for line in ordinary if not line.startswith(key+' =')])
         with self.assertRaises(AssertionError):
             check_frontend(['video_driver = "gl"', *ordinary])
 
@@ -210,6 +226,62 @@ class WindowsConfig(unittest.TestCase):
         self.assertNotIn('--max-frames', live)
         self.assertIn('--max-frames=180', refusal)
         self.assertIn('Wait-RetroArchStartReady', refusal)
+
+
+class DeliveredOptions(unittest.TestCase):
+    def reads(self):
+        return [f'[DEBUG] [Environ] GET_VARIABLE: {key} = "Auto"' for key in options.EXPECTED]
+
+    def test_actual_callbacks_and_leaks(self):
+        self.assertEqual(options.verify(self.reads()), dict.fromkeys(options.EXPECTED, 1))
+        self.assertEqual(options.verify(self.reads()*2), dict.fromkeys(options.EXPECTED, 2))
+        for key in options.EXPECTED:
+            for value in ('A3000', 'ARM2', 'RISC OS 3.11', 'auto', ''):
+                wrong = f'[DEBUG] [Environ] GET_VARIABLE: {key} = "{value}"'
+                for lines in ([wrong]+self.reads(), self.reads()+[wrong]):
+                    with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                        options.verify(lines)
+        for key in options.EXPECTED:
+            error = f'[ERROR] [Environ] GET_VARIABLE: {key} - Invalid value.'
+            with self.assertRaises(ValueError):
+                options.verify(self.reads()+[error])
+        for lines in ([], self.reads()[:-1], ['arcdroid_machine = "Auto"'],
+                      [line.replace('[DEBUG]', '[libretro DEBUG]') for line in self.reads()],
+                      [line.replace('GET_VARIABLE:', 'SET_VARIABLE:') for line in self.reads()]):
+            with self.subTest(lines=lines), self.assertRaises(ValueError):
+                options.verify(lines)
+
+    def test_cli_windows_log_encoding(self):
+        with tempfile.TemporaryDirectory(prefix='rpc-options-') as temp:
+            log = Path(temp) / 'frontend.log'
+            args = [sys.executable, '-B', str(OPTIONS_SCRIPT), str(log)]
+            for lines, good in ((self.reads(), True), (self.reads()[:-1], False),
+                                (self.reads()+[self.reads()[0].replace('Auto', 'A3000')], False)):
+                log.write_text('\r\n'.join(lines), encoding='utf-8-sig', newline='')
+                result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0, good, result.stderr)
+                self.assertEqual('PASS' in result.stdout, good)
+
+    def test_every_process_gets_fresh_options_and_checks(self):
+        fresh = ORDINARY.split('function New-OrdinaryLegConfig(', 1)[1].split('function ', 1)[0]
+        self.assertIn('"options-$Name"', fresh)
+        self.assertIn('Copy-Item -LiteralPath $ordinaryOptions $legOptions', fresh)
+        self.assertIn("$_ -notmatch '^core_options_path\\s*='", fresh)
+        self.assertIn('New-Item -ItemType Directory $directory', fresh)
+        self.assertNotIn('-Force', fresh)
+        self.assertIn('ConfigPath $legOptions', fresh)
+        for base, name in (('closedConfig', "'rpc-ordinary-closed-legacy'"),
+                           ('ordinaryConfig', '"rpc-ordinary-$leg"'),
+                           ('ordinaryConfig', "'rpc-ordinary-fresh-arculator'"),
+                           ('archiveConfig', '$Name')):
+            self.assertIn(f'New-OrdinaryLegConfig ${base} {name}', ORDINARY)
+        self.assertEqual(ORDINARY.count('Assert-OrdinaryOptions $run.RetroLog $run.Name'), 6)
+        refusal = ORDINARY.split('function Invoke-OrdinaryRefusal(', 1)[1]
+        self.assertIn('"--config=$legConfig"', refusal)
+        self.assertEqual(refusal.count('Assert-OrdinaryOptions $refusalLog $Name'), 2)
+        self.assertLess(refusal.index('Assert-OrdinaryOptions $refusalLog $Name'), refusal.index('if ($text -notmatch $Pattern'))
+        self.assertIn('"$Name-options.txt"', ORDINARY)
+        self.assertIn('if ($LASTEXITCODE -ne 0)', ORDINARY)
 
 
 class SwitchRejection(unittest.TestCase):
