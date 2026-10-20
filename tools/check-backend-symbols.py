@@ -75,6 +75,16 @@ def read_symbols(path, nm, sanitized=False, errors=None, keep_sanitizer_referenc
         # this one shared registration flag as a common even with -fno-common.
         if form == "macho" and sanitized and name == "___asan_globals_registered" and kind == "C":
             continue
+        # Clang's private ODR indicators let two copied libretro DSOs retain
+        # ASan's check without conflating their intentionally separate globals.
+        # Admit data bookkeeping only when this SAME object defines its
+        # referent; that definition still goes through the full engine policy.
+        indicator = re.fullmatch(r"__odr_asan_gen_([A-Za-z_][A-Za-z0-9_]*)", name)
+        if sanitized and form in {"macho", "elf"} and indicator and kind in ("BS" if form=="macho" else "B"):
+            raw = ("_" if form=="macho" else "") + indicator[1]
+            violation(re.search(r"^"+re.escape(raw)+r" [DdBbSsRr]\b", output, re.M) is not None,
+                      f"ODR indicator without local data referent: {path}: {name}", errors)
+            continue
         if kind in "Cc":
             errors.append(f"common symbol: {path}: {name}")
             continue
@@ -263,9 +273,11 @@ CENSUS_SERVICES = {
     "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoull",
     "clock_gettime", "sysctlbyname",
     "getauxval",  # Linux/Android hash HWCAP query; no allocation.
-    # SS-1 loaded-module identity probes: NOLOAD handles are balanced by dlclose;
-    # Windows module handles are borrowed, without incrementing loader references.
-    "dladdr", "dlopen", "dlclose", "GetModuleHandleExW", "GetModuleHandleW",
+    # R3d-4 module identity: RTLD_NOLOAD reference balanced by dlclose;
+    # dladdr/dlsym return borrowed module metadata, no application allocation.
+    "dlopen", "dlclose", "dladdr", "dlsym",
+    # FROM_ADDRESS | UNCHANGED_REFCOUNT and borrowed primary module handle.
+    "GetModuleHandleExW", "GetModuleHandleW",
     # Existing dormant native lock module: handles/fds, never heap ownership.
     "close", "flock", "fstat", "open", "stat", "fcntl",
     # MinGW runtime and existing test-only exception locator. The locator's

@@ -68,6 +68,7 @@ typedef struct {
     const ArcEngineMedia *media, *helper;
     uint64_t epoch;
     bool hard_disc, populate;
+    bool ordinary; /* M1 admission: advisory-only pair record, never a launch plan. */
     bool helper_override; /* Explicit drive1, including empty, suppresses generation. */
     const ArcRpcLaunchPlan *launch; /* NULL: delivery unavailable/no plan. Copied. */
     uint64_t session_id; /* Injected; unique per library load, kept across Restart; not RTC epoch. */

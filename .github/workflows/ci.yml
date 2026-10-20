@@ -31,6 +31,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          # SS-1 Run K includes its accepted durable save metadata. Keep exact
+          # save-tree identity for Run L; lifecycle refusals are tested separately.
+          ref: d92b50a95efa535a8cfe67464e31ee796a016a33
+          path: build/r3d4-base-source
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache llvm
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -63,6 +70,22 @@ jobs:
         run: cmake --build build/profile --target rpc-profile-tests
       - name: Profiling counts, transparency and mutants
         run: ctest -j "$(nproc)" --test-dir build/profile --output-on-failure -R '^rpc-profile-' ${{ github.event_name == 'push' && '-LE slow' || '' }}
+      - name: Both gate states and authored ordinary route
+        run: |
+          cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
+          cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
+          tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
+          python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
+      - name: Closed baseline and allowed open Archimedes projections
+        run: |
+          cmake -S build/r3d4-base-source -B build/r3d4-base -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build build/r3d4-base --target arcdroid_libretro -j "$(nproc)"
+          python3 tests/rpc_host_frontend_test.py build/host/rpc_host_frontend_test build/host/arcdroid_libretro.so build/host/tests/fixtures/generated shipping build/r3d4-base/arcdroid_libretro.so
+          python3 tests/rpc_host_frontend_test.py build/host/rpc_host_frontend_test build/host/arcdroid_libretro.so build/host/tests/fixtures/generated shipping-legacy build/ordinary-open/arcdroid_libretro.so
+          python3 tests/rpc_host_frontend_test.py build/host/rpc_host_frontend_test build/host/arcdroid_libretro.so build/host/tests/fixtures/generated shipping-override build/ordinary-open/arcdroid_libretro.so
+          python3 tests/rpc_route_metadata_test.py build/ordinary-open/rpc_route_harness build/host/arcdroid_libretro.so build/ordinary-open/arcdroid_libretro.so build/r3d4-base/arcdroid_libretro.so
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -105,6 +128,14 @@ jobs:
         run: cmake --build build/profile --target rpc-profile-tests
       - name: Profiling counts, transparency and mutants
         run: ctest -j "$(nproc)" --test-dir build/profile --output-on-failure -R '^rpc-profile-' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
+      - name: Both gate states and authored ordinary route
+        run: |
+          cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
+          cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
+          tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
+          python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -134,6 +165,14 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: ctest -j "$(nproc)" --test-dir build/sanitize --output-on-failure -R '${{ github.event_name != 'pull_request' && '.*' || '^(arculator-state-.*|rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$' }}' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
+      - name: Both gate states and authored ordinary route
+        run: |
+          cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON -DARCDROID_SANITIZERS=ON
+          cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
+          tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
+          python3 tools/check-rpc-lock-object.py --build build/sanitize --platform ofd
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -141,7 +180,11 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/.ccache
+      # Both checkout's Git and MSYS2 Git must preserve the committed bytes.
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
     defaults:
       run:
         shell: msys2 {0}
@@ -182,21 +225,23 @@ jobs:
         run: build/windows/hash_accel_test.exe --require-x86
       - name: Windows import and export guard
         run: tools/check-windows.sh build/windows/arcdroid_libretro.dll
-      - name: Upload matching Windows RPC crash diagnostics
+      - name: Classify fresh Windows diagnostics
+        id: diagnostics
         if: always()
+        run: |
+          cmake --build build/windows -j "$NUMBER_OF_PROCESSORS"
+          python3 tools/stage-rpc-artifacts.py --input build/windows --output build/public-diagnostics --manifest build/windows/rpc-artifact-targets.json --diagnostics
+          echo "classified=true" >> "$GITHUB_OUTPUT"
+      - name: Upload matching Windows RPC crash diagnostics
+        if: always() && steps.diagnostics.outputs.classified == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arcdroid-windows-rpc-diagnostics
-          path: |
-            build/windows/rpc*.exe
-            build/windows/hash_accel_test.exe
-            build/windows/arcdroid*libretro*.dll
-            !build/windows/arcdroid_lockprobe*.dll
-            build/windows/rpc-repeat.log
-            build/windows/Testing/Temporary/LastTest*.log
-          if-no-files-found: warn
+          path: build/public-diagnostics/
+          if-no-files-found: error
       - name: Package native RetroArch inputs
         run: |
+          rm -rf build/windows/retroarch-package
           mkdir -p build/windows/retroarch-package
           cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro_test.dll build/windows/arcdroid_libretro.info build/windows/windows_load_harness.exe \
             build/windows/arcdroid_rpcplan_libretro.dll build/windows/arcdroid_rpcplan_libretro.info build/windows/rpc_runner.exe \
@@ -271,12 +316,11 @@ jobs:
             build/windows/retroarch-package/
           cp -R build/windows/tests/fixtures/generated/Qaventra.adf \
             build/windows/retroarch-package/
-          cp -R build/windows/tests/fixtures/generated/zip-content \
-            build/windows/retroarch-package/
-          cp -R build/windows/tests/fixtures/generated/jfd-writes \
-            build/windows/retroarch-package/
-          cp -R build/windows/tests/fixtures/generated/jfd-allocation \
-            build/windows/retroarch-package/
+          mkdir -p build/windows/retroarch-package/zip-content
+          cp build/windows/tests/fixtures/generated/zip-content/single.zip build/windows/tests/fixtures/generated/zip-content/multi.zip build/windows/tests/fixtures/generated/zip-content/Title.zip build/windows/tests/fixtures/generated/zip-content/DiscRule.zip build/windows/retroarch-package/zip-content/
+          mkdir -p build/windows/retroarch-package/jfd-writes build/windows/retroarch-package/jfd-allocation
+          cp build/windows/tests/fixtures/generated/jfd-writes/{rw-d.jfd,wp-d.jfd,rw-d.zip,rw-create-d.jfd,wp-create-d.jfd,rw-merge-d.jfd,wp-merge-d.jfd} build/windows/retroarch-package/jfd-writes/
+          cp build/windows/tests/fixtures/generated/jfd-allocation/{guard-crossing.jfd,old-free.jfd} build/windows/retroarch-package/jfd-allocation/
           mkdir -p build/windows/retroarch-package/disc-request
           cp -R build/windows/generated/rpc-plans build/windows/retroarch-package/
           cp -R build/windows/generated/rpc-hd-retroarch build/windows/retroarch-package/
@@ -287,11 +331,24 @@ jobs:
             build/windows/tests/fixtures/generated/disc-request/Two.adf \
             build/windows/tests/fixtures/generated/disc-request/Set.m3u \
             build/windows/retroarch-package/disc-request/
+      - name: Classify fresh native RetroArch inputs
+        id: native-inputs
+        run: |
+          python3 tools/stage-rpc-artifacts.py --input build/windows/retroarch-package --output build/public-retroarch-input --manifest build/windows/rpc-artifact-targets.json
+          echo "classified=true" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arcdroid-windows-retroarch-input
-          path: build/windows/retroarch-package/
+          path: build/public-retroarch-input/
           if-no-files-found: error
+      - name: Both gate states and authored ordinary route
+        run: |
+          cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
+          cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$NUMBER_OF_PROCESSORS"
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          tools/check-windows.sh build/ordinary-open/arcdroid_libretro.dll
+          tools/check-windows.sh build/ordinary-open/arcdroid_rpcroute_libretro.dll
+          python3 tools/check-rpc-lock-object.py --build build/windows --platform windows
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -302,6 +359,10 @@ jobs:
     if: github.event_name != 'push'
     needs: windows
     runs-on: windows-latest
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -310,28 +371,54 @@ jobs:
         with:
           name: arcdroid-windows-retroarch-input
           path: build/retroarch-input
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-python
+      - name: Build gate-open cores only in the consuming job
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
+          cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness -j "$NUMBER_OF_PROCESSORS"
+          tools/check-windows.sh build/ordinary-open/arcdroid_libretro.dll
+          tools/check-windows.sh build/ordinary-open/arcdroid_rpcroute_libretro.dll
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^rpc-route-authored$'
       - name: Parse Windows RetroArch scripts
         shell: pwsh
         run: |
-          foreach ($script in @('tools/test-retroarch-windows.ps1', 'tools/test-retroarch-rpc-privacy.ps1')) {
+          foreach ($script in @('tools/test-retroarch-windows.ps1', 'tools/test-retroarch-rpc-privacy.ps1', 'tools/test-retroarch-rpc-route.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
           }
-      - name: RetroArch 1.22.2 native load, power-on Shift, screenshot, reloads, and RPC notice privacy
+      - name: RetroArch 1.22.2 real gate-open ordinary load, reloads, and RPC notice privacy
         shell: pwsh
-        run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native
+        run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native -OrdinaryRouteBuild build/ordinary-open
       - name: Slice 28 guarded old-map JFD persistence and refusal
         shell: pwsh
         run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native-guard -GuardedJfdOnly
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Classify native frontend evidence
+        id: native-evidence
         if: always()
+        shell: pwsh
+        run: |
+          $stage = 'build/retroarch-evidence-input'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          foreach ($leg in @('retroarch-native', 'retroarch-native-guard')) {
+            if (Test-Path "build/$leg/evidence") { Copy-Item -Recurse "build/$leg/evidence" "$stage/$leg" }
+          }
+          '{"targets":[]}' | Set-Content -Encoding ASCII build/evidence-targets.json
+          python tools/stage-rpc-artifacts.py --input $stage --output build/public-retroarch-evidence --manifest build/evidence-targets.json
+          if ($LASTEXITCODE -ne 0) { throw 'Evidence classification failed' }
+          "classified=true" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.native-evidence.outputs.classified == 'true'
         with:
           name: arcdroid-windows-retroarch-evidence
-          path: |
-            build/retroarch-native/evidence/
-            build/retroarch-native-guard/evidence/
+          path: build/public-retroarch-evidence/
           if-no-files-found: warn
 
   android-arm64:
@@ -361,3 +448,15 @@ jobs:
         env:
           LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
         run: tools/check-android.sh build/android/arcdroid_lockprobe_libretro_android.so
+      - name: Gate-open Android shipping build and guards
+        env:
+          LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+        run: |
+          cmake -S . -B build/android-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 -DBUILD_TESTING=OFF -DARCDROID_RPC_ORDINARY_LOAD=ON
+          cmake --build build/android-open --target arcdroid_libretro
+          tools/check-android.sh build/android-open/arcdroid_libretro_android.so
+          python3 tools/check-rpc-lock-object.py --build build/android --platform ofd --nm ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm
+          python3 tools/check-rpc-lock-object.py --build build/android-open --platform ofd --nm ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm
+          python3 tests/rpc_lock_object_test.py build/android-open ofd ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm
+          python3 tests/rpc_shipping_route_test.py build/android build/android/arcdroid_libretro_android.so
+          python3 tests/rpc_shipping_route_test.py build/android-open build/android-open/arcdroid_libretro_android.so

@@ -273,7 +273,12 @@ static int64_t state_frontier_write(StateHandle *handle,const void *data,size_t 
       okay=handle->native&&state_io_native->seek(handle->native,0,RETRO_VFS_SEEK_POSITION_START)>=0&&
          state_io_native->write(handle->native,record+STATE_FRONTIER_HEADER,after)==(int64_t)after&&
          state_io_native->flush(handle->native)==0;
-      if(okay)handle->native_position=(int64_t)after;
+      /* The redo writes the whole image, but this stream's guest write only
+       * advanced by bytes. Keep tell/relative seeks at that logical position,
+       * including the first state capture after a committed sector write. */
+      int64_t position=handle->position+(int64_t)bytes;
+      if(okay)okay=state_io_native->seek(handle->native,position,RETRO_VFS_SEEK_POSITION_START)>=0;
+      if(okay)handle->native_position=position;
    }
    if(okay){frontier_put64(record+16,2);okay=frontier_publish(f,record,STATE_FRONTIER_HEADER+after);}
    if(okay&&state_io_commit_observer)

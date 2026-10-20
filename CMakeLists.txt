@@ -6,6 +6,13 @@ include(CTest)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(ARCDROID_RPC_ORDINARY_LOAD "Enable unreleased ordinary RiscPC loads" OFF)
+option(ARCDROID_RPC_AUTHORED_ROUTE "Build the non-installed authored ordinary-route test core" OFF)
+if(ARCDROID_RPC_AUTHORED_ROUTE AND NOT BUILD_TESTING)
+  message(FATAL_ERROR "The authored ordinary-route core requires BUILD_TESTING")
+endif()
 
 option(ARCDROID_RPC_CROSSCHECK "Build test-only RPC canonical field cross-check reporting" OFF)
 option(ARCDROID_RPC_LOCKSTEP "Build the non-installed RPC lockstep core (host only)" OFF)
@@ -170,6 +177,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   libretro/arc_lock.c
   libretro/arc_session.c
   libretro/rpc_inventory.c
+  libretro/rpc_route.c
   libretro/jfd_store.c
   libretro/install_store.c
   libretro/rpc_hd_store.c
@@ -293,6 +301,9 @@ function(arcdroid_add_libretro target shipping)
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fno-strict-aliasing>)
   set_target_properties(${target} PROPERTIES PREFIX "")
   target_link_libraries(${target} PRIVATE ${core_target})
+  if(ARCDROID_RPC_ORDINARY_LOAD OR NOT shipping)
+    target_link_libraries(${target} PRIVATE ${CMAKE_DL_LIBS})
+  endif()
   if(ARCDROID_SANITIZERS)
     target_link_libraries(${target} PRIVATE arcdroid_sanitizer_link)
   endif()
@@ -341,6 +352,7 @@ endfunction()
 
 # The installed/packaged core never contains test fault-injection hooks.
 arcdroid_add_libretro(arcdroid_libretro TRUE)
+target_compile_definitions(arcdroid_libretro PRIVATE ARC_RPC_ORDINARY_LOAD=$<BOOL:${ARCDROID_RPC_ORDINARY_LOAD}>)
 
 # Register source/output pairs with the metadata guard, including installed
 # shipping metadata and non-installed test metadata.
@@ -351,8 +363,25 @@ function(arcdroid_configure_core_info source output)
 endfunction()
 arcdroid_configure_core_info(arcdroid_libretro.info arcdroid_libretro.info)
 
-install(TARGETS arcdroid_libretro DESTINATION .)
-install(FILES arcdroid_libretro.info DESTINATION .)
+# Installation is a package boundary too: verify bytes before copying a core.
+set(rpc_package_revision "${ARCDROID_SOURCE_REVISION}")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+  execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE rpc_package_revision OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rpc-package-source.json"
+  "{\"revision\":\"${rpc_package_revision}\",\"url\":\"https://github.com/sayenah/ArcDroid/tree/${rpc_package_revision}\",\"archive\":\"https://github.com/sayenah/ArcDroid/archive/${rpc_package_revision}.zip\"}\n")
+if(ARCDROID_RPC_ORDINARY_LOAD)
+  install(CODE "message(FATAL_ERROR \"Gate-open ordinary-route cores cannot be packaged\")")
+else()
+  install(CODE "execute_process(COMMAND \"${Python3_EXECUTABLE}\" -B \"${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpc-artifacts.py\" --verify-core \"$<TARGET_FILE:arcdroid_libretro>\" --manifest \"${CMAKE_BINARY_DIR}/rpc-artifact-targets.json\" --source \"${CMAKE_CURRENT_BINARY_DIR}/rpc-package-source.json\" RESULT_VARIABLE rpc_install_result)
+if(NOT rpc_install_result EQUAL 0)
+  message(FATAL_ERROR \"RPC package classification failed\")
+endif()")
+  install(TARGETS arcdroid_libretro DESTINATION .)
+endif()
+install(FILES arcdroid_libretro.info COPYING THIRD_PARTY_NOTICES.md DESTINATION .)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/rpc-package-source.json" DESTINATION . RENAME SOURCE.json)
 
 option(ARCDROID_ANDROID_TEST_CORE "Build the non-installed Android test core" OFF)
 option(ARCDROID_RPC_RUNNER "Build the non-installed R1 plan runner" ON)
@@ -2921,10 +2950,6 @@ if(BUILD_TESTING OR ARCDROID_ANDROID_TEST_CORE)
 endif()
 
 if(BUILD_TESTING)
-  get_property(arc_core_info_files GLOBAL PROPERTY ARCDROID_CORE_INFO_FILES)
-  add_test(NAME rpc-core-info COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_info_test.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
   get_property(arc_tests DIRECTORY PROPERTY TESTS)
   set_property(TEST ${arc_tests} APPEND PROPERTY ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()
@@ -3007,6 +3032,21 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   # Keep the original session bound; the blanket 1200 s merge override was
   # unsupported by a duration measurement. The W4 session bound is unchanged.
   set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  if(ARCDROID_SANITIZERS)
+    # Keep every pair/year/client and all 200 switches. Debug sanitizer factory
+    # generation is much slower; independent process-owned fixtures can shard.
+    foreach(calendar_case IN ITEMS pair-0 pair-1 pair-2 pair-3 pair-4 pair-5 pair-6 switching)
+      add_test(NAME rpc-session-calendar-${calendar_case} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+        $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar-${calendar_case})
+      set_tests_properties(rpc-session-calendar-${calendar_case} PROPERTIES TIMEOUT 900)
+    endforeach()
+  else()
+    add_test(NAME rpc-session-calendar COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+      $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar)
+    set_tests_properties(rpc-session-calendar PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+  endif()
   add_test(NAME rpc-launch-preparation COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
     $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" launch)
@@ -3548,11 +3588,52 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_host_frontend_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
+  add_executable(rpc_route_harness tests/rpc_route_harness.c)
+  target_include_directories(rpc_route_harness PRIVATE libretro/include)
+  target_compile_options(rpc_route_harness PRIVATE -UNDEBUG)
+  target_link_libraries(rpc_route_harness PRIVATE ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_route_harness rpc_host_frontend_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_route_harness PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  # R-SS3g runs the shipping library, in either configured gate state.
+  add_test(NAME arculator-state-secondary-routes COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_secondary_test.py"
+    $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}")
+  set_tests_properties(arculator-state-secondary-routes PROPERTIES TIMEOUT 360)
   add_test(NAME rpc-production-host-frontend COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" pending)
   # W4: initial bound 240 s; verify >= twice the observed maximum in Run A.
   set_tests_properties(rpc-production-host-frontend PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE)
+  if(NOT ARCDROID_RPC_ORDINARY_LOAD)
+    add_test(NAME rpc-closed-replacement-cmos COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_closed_replace_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+      $<TARGET_FILE:rpc_host_frontend_test> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}")
+    set_tests_properties(rpc-closed-replacement-cmos PROPERTIES TIMEOUT 150)
+    if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT CMAKE_CROSSCOMPILING AND NOT ARCDROID_SANITIZERS)
+      add_test(NAME rpc-closed-replacement-cmos-mutant COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_closed_replace_test.py" "${CMAKE_CURRENT_BINARY_DIR}"
+        $<TARGET_FILE:rpc_host_frontend_test> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" --mutant)
+      set_tests_properties(rpc-closed-replacement-cmos-mutant PROPERTIES TIMEOUT 240 LABELS slow)
+    endif()
+    foreach(kind closed plan)
+      if(kind STREQUAL "plan")
+        set(primary_core arcdroid_rpcplan_libretro)
+      else()
+        set(primary_core arcdroid_libretro)
+      endif()
+      add_test(NAME rpc-route-primary-${kind} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_primary_order_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+        $<TARGET_FILE:${primary_core}> "${FIXTURE_DIR}" ${kind})
+      set_tests_properties(rpc-route-primary-${kind} PROPERTIES TIMEOUT 150)
+    endforeach()
+  else()
+    add_test(NAME rpc-route-primary-open COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_primary_order_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+      $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" open)
+    set_tests_properties(rpc-route-primary-open PROPERTIES TIMEOUT 150)
+  endif()
 endif()
 
 if((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR ARCDROID_ANDROID_TEST_CORE)
@@ -3655,4 +3736,169 @@ if(BUILD_TESTING)
       set_property(TEST ${test} APPEND PROPERTY LABELS slow)
     endif()
   endforeach()
+endif()
+
+# Authored ordinary-route evidence never changes the shipping target.
+if(ARCDROID_RPC_AUTHORED_ROUTE)
+  set(RPC_ROUTE_FIXTURES "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-route")
+  set(RPC_ROUTE_PROVIDER "${RPC_ROUTE_FIXTURES}/rpc_route_catalogue.c")
+  add_custom_command(OUTPUT "${RPC_ROUTE_PROVIDER}"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_fixtures.py" "${RPC_ROUTE_FIXTURES}"
+    DEPENDS tests/rpc_route_fixtures.py tests/rpc_cmos_factory_rom.py tests/rpc_year_rom.py tests/rpc_d2_rom.py tests/rpc_video_rom.py tests/rpc_boot_packages_test.py tests/generate_fixtures.py
+    VERBATIM)
+  add_library(arcdroid_core_route STATIC ${ARCDROID_CORE_SOURCES} core/adffs_profiles.c core/firmware_table.c ${RPC_BOOT_ASSETS} "${RPC_ROUTE_PROVIDER}")
+  set_property(TARGET arcdroid_core_route PROPERTY ARCDROID_AUTHORED_CATALOGUE TRUE)
+  set_target_properties(arcdroid_core_route PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(arcdroid_core_route PUBLIC core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(arcdroid_core_route PRIVATE arcdroid_zlib)
+  arcdroid_add_libretro(arcdroid_rpcroute_libretro TRUE arcdroid_core_route)
+  set_target_properties(arcdroid_rpcroute_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcroute_libretro ARCDROID_BUILD_SUBSTITUTIONS "authored-catalogue")
+  target_compile_definitions(arcdroid_rpcroute_libretro PRIVATE ARC_RPC_ORDINARY_LOAD=1 ARC_RPC_CATALOGUE_AUTHORED=1)
+  if(TARGET test-fixtures)
+    add_dependencies(arcdroid_rpcroute_libretro test-fixtures)
+  endif()
+  # Separate fault-test evidence for authored Arculator chooser transitions and
+  # read-only state probes; never used for the flag-free/shipping assertions.
+  add_library(arcdroid_core_route_fault STATIC ${ARCDROID_CORE_SOURCES} core/adffs_profiles.c core/firmware_table.c ${RPC_BOOT_ASSETS} "${RPC_ROUTE_PROVIDER}")
+  set_property(TARGET arcdroid_core_route_fault PROPERTY ARCDROID_AUTHORED_CATALOGUE TRUE)
+  set_target_properties(arcdroid_core_route_fault PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(arcdroid_core_route_fault PUBLIC core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(arcdroid_core_route_fault PRIVATE ARCDROID_TEST_FAULTS=1)
+  target_link_libraries(arcdroid_core_route_fault PRIVATE arcdroid_zlib)
+  arcdroid_add_libretro(arcdroid_rpcroute_fault_libretro FALSE arcdroid_core_route_fault)
+  set_target_properties(arcdroid_rpcroute_fault_libretro PROPERTIES ARCDROID_BUILD_SUBSTITUTIONS "authored-catalogue,test-faults,test-plans")
+  target_compile_definitions(arcdroid_rpcroute_fault_libretro PRIVATE ARC_RPC_ORDINARY_LOAD=1 ARC_RPC_CATALOGUE_AUTHORED=1 ARCDROID_TEST_FAULTS=1 ARCDROID_TEST_PLANS=1)
+  target_sources(arcdroid_rpcroute_fault_libretro PRIVATE tests/hd_product_seed.c)
+  if(WIN32)
+    target_sources(arcdroid_rpcroute_fault_libretro PRIVATE tests/rpc_crash_locator.c)
+  endif()
+  add_dependencies(arcdroid_rpcroute_fault_libretro arcdroid_rpcroute_libretro)
+  arcdroid_configure_core_info(tests/arcdroid_rpcroute_libretro.info arcdroid_rpcroute_libretro.info)
+  if(NOT CMAKE_CROSSCOMPILING OR WIN32)
+    if(ARCDROID_SANITIZERS)
+      target_link_libraries(arcdroid_core_route PRIVATE arcdroid_sanitizer_compile)
+      target_link_libraries(arcdroid_core_route_fault PRIVATE arcdroid_sanitizer_compile)
+      target_link_libraries(arcdroid_rpcroute_libretro PRIVATE arcdroid_sanitizer_compile)
+      target_link_libraries(arcdroid_rpcroute_fault_libretro PRIVATE arcdroid_sanitizer_compile)
+      if(CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang")
+        # Copied libretro DSOs intentionally own independent C globals. Keep
+        # ASan's ODR check, with private indicators rather than name matching.
+        target_compile_options(arcdroid_rpcroute_libretro PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_rpcroute_libretro_arculator PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_rpcroute_libretro_rpc PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_core_route PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_core_route_fault PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_zlib PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_rpcroute_fault_libretro PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_rpcroute_fault_libretro_arculator PRIVATE -fsanitize-address-use-odr-indicator)
+        target_compile_options(arcdroid_rpcroute_fault_libretro_rpc PRIVATE -fsanitize-address-use-odr-indicator)
+      endif()
+    endif()
+    add_test(NAME rpc-route-authored COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_test.py"
+      $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_rpcroute_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}" "$<BOOL:${ARCDROID_RPC_ORDINARY_LOAD}>" $<TARGET_FILE:arcdroid_rpcroute_fault_libretro>)
+    set_tests_properties(rpc-route-authored PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
+    add_test(NAME rpc-route-matrix COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_matrix_test.py" "${CMAKE_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:rpc_route_harness> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}")
+    set_tests_properties(rpc-route-matrix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
+    if(ARCDROID_SANITIZERS)
+      # Run C: states 0-7 passed before the 900 s aggregate limit.
+      # Keep the 36 cases and their 120 s limits; allow sanitizer overhead.
+      set_tests_properties(rpc-route-authored rpc-route-matrix PROPERTIES TIMEOUT 1800)
+    endif()
+    if(ARCDROID_RPC_ORDINARY_LOAD)
+      foreach(axis machine cpu os)
+        set(override_core arcdroid_libretro)
+        if(axis STREQUAL "os")
+          # The explicit-OS authored fixture is deliberately test-only.
+          set(override_core arcdroid_rpcroute_fault_libretro)
+        endif()
+        add_test(NAME rpc-route-override-${axis} COMMAND "${Python3_EXECUTABLE}" -B
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
+          $<TARGET_FILE:${override_core}> "${FIXTURE_DIR}" shipping-override-${axis})
+        set_tests_properties(rpc-route-override-${axis} PROPERTIES TIMEOUT 120)
+      endforeach()
+    endif()
+  endif()
+endif()
+
+# The catalogue provider is a replaceable link boundary; qualification data is not.
+get_property(rpc_catalogue_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(rpc_catalogue_target IN LISTS rpc_catalogue_targets)
+  get_target_property(rpc_catalogue_sources ${rpc_catalogue_target} SOURCES)
+  get_target_property(rpc_authored ${rpc_catalogue_target} ARCDROID_AUTHORED_CATALOGUE)
+  if("${rpc_catalogue_sources}" MATCHES "core/rpc_selection\\.c" AND NOT rpc_authored)
+    target_sources(${rpc_catalogue_target} PRIVATE core/rpc_catalogue_route.c)
+  endif()
+  if("${rpc_catalogue_sources}" MATCHES "libretro/rpc_preparation\\.c" AND NOT "${rpc_catalogue_sources}" MATCHES "libretro/rpc_route\\.c")
+    target_sources(${rpc_catalogue_target} PRIVATE libretro/rpc_route.c)
+  endif()
+endforeach()
+
+
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_executable(rpc_route_policy_test tests/rpc_route_policy_test.c libretro/rpc_route.c libretro/arc_lock.c libretro/arc_io.c)
+  target_include_directories(rpc_route_policy_test PRIVATE libretro libretro/include core)
+  target_link_libraries(rpc_route_policy_test PRIVATE arcdroid_core)
+  target_compile_options(rpc_route_policy_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_route_policy_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-route-policy COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_policy_test.py" $<TARGET_FILE:rpc_route_policy_test>)
+endif()
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  if(WIN32)
+    set(rpc_lock_object_platform windows)
+  elseif(APPLE)
+    set(rpc_lock_object_platform apple)
+  else()
+    set(rpc_lock_object_platform ofd)
+  endif()
+  add_test(NAME rpc-lock-object COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpc-lock-object.py" --build "${CMAKE_BINARY_DIR}" --platform ${rpc_lock_object_platform} --nm "${CMAKE_NM}")
+  add_test(NAME rpc-lock-object-mutants COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_object_test.py" "${CMAKE_BINARY_DIR}" ${rpc_lock_object_platform} "${CMAKE_NM}")
+  set_tests_properties(rpc-lock-object rpc-lock-object-mutants PROPERTIES RESOURCE_LOCK rpc_lock_object)
+  add_test(NAME rpc-lock-compiler-resolution COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_compiler_test.py")
+  add_test(NAME rpc-artifact-classifier COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_artifact_classifier_test.py" "${CMAKE_BINARY_DIR}")
+  set_tests_properties(rpc-lock-object rpc-lock-object-mutants rpc-lock-compiler-resolution rpc-artifact-classifier PROPERTIES TIMEOUT 120)
+endif()
+
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_executable(rpc_staging_test tests/rpc_staging_test.c)
+  target_include_directories(rpc_staging_test PRIVATE libretro/include)
+  target_compile_options(rpc_staging_test PRIVATE -UNDEBUG)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_staging_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-route-staging COMMAND rpc_staging_test)
+endif()
+
+if(BUILD_TESTING AND CMAKE_GENERATOR MATCHES "Ninja")
+  add_test(NAME rpc-route-shipping-manifest COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_shipping_route_test.py" "${CMAKE_BINARY_DIR}" $<TARGET_FILE:arcdroid_libretro>)
+endif()
+
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_test(NAME rpc-route-source COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_source_test.py" "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(rpc-route-source PROPERTIES TIMEOUT 30)
+endif()
+
+# Classification is bound to the final evaluated target definitions, not names.
+get_property(rpc_artifact_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+set(rpc_artifact_rows "")
+foreach(target IN LISTS rpc_artifact_targets)
+  get_target_property(kind ${target} TYPE)
+  if(kind STREQUAL "EXECUTABLE" OR kind STREQUAL "SHARED_LIBRARY")
+    if(rpc_artifact_rows)
+      string(APPEND rpc_artifact_rows ",")
+    endif()
+    string(APPEND rpc_artifact_rows "{\"file\":\"$<TARGET_FILE_NAME:${target}>\",\"target\":\"${target}\",\"gate_open\":$<IN_LIST:ARC_RPC_ORDINARY_LOAD=1,$<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>>,\"authored\":$<IN_LIST:ARC_RPC_CATALOGUE_AUTHORED=1,$<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>>,\"test_faults\":$<IN_LIST:ARCDROID_TEST_FAULTS=1,$<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>>,\"test_plans\":$<IN_LIST:ARCDROID_TEST_PLANS=1,$<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>>,\"substitutions\":\"$<TARGET_PROPERTY:${target},ARCDROID_BUILD_SUBSTITUTIONS>\"}")
+  endif()
+endforeach()
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/rpc-artifact-targets.json" CONTENT "{\"targets\":[${rpc_artifact_rows}]}\n")
+
+# Collect metadata after every optional target has registered its source/output
+# pair; the guard must census the authored ordinary-route .info as well.
+if(BUILD_TESTING)
+  get_property(arc_core_info_files GLOBAL PROPERTY ARCDROID_CORE_INFO_FILES)
+  add_test(NAME rpc-core-info COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_info_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
+  set_tests_properties(rpc-core-info PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()

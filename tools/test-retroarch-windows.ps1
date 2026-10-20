@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$InputDirectory,
     [Parameter(Mandatory = $true)][string]$WorkDirectory,
-    [switch]$GuardedJfdOnly
+    [switch]$GuardedJfdOnly,
+    [string]$OrdinaryRouteBuild = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -2756,15 +2757,18 @@ screenshot_directory = "$(ConfigPath ((Resolve-Path $evidenceDirectory).Path))"
     $rpcDumpDirectory = Join-Path $evidenceDirectory 'rpc-hd-crash'
     New-Item -ItemType Directory -Force $rpcDumpDirectory | Out-Null
     $rpcDumpDirectory = (Resolve-Path $rpcDumpDirectory).Path
-    Copy-Item -LiteralPath $rpcCore -Destination $rpcDumpDirectory
+    $rpcWerDirectory = Join-Path $WorkDirectory 'rpc-hd-local-dumps'
+    New-Item -ItemType Directory -Force $rpcWerDirectory | Out-Null
+    $rpcWerDirectory = (Resolve-Path $rpcWerDirectory).Path
     foreach ($file in @('rpc-hd-symbols.txt', 'rpc-hd-image.txt', 'rpc-hd-revision.txt')) {
         Copy-Item -LiteralPath (Join-Path $InputDirectory $file) -Destination $rpcDumpDirectory
     }
-    "core_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $rpcCore).Hash)" |
+    "core_name=$([IO.Path]::GetFileName($rpcCore))`ncore_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $rpcCore).Hash)" |
         Set-Content -Encoding ASCII (Join-Path $rpcDumpDirectory 'core-sha256.txt')
 @'
-The DLL is the exact Release (-O3 -DNDEBUG) image loaded by these sessions,
-with -g DWARF retained. cdb provides the runtime module base and fault RIP;
+The recorded DLL name and SHA-256 identify the exact Release (-O3 -DNDEBUG)
+image loaded by these sessions; no binary is included in evidence. Obtain
+that matching image from the classified input package. cdb provides the runtime module base and fault RIP;
 it need not understand MinGW DWARF. Compute RVA = RIP - runtime module base,
 then address = preferred ImageBase (rpc-hd-image.txt) + RVA. With matching
 MinGW binutils, map to source and inlined callers using:
@@ -2796,7 +2800,7 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
             # New-Item -Force can replace an existing registry key. Preserve
             # every pre-existing property, including settings we do not own.
             if (-not $existed) { New-Item -Path $key -Force | Out-Null }
-            New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value $rpcDumpDirectory -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value $rpcWerDirectory -Force | Out-Null
             New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null
             New-ItemProperty -LiteralPath $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
         } catch {
@@ -2807,7 +2811,7 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
             Write-Warning "RPC WER LocalDumps unavailable (HKLM may not be writable): $($_.Exception.Message). Continuing with the first-chance locator."
             return $null
         }
-        Write-Host "RPC-only WER full dumps enabled: $rpcDumpDirectory"
+        Write-Host 'RPC-only WER dumps stay outside the uploaded evidence directory.'
         return $settings
     }
     function Restore-RpcHdCrashDumps($Settings) {
@@ -2847,14 +2851,14 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
             "pid=$($Run.Process.Id) exit_code=$($Run.Process.ExitCode)" | Set-Content -Encoding ASCII $summary
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
             do {
-                $dumps = @(Get-ChildItem -LiteralPath $rpcDumpDirectory -Filter 'retroarch*.dmp' |
+                $dumps = @(Get-ChildItem -LiteralPath $rpcWerDirectory -Filter 'retroarch*.dmp' |
                     Where-Object { $_.Name -match ('\.' + $Run.Process.Id + '\.') -and
                         $_.LastWriteTimeUtc -ge $Run.StartUtc -and $_.Length -gt 0 })
                 if ($dumps.Count) { break }
                 Start-Sleep -Milliseconds 250
             } while ([DateTime]::UtcNow -lt $deadline)
             if (-not $dumps.Count) {
-                'No WER dump appeared for this PID within 30 s; logs and matching DLL/symbols retained.' |
+                'No WER dump appeared for this PID within 30 s; logs, module hash and symbols retained.' |
                     Add-Content -Encoding ASCII $summary
                 Write-Warning "No WER dump for $($Run.Name); see $summary"
                 return
@@ -2869,9 +2873,9 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
                 }
             }
             if (-not $debugger) {
-                'cdb absent; full dumps and matching DLL/symbols retained for offline analysis.' |
+                'cdb absent; binary dumps stay outside uploaded evidence. The module hash identifies the input DLL.' |
                     Add-Content -Encoding ASCII $summary
-                Write-Warning "cdb is unavailable; dumps retained in $rpcDumpDirectory"
+                Write-Warning 'cdb is unavailable; binary dumps remain outside uploaded evidence.'
                 return
             }
             foreach ($dump in $dumps) {
@@ -2879,7 +2883,7 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
                 $err = Join-Path $rpcDumpDirectory "$($Run.Name)-cdb.stderr.txt"
                 $commands = '.exr -1; .ecxr; r; kv 30; lmv m arcdroid*; !teb; ~* kv 8; q'
                 "dump=$($dump.Name) cdb=$debugger commands=$commands" | Add-Content -Encoding ASCII $summary
-                $arguments = @('-z', ('"' + $dump.FullName + '"'), '-i', ('"' + $rpcDumpDirectory + '"'),
+                $arguments = @('-z', ('"' + $dump.FullName + '"'), '-i', ('"' + $coreDirectory + '"'),
                     '-y', ('"' + $rpcDumpDirectory + '"'), '-c', ('"' + $commands + '"'))
                 $process = Start-Process -FilePath $debugger -ArgumentList $arguments -PassThru -NoNewWindow `
                     -RedirectStandardOutput $out -RedirectStandardError $err
@@ -3085,3 +3089,5 @@ public static class ArcRpcHdCrc {
     if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- $result" }
     . (Join-Path $PSScriptRoot 'test-retroarch-rpc-privacy.ps1')
 }
+
+if ($OrdinaryRouteBuild) { . (Join-Path $PSScriptRoot 'test-retroarch-rpc-route.ps1') }

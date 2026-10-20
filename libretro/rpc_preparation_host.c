@@ -1,5 +1,5 @@
 /* The production host owns preparation, arbitration and bounded measurement.
- * No ordinary-load caller is enabled here. GPL-2.0-only. */
+ * Ordinary-load reachability is selected only by the frontend release gate. GPL-2.0-only. */
 #include "rpc_preparation_host.h"
 #include "../engine/rpc/rpc_lockstep.h"
 #if defined(ARCDROID_RPC_LOCKSTEP)
@@ -31,6 +31,7 @@ struct ArcRpcFrontendHost {
     ArcRpcPreparationState released_state;
     bool extended,stopping,drain_replaced,hold,queued_reset,pending_summary,first_field;
     bool pending_seen,running_seen,fast_known,fast_forward;
+    bool ordinary,manual_noticed;
     uint64_t load_ns,frame_ns,previous_ns,hold_start,guest_us,frames,frontend_av,guest_av;
     uint64_t first_pending_ns,running_ns,first_field_ns,reset_exceptions,reset_max_ns;
     uint64_t session_id,checkpoint_exceptions;
@@ -191,7 +192,7 @@ void arc_riscpc_host_diagnostics(ArcRpcFrontendHost *h){
 ArcRpcFrontendHost *arc_riscpc_host_begin(const ArcRpcPreparationRequest *request,const ArcRpcFrontendOps *ops,char *error,size_t n)
 {
     ArcRpcFrontendHost *h=allocate(ops);if(!h)return NULL;
-    h->session_id=request?request->session_id:0;
+    h->session_id=request?request->session_id:0;h->ordinary=request && request->ordinary;
     ArcRpcPreparationHost base=callbacks(h);h->preparation=arc_riscpc_preparation_begin(request,&base,error,n);
     if(!h->preparation){module_notice(h,error&&*error?error:"RiscPC preparation could not begin",(ArcRpcNotice){ARC_RPC_NOTICE_TERMINAL,"N-B begin",true,false});summary(h,"pending-failed");summary(h,"live-release");free(h);return NULL;}
     return h;
@@ -202,7 +203,7 @@ ArcRpcFrontendHost *arc_riscpc_host_low_level(const ArcRpcPreparationRequest *re
 {
     ArcRpcFrontendHost *h=allocate(ops);if(!h)return NULL;
     if(extension)h->extension=*extension;
-    h->session_id=request?request->session_id:0;
+    h->session_id=request?request->session_id:0;h->ordinary=request && request->ordinary;
     ArcRpcPreparationHost base=callbacks(h);h->preparation=arc_riscpc_preparation_low_level(request,&base,error,n);
     /* The low-level parser caller reports load failure once through the
      * catalogue host path, including failures before this entry. */
@@ -353,7 +354,15 @@ void arc_riscpc_host_guest_time(ArcRpcFrontendHost *h,uint64_t us)
 {
     ARC_RPC_HOST_DIRTY();
     if(!h)return;h->guest_us=us;
-    if(h->hold && us>=h->hold_start && us-h->hold_start>=hold_bound(h)){h->hold=false;*h->progress=0;if(!*h->terminal && !h->advisory_frames)display(h,"",ARC_RPC_NOTICE_CLEAR);}
+    if(h->hold && us>=h->hold_start && us-h->hold_start>=hold_bound(h)){
+        h->hold=false;*h->progress=0;
+        if(!h->ordinary && !*h->terminal && !h->advisory_frames)display(h,"",ARC_RPC_NOTICE_CLEAR);
+    }
+    /* Yield to an advisory's minimum lifetime; never infer desktop readiness. */
+    if(h->ordinary && !h->hold && !h->manual_noticed && !h->stopping && !*h->terminal && !h->advisory_frames &&
+       arc_riscpc_preparation_state(h->preparation)==ARC_RPC_PREP_RUNNING){
+        h->manual_noticed=true;arc_riscpc_host_advisory(h,"N-12","Automatic launch is not available yet. Use the RiscPC desktop to start this title.");
+    }
 }
 void arc_riscpc_host_first_field(ArcRpcFrontendHost *h,unsigned width,unsigned height,double rate,bool issued)
 {

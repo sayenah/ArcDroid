@@ -2,7 +2,7 @@
   "license": "GPL-2.0-only",
   "version": 1,
   "grounding_commit": "0aa4c93eaec4",
-  "status": "SS-1 Run K: D-215 derived pictures/scratch, exact guest state, explicit speculative provenance and independent wire/ownership/scratch budgets.",
+  "status": "SS-1 Run L: Run K exact guest state retained; R3d-4 source closure reviewed, lifecycle authority remains host-only in both gate states.",
   "cmake_source_commands": [
     "add_library ( arcdroid_sanitizer_compile INTERFACE )",
     "add_library ( arcdroid_sanitizer_link INTERFACE )",
@@ -13,7 +13,7 @@
     "target_link_libraries ( arcdroid_core PRIVATE arcdroid_zlib )",
     "target_link_libraries ( arcdroid_core PRIVATE arcdroid_sanitizer_compile )",
     "set ( ARCDROID_ARCULATOR_SOURCES engine / arculator_state . c engine / arculator_backend . c engine / arcdroid_stubs . c engine / arculator / src / 82c711 . c engine / arculator / src / ide . c engine / arculator / src / 82c711_fdc . c engine / arculator / src / arm . c engine / arculator / src / cmos . c engine / arculator / src / cp15 . c engine / arculator / src / disc . c engine / arculator / src / disc_adf . c engine / arculator / src / disc_jfd . c engine / arculator / src / ds2401 . c engine / arculator / src / fpa . c engine / arculator / src / ioc . c engine / arculator / src / ioeb . c engine / arculator / src / joystick . c engine / arculator / src / keyboard . c engine / arculator / src / lc . c engine / arculator / src / mem . c engine / arculator / src / memc . c engine / arculator / src / printer . c engine / arculator / src / sound . c engine / arculator / src / timer . c engine / arculator / src / vidc . c engine / arculator / src / wd1770 . c platform / arcdroid_input . c platform / arcdroid_joystick . c platform / arcdroid_sound . c platform / arcdroid_video . c )",
-    "set ( ARCDROID_LIBRETRO_SOURCES libretro / arc_state . c libretro / arc_state_io . c engine / arcdroid_engine . c engine / arc_boot_watch . c engine / arc_launch_outcome . c engine / arc_error_box . c engine / arc_disc_request . c libretro / arc_io . c libretro / arc_lock . c libretro / arc_session . c libretro / rpc_inventory . c libretro / jfd_store . c libretro / install_store . c libretro / rpc_hd_store . c libretro / rpc_cmos_store . c libretro / rpc_preparation . c libretro / rpc_preparation_host . c libretro / rpc_launch_record_store . c libretro / rpc_boot_zip . c libretro / rpc_boot . c libretro / arcdroid_libretro . c )",
+    "set ( ARCDROID_LIBRETRO_SOURCES libretro / arc_state . c libretro / arc_state_io . c engine / arcdroid_engine . c engine / arc_boot_watch . c engine / arc_launch_outcome . c engine / arc_error_box . c engine / arc_disc_request . c libretro / arc_io . c libretro / arc_lock . c libretro / arc_session . c libretro / rpc_inventory . c libretro / rpc_route . c libretro / jfd_store . c libretro / install_store . c libretro / rpc_hd_store . c libretro / rpc_cmos_store . c libretro / rpc_preparation . c libretro / rpc_preparation_host . c libretro / rpc_launch_record_store . c libretro / rpc_boot_zip . c libretro / rpc_boot . c libretro / arcdroid_libretro . c )",
     "target_sources ( arcdroid_core PRIVATE $ { RPC_BOOT_ASSETS } )",
     "list ( APPEND ARCDROID_SYMBOL_CHECK_FLAGS - - sanitized )",
     "file ( GLOB_RECURSE ARCDROID_STATE_IDENTITY_FILES CONFIGURE_DEPENDS core / * . c core / * . h engine / * . c engine / * . h engine / state - generated / * . inc libretro / * . c libretro / * . h libretro / * . inc platform / * . c platform / * . h third_party / zlib / * . c third_party / zlib / * . h )",
@@ -25,6 +25,7 @@
     "add_library ( $ { target } SHARED $ { ARCDROID_LIBRETRO_SOURCES } $ < TARGET_OBJECTS : $ { target } _arculator > $ < TARGET_OBJECTS : $ { target } _rpc > )",
     "target_sources ( $ { target } PRIVATE tests / arc_test_plan . c tests / rpc_test_clock . c )",
     "target_link_libraries ( $ { target } PRIVATE $ { core_target } )",
+    "target_link_libraries ( $ { target } PRIVATE $ { CMAKE_DL_LIBS } )",
     "target_link_libraries ( $ { target } PRIVATE arcdroid_sanitizer_link )",
     "target_link_libraries ( $ { target } PRIVATE m dl )",
     "target_sources ( $ { target } PRIVATE libretro / arcdroid . def )",
@@ -213,10 +214,27 @@
     "target_sources ( $ { rpc_owner_target } PRIVATE libretro / arc_lock . c )",
     "target_link_libraries ( rpc_host_frontend_test PRIVATE $ { CMAKE_DL_LIBS } )",
     "target_link_libraries ( rpc_host_frontend_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )",
+    "target_link_libraries ( rpc_route_harness PRIVATE $ { CMAKE_DL_LIBS } )",
+    "target_link_libraries ( rpc_route_harness PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )",
     "list ( REMOVE_ITEM rpc_host_process_sources libretro / arc_lock . c )",
     "target_link_libraries ( rpc_host_process PRIVATE arcdroid_core )",
     "target_link_libraries ( rpc_host_process PRIVATE m )",
-    "target_link_libraries ( rpc_host_process PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )"
+    "target_link_libraries ( rpc_host_process PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )",
+    "add_library ( arcdroid_core_route STATIC $ { ARCDROID_CORE_SOURCES } core / adffs_profiles . c core / firmware_table . c $ { RPC_BOOT_ASSETS } \"${RPC_ROUTE_PROVIDER}\" )",
+    "target_link_libraries ( arcdroid_core_route PRIVATE arcdroid_zlib )",
+    "add_library ( arcdroid_core_route_fault STATIC $ { ARCDROID_CORE_SOURCES } core / adffs_profiles . c core / firmware_table . c $ { RPC_BOOT_ASSETS } \"${RPC_ROUTE_PROVIDER}\" )",
+    "target_link_libraries ( arcdroid_core_route_fault PRIVATE arcdroid_zlib )",
+    "target_sources ( arcdroid_rpcroute_fault_libretro PRIVATE tests / hd_product_seed . c )",
+    "target_sources ( arcdroid_rpcroute_fault_libretro PRIVATE tests / rpc_crash_locator . c )",
+    "target_link_libraries ( arcdroid_core_route PRIVATE arcdroid_sanitizer_compile )",
+    "target_link_libraries ( arcdroid_core_route_fault PRIVATE arcdroid_sanitizer_compile )",
+    "target_link_libraries ( arcdroid_rpcroute_libretro PRIVATE arcdroid_sanitizer_compile )",
+    "target_link_libraries ( arcdroid_rpcroute_fault_libretro PRIVATE arcdroid_sanitizer_compile )",
+    "target_sources ( $ { rpc_catalogue_target } PRIVATE core / rpc_catalogue_route . c )",
+    "target_sources ( $ { rpc_catalogue_target } PRIVATE libretro / rpc_route . c )",
+    "target_link_libraries ( rpc_route_policy_test PRIVATE arcdroid_core )",
+    "target_link_libraries ( rpc_route_policy_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )",
+    "target_link_libraries ( rpc_staging_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link )"
   ],
   "surfaces": {
     "core/adffs.c": [
@@ -4758,6 +4776,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "const ArcRpcFirmwareFingerprint * arc_riscpc_production_catalogue ( size_t * count ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
         "declaration": "const ArcRpcFirmwareFingerprint * arc_riscpc_firmware_recognize ( const ArcDigest * digest , const ArcRpcFirmwareFingerprint * catalogue , size_t count ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -6503,6 +6527,12 @@
         "declaration": "bool arc_engine_rpc_start_begin ( unsigned , const uint8_t * , size_t , const uint8_t [ 256 ] , uint64_t , bool , char * , size_t ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_engine_rpc_calendar_year ( uint64_t epoch , unsigned * year ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
       },
       {
         "kind": "declaration",
@@ -17954,13 +17984,13 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "Test-only created-sector cold-release regression hook; no persistent storage or shipping export."
       },
       {
         "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "Test-only created-sector cold-release regression hook; no persistent storage or shipping export."
       },
       {
         "kind": "preprocessor",
@@ -17972,7 +18002,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "Test-only created-sector cold-release regression hook; no persistent storage or shipping export."
       },
       {
         "kind": "preprocessor",
@@ -20639,6 +20669,12 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# include \"rpc_route.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# include \"install_store.h\"",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -20738,6 +20774,12 @@
         "declaration": "# include < limits . h >",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < stdarg . h >",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "preprocessor",
@@ -20945,6 +20987,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -21047,6 +21101,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -21062,6 +21128,24 @@
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include \"rpc_staging.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "preprocessor",
@@ -21110,6 +21194,30 @@
         "declaration": "# else",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "preprocessor",
@@ -21413,9 +21521,57 @@
       },
       {
         "kind": "preprocessor",
-        "declaration": "# if defined ( _WIN32 )",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_ARCHIMEDES_HELP \" Archimedes sessions only. RiscPC starts manually with its hard disc attached.\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_ARCHIMEDES_HELP \"\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# ifdef _WIN32",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_CATALOGUE_AUTHORED",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "preprocessor",
@@ -21443,9 +21599,51 @@
       },
       {
         "kind": "preprocessor",
-        "declaration": "# if defined ( ARCDROID_RPC_LOCKSTEP )",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Reviewed R3d-3 RPC-only route, host ownership and compiled frontend labels; individual new static owners are classified in objects. Arculator frame state continues through the existing visitors."
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_CATALOGUE_AUTHORED",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_CATALOGUE_AUTHORED",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# elif defined ( ARCDROID_RPC_LOCKSTEP )",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "preprocessor",
@@ -21479,7 +21677,13 @@
       },
       {
         "kind": "preprocessor",
-        "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
+        "declaration": "# if ARC_RPC_CATALOGUE_AUTHORED",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# elif defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
@@ -21563,6 +21767,18 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -21575,9 +21791,123 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# else",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_PLANS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "preprocessor",
@@ -22280,6 +22610,12 @@
         "declaration": "static bool arc_rpc_plan_admitted ;",
         "classification": "host-only",
         "reason": "Reviewed R3d-3 RPC-only route, host ownership and compiled frontend labels; individual new static owners are classified in objects. Arculator frame state continues through the existing visitors."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static bool arc_rpc_override_pending ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "declaration",
@@ -23386,6 +23722,12 @@
         "reason": "Current prepared-media path binding and immutable base identity; logical IDs and expected digests validate the state while native paths, allocation addresses and callbacks are reconstructed."
       },
       {
+        "kind": "local:arc_message",
+        "declaration": "static const char * const safe [ ] = { \"The selected disc could not be loaded. Check that the file is complete and a supported type.\" , \"The RiscPC could not restart. Close and reload this content.\" , \"The emulated RiscPC stopped. Close and reload this content.\" , \"On-screen keyboard disabled: unable to allocate its presentation surface.\" } ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
         "kind": "allocation:arc_file_digest_matches",
         "declaration": "arc_io_read_all ( path , & data , & size )",
         "classification": "derived-on-load",
@@ -23669,9 +24011,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static const struct retro_core_option_v2_definition arc_base_options [ ] = { { \"arcdroid_machine\" , \"Machine\" , NULL , \"Automatic machine selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"A3000\" , NULL } , { \"A3010\" , NULL } , { \"A3020\" , NULL } , { \"A4000\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_cpu\" , \"CPU\" , NULL , \"Automatic CPU selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"ARM2\" , NULL } , { \"ARM250\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_memory\" , \"Memory\" , NULL , \"Automatic memory selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"4 MB\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_os\" , \"Operating System\" , NULL , \"Automatic firmware selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"RISC OS 3.11\" , NULL } , { \"RISC OS 3.10\" , NULL } , { \"RISC OS 3.19\" , NULL } , { \"RISC OS 3.00\" , NULL } , { \"RISC OS 2.00\" , NULL } , { \"Arthur 1.20\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_joystick_if\" , \"Joystick Interface\" , NULL , \"Keyboard mapping is the Slice 1 default.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"Keyboard\" , NULL } , { \"A3010\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_pointer_mode\" , \"Pointer Mode\" , NULL , \"Use pointer input as a relative trackpad.\" , NULL , NULL , { { \"disabled\" , NULL } , { \"relative\" , NULL } , { NULL , NULL } } , \"relative\" } , { \"arcdroid_pointer_stick\" , \"Pointer Stick\" , NULL , \"Choose the analog stick that drives pointer velocity.\" , NULL , NULL , { { \"right\" , NULL } , { \"left\" , NULL } , { \"disabled\" , NULL } , { NULL , NULL } } , \"right\" } , { \"arcdroid_pointer_speed\" , \"Pointer Speed\" , NULL , \"Maximum pointer speed in mickeys per guest second.\" , NULL , NULL , { { \"300\" , NULL } , { \"450\" , NULL } , { \"600\" , NULL } , { \"900\" , NULL } , { \"1200\" , NULL } , { NULL , NULL } } , \"600\" } , { \"arcdroid_pointer_deadzone\" , \"Pointer Dead Zone\" , NULL , \"Radial analog-stick dead zone percentage.\" , NULL , NULL , { { \"0\" , \"0 %\" } , { \"10\" , \"10 %\" } , { \"15\" , \"15 %\" } , { \"20\" , \"20 %\" } , { \"25\" , \"25 %\" } , { NULL , NULL } } , \"15\" } , { \"arcdroid_launch\" , \"Launch\" , NULL , \"Automatically launch a root application, disable launch automation, or choose a numbered candidate.\" , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { \"app1\" , \"Application 1\" } , { \"app2\" , \"Application 2\" } , { \"app3\" , \"Application 3\" } , { \"app4\" , \"Application 4\" } , { \"app5\" , \"Application 5\" } , { \"app6\" , \"Application 6\" } , { \"app7\" , \"Application 7\" } , { \"app8\" , \"Application 8\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_launch_chooser\" , \"Launch Chooser\" , NULL , \"Remember the selected application, or ask on every eligible launch.\" , NULL , NULL , { { \"remember\" , \"Remember\" } , { \"ask\" , \"Ask every time\" } , { NULL , NULL } } , \"remember\" } , { \"arcdroid_launch_ramdisc\" , \"Native launch RAM disc\" , NULL , \"Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"Disabled\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_jfd_boot\" , \"JFD Boot\" , NULL , \"Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.\" , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"native\" , \"Native\" } , { \"adffs\" , \"ADFFS preferred\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_jfd_write_protect\" , \"Write-protect Tab\" , NULL , \"JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.\" , NULL , NULL , { { \"as-imaged\" , \"As imaged\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"as-imaged\" } , { \"arcdroid_adffs_package\" , \"ADFFS Package\" , NULL , \"Restrict ADFFS to a verified package profile, or allow an untested package.\" , NULL , NULL , { { \"verified\" , \"Verified only\" } , { \"untested\" , \"Allow untested\" } , { NULL , NULL } } , \"verified\" } , { \"arcdroid_disk_writes\" , \"Disk Writes\" , NULL , \"Choose where floppy writes are stored.\" , NULL , NULL , { { \"shadow\" , NULL } , { \"original\" , NULL } , { \"off\" , NULL } , { NULL , NULL } } , \"shadow\" } , { \"arcdroid_hard_disc\" , \"Hard Disc\" , NULL , \"Attach a persistent hard disc to native A3020 sessions.\" , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_short_tail\" , \"Short image tail\" , NULL , \"Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.\" , NULL , NULL , { { \"missing\" , \"Missing\" } , { \"zero-filled\" , \"Zero-filled\" } , { NULL , NULL } } , \"missing\" } , { \"arcdroid_jfd_omitted\" , \"JFD Omitted Sectors\" , NULL , \"Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.\" , NULL , NULL , { { \"file-data\" , \"File data\" } , { \"strict\" , \"Strict\" } , { NULL , NULL } } , \"file-data\" } , { \"arcdroid_disc_requests\" , \"Disc Requests\" , NULL , \"Automatically insert a uniquely requested disc from a loaded multi-image set.\" , NULL , NULL , { { \"auto\" , \"Insert automatically\" } , { \"hint\" , \"Hint only\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { NULL , NULL , NULL , NULL , NULL , NULL , { { 0 } } , NULL } } ;",
+        "declaration": "static const struct retro_core_option_v2_definition arc_base_options [ ] = { { \"arcdroid_machine\" , \"Machine\" , NULL , \"Automatic machine selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"A3000\" , NULL } , { \"A3010\" , NULL } , { \"A3020\" , NULL } , { \"A4000\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_cpu\" , \"CPU\" , NULL , \"Automatic CPU selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"ARM2\" , NULL } , { \"ARM250\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_memory\" , \"Memory\" , NULL , \"Automatic memory selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"4 MB\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_os\" , \"Operating System\" , NULL , \"Automatic firmware selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"RISC OS 3.11\" , NULL } , { \"RISC OS 3.10\" , NULL } , { \"RISC OS 3.19\" , NULL } , { \"RISC OS 3.00\" , NULL } , { \"RISC OS 2.00\" , NULL } , { \"Arthur 1.20\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_joystick_if\" , \"Joystick Interface\" , NULL , \"Keyboard mapping is the Slice 1 default.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"Keyboard\" , NULL } , { \"A3010\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_pointer_mode\" , \"Pointer Mode\" , NULL , \"Use pointer input as a relative trackpad.\" , NULL , NULL , { { \"disabled\" , NULL } , { \"relative\" , NULL } , { NULL , NULL } } , \"relative\" } , { \"arcdroid_pointer_stick\" , \"Pointer Stick\" , NULL , \"Choose the analog stick that drives pointer velocity.\" , NULL , NULL , { { \"right\" , NULL } , { \"left\" , NULL } , { \"disabled\" , NULL } , { NULL , NULL } } , \"right\" } , { \"arcdroid_pointer_speed\" , \"Pointer Speed\" , NULL , \"Maximum pointer speed in mickeys per guest second.\" , NULL , NULL , { { \"300\" , NULL } , { \"450\" , NULL } , { \"600\" , NULL } , { \"900\" , NULL } , { \"1200\" , NULL } , { NULL , NULL } } , \"600\" } , { \"arcdroid_pointer_deadzone\" , \"Pointer Dead Zone\" , NULL , \"Radial analog-stick dead zone percentage.\" , NULL , NULL , { { \"0\" , \"0 %\" } , { \"10\" , \"10 %\" } , { \"15\" , \"15 %\" } , { \"20\" , \"20 %\" } , { \"25\" , \"25 %\" } , { NULL , NULL } } , \"15\" } , { \"arcdroid_launch\" , \"Launch\" , NULL , \"Automatically launch a root application, disable launch automation, or choose a numbered candidate.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { \"app1\" , \"Application 1\" } , { \"app2\" , \"Application 2\" } , { \"app3\" , \"Application 3\" } , { \"app4\" , \"Application 4\" } , { \"app5\" , \"Application 5\" } , { \"app6\" , \"Application 6\" } , { \"app7\" , \"Application 7\" } , { \"app8\" , \"Application 8\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_launch_chooser\" , \"Launch Chooser\" , NULL , \"Remember the selected application, or ask on every eligible launch.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"remember\" , \"Remember\" } , { \"ask\" , \"Ask every time\" } , { NULL , NULL } } , \"remember\" } , { \"arcdroid_launch_ramdisc\" , \"Native launch RAM disc\" , NULL , \"Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"Disabled\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_jfd_boot\" , \"JFD Boot\" , NULL , \"Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"native\" , \"Native\" } , { \"adffs\" , \"ADFFS preferred\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_jfd_write_protect\" , \"Write-protect Tab\" , NULL , \"JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.\" , NULL , NULL , { { \"as-imaged\" , \"As imaged\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"as-imaged\" } , { \"arcdroid_adffs_package\" , \"ADFFS Package\" , NULL , \"Restrict ADFFS to a verified package profile, or allow an untested package.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"verified\" , \"Verified only\" } , { \"untested\" , \"Allow untested\" } , { NULL , NULL } } , \"verified\" } , { \"arcdroid_disk_writes\" , \"Disk Writes\" , NULL , \"Choose where floppy writes are stored.\" , NULL , NULL , { { \"shadow\" , NULL } , { \"original\" , NULL } , { \"off\" , NULL } , { NULL , NULL } } , \"shadow\" } , { \"arcdroid_hard_disc\" , \"Hard Disc\" , NULL , \"Attach a persistent hard disc to native A3020 sessions.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_short_tail\" , \"Short image tail\" , NULL , \"Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.\" , NULL , NULL , { { \"missing\" , \"Missing\" } , { \"zero-filled\" , \"Zero-filled\" } , { NULL , NULL } } , \"missing\" } , { \"arcdroid_jfd_omitted\" , \"JFD Omitted Sectors\" , NULL , \"Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.\" , NULL , NULL , { { \"file-data\" , \"File data\" } , { \"strict\" , \"Strict\" } , { NULL , NULL } } , \"file-data\" } , { \"arcdroid_disc_requests\" , \"Disc Requests\" , NULL , \"Automatically insert a uniquely requested disc from a loaded multi-image set.\" , NULL , NULL , { { \"auto\" , \"Insert automatically\" } , { \"hint\" , \"Hint only\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { NULL , NULL , NULL , NULL , NULL , NULL , { { 0 } } , NULL } } ;",
         "classification": "host-only",
-        "reason": "Compiled immutable data; detailed named-object rows identify exceptions and pointer-bearing owners."
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "declaration",
@@ -23746,22 +24088,28 @@
         "reason": "Reviewed R3d-3 RPC-only route, host ownership and compiled frontend labels; individual new static owners are classified in objects. Arculator frame state continues through the existing visitors."
       },
       {
-        "kind": "allocation:arc_is_secondary",
-        "declaration": "GetModuleHandleExW ( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT , ( LPCWSTR ) ( uintptr_t ) & arc_is_secondary , & own )",
-        "classification": "derived-on-load",
-        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
+        "kind": "declaration",
+        "declaration": "static bool arc_rpc_alias_lifecycle ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
-        "kind": "allocation:arc_is_secondary",
-        "declaration": "dlopen ( identity . dli_fname , RTLD_LAZY | RTLD_NOLOAD )",
-        "classification": "derived-on-load",
-        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
+        "kind": "allocation:arc_rpc_secondary_instance",
+        "declaration": "GetModuleHandleExW ( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT , ( LPCWSTR ) address , & self )",
+        "classification": "host-only",
+        "reason": "Module identity only: Windows handle is borrowed with UNCHANGED_REFCOUNT; POSIX RTLD_NOLOAD reference is closed on every acquired path. No guest heap or module may be imported from a snapshot."
       },
       {
-        "kind": "allocation:arc_is_secondary",
-        "declaration": "dlopen ( primary_path , RTLD_LAZY | RTLD_NOLOAD )",
-        "classification": "derived-on-load",
-        "reason": "Reviewed run-H cache/loader resource acquisition; allocation_review identifies extent, ownership and release."
+        "kind": "allocation:arc_rpc_secondary_instance",
+        "declaration": "dlopen ( path , RTLD_NOW | RTLD_NOLOAD )",
+        "classification": "host-only",
+        "reason": "Module identity only: Windows handle is borrowed with UNCHANGED_REFCOUNT; POSIX RTLD_NOLOAD reference is closed on every acquired path. No guest heap or module may be imported from a snapshot."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "__attribute__ ( ( used ) ) static const char arc_rpc_build_descriptor [ ] = \"ARCDROID-ROUTE-V1:gate=\" \"open\" \"closed\" \";catalogue=\" \"authored\" \"production\" \";end\" ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "local:retro_init",
@@ -23774,6 +24122,36 @@
         "declaration": "arc_io_read_all ( entry - > staged , & raw , & size )",
         "classification": "derived-on-load",
         "reason": "Allocation-site ownership is reviewed individually in allocation_review and reachable_storage; never persist a native address."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static uint64_t arc_rpc_load_entry_ns ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static ArcRpcFrontendOps arc_riscpc_host_ops ( void ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "local:arc_rpc_check_selection",
+        "declaration": "static const char * archives [ ] = { \"HardDisc4.zip\" , \"PlingSystem.zip\" } ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "local:arc_rpc_check_selection",
+        "declaration": "static const struct retro_controller_description types [ ] = { { \"RiscPC keys and pointer\" , ARC_DEVICE_KEYS } , { \"RiscPC mouse\" , ARC_DEVICE_MOUSE } } ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "local:arc_rpc_check_selection",
+        "declaration": "static const struct retro_controller_info ports [ ] = { { types , 2 } , { types , 2 } , { NULL , 0 } } ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
       {
         "kind": "local:arc_load_game",
@@ -28611,6 +28989,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "void arc_riscpc_cmos_session_year ( uint8_t payload [ 240 ] , unsigned year ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
         "declaration": "bool arc_riscpc_cmos_two_floppies ( unsigned layout , uint8_t payload [ 240 ] ) ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -29567,6 +29951,12 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# include \"rpc_route.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# include \"install_store.h\"",
         "classification": "host-only",
         "reason": "RPC-only preparation ownership, bounded lifecycle/drain and lockstep/fault instrumentation; no instance is reachable from an Arculator session."
@@ -29941,9 +30331,9 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { const uint8_t * firmware ; size_t firmware_size ; const ArcRpcFirmwareFingerprint * fingerprint ; ArcRpcSelection selection ; ArcRpcCmosKey key ; const char * save , * system , * import_path ; const uint8_t * seed ; const char * seed_path ; const ArcEngineMedia * media , * helper ; uint64_t epoch ; bool hard_disc , populate ; bool helper_override ; const ArcRpcLaunchPlan * launch ; uint64_t session_id ; } ArcRpcPreparationRequest ;",
+        "declaration": "typedef struct { const uint8_t * firmware ; size_t firmware_size ; const ArcRpcFirmwareFingerprint * fingerprint ; ArcRpcSelection selection ; ArcRpcCmosKey key ; const char * save , * system , * import_path ; const uint8_t * seed ; const char * seed_path ; const ArcEngineMedia * media , * helper ; uint64_t epoch ; bool hard_disc , populate ; bool ordinary ; bool helper_override ; const ArcRpcLaunchPlan * launch ; uint64_t session_id ; } ArcRpcPreparationRequest ;",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
       },
       {
         "kind": "layout",
@@ -30357,9 +30747,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "struct ArcRpcFrontendHost { ArcRpcPreparation * preparation ; ArcRpcFrontendOps ops ; ArcRpcFrontendExtension extension ; char progress [ 512 ] , advisory [ 512 ] , terminal [ 512 ] , logged_progress [ 512 ] ; unsigned advisory_frames , terminal_frames , frame , phase ; bool unloading , unload_cleared , unload_lost , released ; ArcRpcPreparationStats released_stats ; ArcRpcPreparationState released_state ; bool extended , stopping , drain_replaced , hold , queued_reset , pending_summary , first_field ; bool pending_seen , running_seen , fast_known , fast_forward ; uint64_t load_ns , frame_ns , previous_ns , hold_start , guest_us , frames , frontend_av , guest_av ; uint64_t first_pending_ns , running_ns , first_field_ns , reset_exceptions , reset_max_ns ; uint64_t session_id , checkpoint_exceptions ; int16_t * silence ; size_t silence_capacity ; bool silence_refused ; double rate ; HostPhase phases [ HOST_PHASES ] ; } ;",
+        "declaration": "struct ArcRpcFrontendHost { ArcRpcPreparation * preparation ; ArcRpcFrontendOps ops ; ArcRpcFrontendExtension extension ; char progress [ 512 ] , advisory [ 512 ] , terminal [ 512 ] , logged_progress [ 512 ] ; unsigned advisory_frames , terminal_frames , frame , phase ; bool unloading , unload_cleared , unload_lost , released ; ArcRpcPreparationStats released_stats ; ArcRpcPreparationState released_state ; bool extended , stopping , drain_replaced , hold , queued_reset , pending_summary , first_field ; bool pending_seen , running_seen , fast_known , fast_forward ; bool ordinary , manual_noticed ; uint64_t load_ns , frame_ns , previous_ns , hold_start , guest_us , frames , frontend_av , guest_av ; uint64_t first_pending_ns , running_ns , first_field_ns , reset_exceptions , reset_max_ns ; uint64_t session_id , checkpoint_exceptions ; int16_t * silence ; size_t silence_capacity ; bool silence_refused ; double rate ; HostPhase phases [ HOST_PHASES ] ; } ;",
         "classification": "host-only",
-        "reason": "RPC-only frontend owner, notice arbitration, fixed histograms, callbacks and bounded silence; individual statics and owned heap extents are classified separately."
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
       },
       {
         "kind": "declaration",
@@ -30590,6 +30980,240 @@
         "declaration": "bool arc_riscpc_host_free ( ArcRpcFrontendHost * , char * , size_t ) ;",
         "classification": "host-only",
         "reason": "RPC-only frontend host and callback interfaces, including test-plan extension; borrowed host callbacks are never guest state."
+      }
+    ],
+    "libretro/rpc_route.c": [
+      {
+        "kind": "preprocessor",
+        "declaration": "# include \"rpc_route.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include \"arc_io.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < stdio . h >",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < stdlib . h >",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < string . h >",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < time . h >",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "local:arc_riscpc_route_epoch_with_clock",
+        "declaration": "static const unsigned lengths [ ] = { 31 , 28 , 31 , 30 , 31 , 30 , 31 , 31 , 30 , 31 , 30 , 31 } ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "local:pair_valid",
+        "declaration": "static const unsigned char magic [ 8 ] = { 'A' , 'R' , 'C' , 'P' , 'A' , 'I' , 'R' , 1 } ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "allocation:arc_riscpc_pair_admitted",
+        "declaration": "arc_io_read_all_limit ( path , & old , & length , 32 , NULL )",
+        "classification": "host-only",
+        "reason": "RPC-only advisory pair sidecar: read at most 32 bytes, freed before returning; not reachable from an Arculator machine snapshot."
+      }
+    ],
+    "libretro/rpc_route.h": [
+      {
+        "kind": "preprocessor",
+        "declaration": "# ifndef ARC_RPC_ROUTE_H",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_ROUTE_H",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include \"rpc_selection.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include \"arc_lock.h\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# include < time . h >",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# ifndef ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_ORDINARY_LOAD 0",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD ! = 0 & & ARC_RPC_ORDINARY_LOAD ! = 1",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# error Invalid ordinary RiscPC gate",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# ifndef ARC_RPC_CATALOGUE_AUTHORED",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_CATALOGUE_AUTHORED 0",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "layout",
+        "declaration": "typedef enum { ARC_RPC_STORE_UNKNOWN , ARC_RPC_STORE_ABSENT , ARC_RPC_STORE_EXISTS } ArcRpcStorePresence ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "ArcRpcStorePresence arc_riscpc_store_presence ( const char * , const char * ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "ArcRpcStorePresence arc_riscpc_boot_archive_presence ( const char * , const char * ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_riscpc_route_epoch_with_clock ( time_t ( * ) ( time_t * ) , uint64_t * out ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_riscpc_route_epoch ( uint64_t * out ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "const char * arc_riscpc_route_notice ( const ArcRpcSelection * , const ArcRpcFirmwareInventory * , char * , size_t ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "bool arc_riscpc_pair_admitted ( const char * , const char * , unsigned , unsigned , ArcLock * ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      }
+    ],
+    "libretro/rpc_staging.h": [
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_STAGE_EVENTS ( ARC_PLAYLIST_MAX_ENTRIES * 16u + 32u )",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_STAGE_BYTES ( ARC_RPC_STAGE_EVENTS * ( ARC_MEDIA_PATH_CAPACITY * 2u + 1024u ) + 18000u )",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static struct { char bytes [ ARC_RPC_STAGE_BYTES ] ; struct { size_t offset ; enum retro_log_level level ; bool notice ; } event [ ARC_RPC_STAGE_EVENTS ] ; size_t used ; unsigned count ; bool active , flagged , overflowed , safe_after_overflow ; retro_log_printf_t log ; } arc_rpc_staging ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static void arc_rpc_staging_finish ( bool rpc ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static void arc_rpc_staging_capture_log ( enum retro_log_level , const char * , . . . ) ;",
+        "classification": "host-only",
+        "reason": "Run L reviewed R3d-4 source attachment: RPC-only route/preparation, diagnostic staging or immutable definitions; not Arculator guest state."
       }
     ],
     "platform/arcdroid_input.c": [
@@ -36647,6 +37271,83 @@
       "type": "bool",
       "classification": "host-only",
       "reason": "Run K publication provenance/failure latch, cleared only by successful rollback or reset/reload; never rewound from a blob."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_alias_lifecycle",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "Nested frontend lifecycle authority; never restored from guest bytes. Refuses alias load and ignores nested cleanup while retaining the live primary."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_override_pending",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "RPC manual override request, consumed by next content load; admission state is outside Arculator snapshots."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_build_descriptor",
+      "type": "const char[]",
+      "classification": "host-only",
+      "reason": "Immutable artifact classification descriptor bound to this build."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_load_entry_ns",
+      "type": "uint64_t",
+      "classification": "host-only",
+      "reason": "RPC-only preparation work-time measurement; never guest time."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_check_selection::archives",
+      "type": "const char *[2]",
+      "classification": "host-only",
+      "reason": "Immutable RPC first-use archive names."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_check_selection::types",
+      "type": "const struct retro_controller_description[2]",
+      "classification": "host-only",
+      "reason": "Immutable RPC frontend controller descriptions."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_check_selection::ports",
+      "type": "const struct retro_controller_info[3]",
+      "classification": "host-only",
+      "reason": "Immutable RPC frontend controller registration data."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_message::safe",
+      "type": "const char * const[4]",
+      "classification": "host-only",
+      "reason": "Immutable RPC privacy-approved diagnostic sentences; no guest state."
+    },
+    {
+      "source": "libretro/rpc_staging.h",
+      "symbol": "arc_rpc_staging",
+      "type": "struct",
+      "classification": "host-only",
+      "reason": "Bounded pre-admission log staging, drained before load returns; host-only privacy output with no Arculator guest payload."
+    },
+    {
+      "source": "libretro/rpc_route.c",
+      "symbol": "arc_riscpc_route_epoch_with_clock::lengths",
+      "type": "const unsigned[12]",
+      "classification": "host-only",
+      "reason": "Immutable calendar month lengths used for RPC preparation."
+    },
+    {
+      "source": "libretro/rpc_route.c",
+      "symbol": "pair_valid::magic",
+      "type": "const unsigned char[8]",
+      "classification": "host-only",
+      "reason": "Immutable RPC advisory sidecar magic."
     }
   ],
   "reachable_storage": [
@@ -38220,24 +38921,17 @@
     },
     {
       "source": "libretro/arcdroid_libretro.c",
-      "owner": "arc_is_secondary",
-      "call": "GetModuleHandleExW ( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT , ( LPCWSTR ) ( uintptr_t ) & arc_is_secondary , & own )",
+      "owner": "arc_rpc_secondary_instance",
+      "call": "GetModuleHandleExW ( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT , ( LPCWSTR ) address , & self )",
       "classification": "host-only",
-      "reason": "Borrowed Windows module handle (UNCHANGED_REFCOUNT), or two RTLD_NOLOAD POSIX module references balanced by dlclose. Compare current primary and own private-function module before frontend registrations; no loading or guest-owned state."
+      "reason": "Module identity only: Windows handle is borrowed with UNCHANGED_REFCOUNT; POSIX RTLD_NOLOAD reference is closed on every acquired path. No guest heap or module may be imported from a snapshot."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
-      "owner": "arc_is_secondary",
-      "call": "dlopen ( identity . dli_fname , RTLD_LAZY | RTLD_NOLOAD )",
+      "owner": "arc_rpc_secondary_instance",
+      "call": "dlopen ( path , RTLD_NOW | RTLD_NOLOAD )",
       "classification": "host-only",
-      "reason": "Borrowed Windows module handle (UNCHANGED_REFCOUNT), or two RTLD_NOLOAD POSIX module references balanced by dlclose. Compare current primary and own private-function module before frontend registrations; no loading or guest-owned state."
-    },
-    {
-      "source": "libretro/arcdroid_libretro.c",
-      "owner": "arc_is_secondary",
-      "call": "dlopen ( primary_path , RTLD_LAZY | RTLD_NOLOAD )",
-      "classification": "host-only",
-      "reason": "Borrowed Windows module handle (UNCHANGED_REFCOUNT), or two RTLD_NOLOAD POSIX module references balanced by dlclose. Compare current primary and own private-function module before frontend registrations; no loading or guest-owned state."
+      "reason": "Module identity only: Windows handle is borrowed with UNCHANGED_REFCOUNT; POSIX RTLD_NOLOAD reference is closed on every acquired path. No guest heap or module may be imported from a snapshot."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
@@ -38539,6 +39233,13 @@
       "call": "calloc ( frames , 2 * sizeof ( int16_t ) )",
       "classification": "host-only",
       "reason": "RPC host silence grows to the requested audio-frame capacity, replaces and frees the old buffer, and is freed with the RPC host; no guest bytes and inactive for Arculator."
+    },
+    {
+      "source": "libretro/rpc_route.c",
+      "owner": "arc_riscpc_pair_admitted",
+      "call": "arc_io_read_all_limit ( path , & old , & length , 32 , NULL )",
+      "classification": "host-only",
+      "reason": "RPC-only advisory pair sidecar: read at most 32 bytes, freed before returning; not reachable from an Arculator machine snapshot."
     },
     {
       "source": "platform/arcdroid_video.c",

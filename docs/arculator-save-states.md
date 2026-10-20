@@ -8,9 +8,10 @@ remain as historical design/evidence under their original contract.
 
 Order: [SS-1](handoff.md), D-011, D-210, R-SS3a and run-H adjudication.
 Run H is not acceptance-complete: the 16 MiB/minimum-bound gate remains unmet.
-R-SS3g defers universal secondary isolation to integration with R3d-4's R-1a;
-the current module guard alone cannot distinguish a legacy Android loader
-aliasing the secondary copy to the primary module. Compatibility is the
+Run L integrates R-SS3g with R3d-4's R-1a in both gate states: live-session
+admission and nested lifecycle guards also protect a legacy Android loader
+aliasing the secondary copy to the primary module. Historical Run H notes below
+retain their original limitations; the Run L section supersedes them. Compatibility is the
 same core build, platform, firmware, machine, prepared media and options.
 RiscPC serialization remains unavailable. Capability advertising is the last
 acceptance gate. The committed [state harnesses](../tests/arculator_state_matrix.py)
@@ -804,3 +805,61 @@ repeated loads and one-frame run-ahead. Only `raster`, `platform-video` and
 `frontend-video` leave the field-drop set (35 → 32). Default-buffer tests model
 RetroArch's wrapper and worst-patch initialization at 20,000,000 bytes and
 exercise public state APIs with an independent reverse-patch test encoding.
+
+## Run L lifecycle integration as built
+
+R-SS3g extends the single R3d-4 R-1a implementation to both gate states and all
+content. A live session (including an admitted preparation plan) rejects another
+load before cleanup, preparation, store access or frontend registration. A
+different environment callback during that session marks a nested lifecycle,
+retains the primary callback and ignores nested init, callback setters, reset,
+run, unload and deinit. The matching deinit consumes the marker. This covers
+API 21–22 module aliases without an Android API switch. A restored primary
+environment also clears the marker; direct live-load refusal does not set it.
+Where GET_LIBRETRO_PATH is answered, native module identity refuses distinct
+copies before registration. Without that optional answer, live-session and alias
+protection still applies; distinct copied-module identification is conditional
+on frontend support. Neither state sizing nor initialization queries the
+side-effecting GET_SAVESTATE_CONTEXT callback.
+
+The primary callback sequence is content load followed by callback installation.
+The first post-load input poll binds the real-frame identity if load had no poll;
+later speculative callback swaps cannot replace it. R-SS3d/R-SS3e and the Run K
+publication, rollback and exact guest-state rules remain unchanged. No wire
+fields are added: alias/admission authority is host-only and never rewound.
+
+`arculator-state-secondary-routes` uses shipping retro_* exports in each gate
+state. It models run-ahead create, failed-preempt re-entry after a refused save,
+and primary cheat set/reset followed by secondary creation. It tests independent
+same-basename copies and actual same-module aliases; aliases also run with
+GET_LIBRETRO_PATH unavailable. Additional cheat set/reset attempts run before
+any successful capture, so isolation cannot depend on state-history setup.
+Each failed create leaves all writable-open, frontend-registration, notice and
+presentation counters unchanged, keeps Disc Control callbacks and permits the
+next primary frame. Cases taken after capture also preserve canonical primary
+state byte-for-byte. Cold cheat cases first capture and restore only after their
+attempts finish. The primary save works with RetroArch's callback order.
+The ordinary RPC harness checks zero size, serialize/unserialize refusal and
+untouched output at every load and frame, including 200 Arc↔RPC switches; the
+plan harness retains its pending/running/reset/switch coverage.
+
+AC-L2 deliberately changes closed-gate identity expectations for live
+replacement and secondary attempts. A refused replacement preserves the primary;
+legitimate replacement explicitly unloads first, retaining exact outgoing CMOS
+publication and its independent 256-byte oracle/removal mutant. These two rules
+are now shipping behavior and leave R-6a's gate-open-only differences. The `.info`
+notes state both. The remaining R-6/R-6a differences retain their original scope.
+
+The public route test also caught a raw-file cursor defect after the first
+checkpoint: a durable sector redo rewrote the whole native image and left its
+native cursor at EOF, although the guest write ended earlier. The next save's
+metadata then differed from a repeated capture. Publication now seeks that
+stream back to the logical guest position after the redo. No-history ordinary
+writes keep their original path. The test requires immediate capture→capture
+identity before and after secondary attempts as well as continued primary play.
+
+The Run L caller sequences were checked against the pinned primary sources:
+[secondary creation and failure cleanup](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L391-L493),
+[preempt callback overrides and availability restoration](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L1292-L1370),
+and [primary cheat calls followed by secondary creation](https://github.com/libretro/RetroArch/blob/v1.22.2/runloop.c#L7164-L7231).
+These are authored interface models, not a claim of a live RetroArch device run.

@@ -61,5 +61,10 @@ seed reload. Reset preserves volatile data and the write counter. RTC uses
 epoch plus integer emulated nanoseconds. Tests cover Thursday 1970-01-01,
 Tuesday 2000-02-29, non-leap 2100-03-01, the final centisecond of 2399 and
 out-of-range rejection. A device RTC read at 2000-02-29 01:01:01.98 returns
-BCD 98/01/01/01/29/42. Guest year bytes c0/c1 are not silently rewritten.
+BCD 98/01/01/01/29/42. The device copies supplied year bytes c0/c1 exactly.
+R-Y1's sole seed patch occurs above this boundary: preparation-owned requested
+sessions refresh physical C0/C1/3F from the captured local-calendar epoch before
+engine construction. Factory captures, bare v1 plans and reset are unchanged;
+`rpc-session-calendar` reads and reconstructs the year in an authored ARM guest
+through IIC, independently checks the checksum and covers every layout.
 Factory Delete input/capture and the guest IOMD route remain session work.

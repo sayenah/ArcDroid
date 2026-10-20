@@ -10,6 +10,7 @@
 #include "rpc_preparation_host.h"
 #include "arc_build_identity.h"
 #include "rpc_inventory.h"
+#include "rpc_route.h"
 #include "install_store.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
@@ -28,6 +29,7 @@
 #endif
 
 #include <limits.h>
+#include <stdarg.h>
 #include <ctype.h>
 #include <stdbool.h>
 #include <math.h>
@@ -154,6 +156,9 @@ static bool arc_audio_warning_reported;
 static bool arc_loaded;
 static ArcRpcFrontendHost *arc_rpc_host;
 static bool arc_rpc_plan_admitted;
+#if ARC_RPC_ORDINARY_LOAD
+static bool arc_rpc_override_pending;
+#endif
 static bool arc_rpc_preparation_route;
 static bool arc_rpc_option_noticed[4];
 static bool arc_rpc_av_attempted;
@@ -1219,6 +1224,9 @@ static void arc_release_session(void)
 #if defined(ARCDROID_TEST_PLANS)
    if (arc_rpc_plan_admitted && arc_kind == ARC_SESSION_KIND_RISCPC && !arc_rpc_preparation_route) arc_plan_notice("", false);
 #endif
+#if ARC_RPC_ORDINARY_LOAD
+   arc_rpc_override_pending=false;
+#endif
    arc_rpc_plan_admitted=arc_rpc_preparation_route=false;memset(arc_rpc_option_noticed,0,sizeof(arc_rpc_option_noticed));
 #if defined(ARCDROID_TEST_FAULTS)
    arc_test_plan_clear();
@@ -1435,17 +1443,32 @@ static void arc_boot_persist_seed(void)
    }
 }
 
+#include "rpc_staging.h"
 static void arc_message(const char *text, enum retro_log_level level)
 {
+#if ARC_RPC_ORDINARY_LOAD
+   if(arc_rpc_staging.active){arc_rpc_staging_capture(text,level,true);return;}
+   if(arc_rpc_staging.overflowed){arc_rpc_staging_capture(text,level,true);return;}
+#endif
+   bool rpc=arc_kind==ARC_SESSION_KIND_RISCPC;
+   if(rpc && level>=RETRO_LOG_ERROR){
+      static const char *const safe[]={
+         "The selected disc could not be loaded. Check that the file is complete and a supported type.",
+         "The RiscPC could not restart. Close and reload this content.",
+         "The emulated RiscPC stopped. Close and reload this content.",
+         "On-screen keyboard disabled: unable to allocate its presentation surface."};
+      bool known=false;for(unsigned i=0;i<sizeof(safe)/sizeof(*safe);++i)if(!strcmp(text,safe[i]))known=true;
+      if(!known)text="The RiscPC operation could not be completed. Close and reload this content.";
+   }
    struct retro_message_ext ext = {
-      text, 5000u, 3u, level, RETRO_MESSAGE_TARGET_ALL,
+      text, 5000u, 3u, level, rpc?RETRO_MESSAGE_TARGET_OSD:RETRO_MESSAGE_TARGET_ALL,
       RETRO_MESSAGE_TYPE_NOTIFICATION, -1
    };
    struct retro_message legacy = {text, 300u};
    if (!arc_environment)
       return;
    if (arc_log)
-      arc_log(level, "%s\n", text);
+      arc_log(level, rpc?"disc-notice: %s\n":"%s\n", text);
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
@@ -1713,6 +1736,10 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
       if (!parsed)
          return false;
       entry->compatibility = arc_riscpc_compatibility(entry->jfd.extended, entry->jfd.flags);
+#if ARC_RPC_ORDINARY_LOAD
+      if(arc_riscpc_notice_required(entry->compatibility))arc_rpc_staging_flag();
+#endif
+
       entry->high_density = arc_jfd_high_density(&entry->jfd);
       if (arc_log)
       {
@@ -1729,9 +1756,18 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
       {
          unsigned cpu_mask = (entry->jfd.flags >> 8u) & 0x3fu;
          unsigned os_mask = (entry->jfd.flags >> 16u) & 0x7fu;
-         if (cpu_mask && os_mask && !(cpu_mask & 3u) && !(os_mask & 3u))
+         if (cpu_mask && os_mask && !(cpu_mask & 3u) && !(os_mask & 3u) && arc_kind!=ARC_SESSION_KIND_RISCPC)
          {
             arc_riscpc_notice_shown = true;
+#if ARC_RPC_ORDINARY_LOAD
+            if(!arc_core_options.machine_auto || !arc_core_options.cpu_auto || arc_core_options.requested_os!=ARC_OS_UNKNOWN){
+               if(arc_loaded){
+                  char text[256];snprintf(text,sizeof(text),"This title is flagged for RiscPC-class machines; starting on %s because it is selected in core options.",arc_machine_descriptor(arc_session_machine)->name);
+                  arc_media_notice(text,notify_user,notice_reported);
+                  if(arc_log)arc_log(RETRO_LOG_INFO,"N-9: %s\n",text);
+               }else arc_rpc_override_pending=true;
+            }else
+#endif
             arc_media_notice("This title is flagged for RiscPC-class machines (StrongARM/RISC OS 3.5+), which ArcDroid does not emulate; booting anyway.",
                              notify_user, notice_reported);
          }
@@ -1980,7 +2016,7 @@ static void arc_folder_summary(const char *action, unsigned omissions,
             "Folder disc set %s with %u sibling%s omitted and %u media notice%s; see the log for details.",
             action, omissions, omissions == 1u ? "" : "s",
             notices, notices == 1u ? "" : "s");
-   arc_message(message, RETRO_LOG_WARN);
+   arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"Some discs in the selected content could not be loaded. Check the selected discs.":message, RETRO_LOG_WARN);
 }
 
 static void arc_discard_candidate(ArcMediaEntry *entry)
@@ -2125,7 +2161,7 @@ static void arc_zip_summary(unsigned omissions, unsigned notices, bool fallback,
          snprintf(message, sizeof(message),
                   "Zip preferred image \"%s\" could not be used; started \"%s\" instead.",
                   skipped, started);
-      arc_message(message, RETRO_LOG_WARN);
+      arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"The preferred disc could not be loaded. Another disc was selected.":message, RETRO_LOG_WARN);
       return;
    }
    if (!omissions && !notices) return;
@@ -2134,7 +2170,7 @@ static void arc_zip_summary(unsigned omissions, unsigned notices, bool fallback,
             "Zip content loaded with %u image%s omitted and %u media notice%s; see the log for details.",
             omissions, omissions == 1u ? "" : "s",
             notices, notices == 1u ? "" : "s");
-   arc_message(message, RETRO_LOG_WARN);
+   arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"Some discs in the selected content could not be loaded. Check the selected discs.":message, RETRO_LOG_WARN);
 }
 
 static void arc_zip_log(const char *leaf, unsigned entries, unsigned images,
@@ -3871,7 +3907,7 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
    }
    if (suggestible && at < sizeof(message) - 28u)
       snprintf(message + at, sizeof(message) - at, " — set Launch to Application N");
-   arc_message(message, RETRO_LOG_WARN);
+   arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"Some discs in the selected content could not be loaded. Check the selected discs.":message, RETRO_LOG_WARN);
 }
 
 static bool arc_launch_binding_publish(const char *path, bool replacing,
@@ -5240,7 +5276,9 @@ static bool arc_disc_observation(void *opaque, const char *path,
    }
    if (arc_log && log_line)
    {
-      if (suppressed)
+      if(arc_kind==ARC_SESSION_KIND_RISCPC)
+         arc_log(RETRO_LOG_INFO,"Disc request: signal=B candidate=%u observation=%u action=%s reason=%s suppressed=%u. The guest requested another disc.\n",candidate+1u,observation,action,reason,suppressed);
+      else if (suppressed)
          arc_log(RETRO_LOG_INFO,
             "Disc request: signal=B object=%s candidate=%u observation=%u action=%s reason=%s suppressed=%u\n",
             object, candidate + 1u, observation, action, reason, suppressed);
@@ -5302,8 +5340,8 @@ static void arc_rpc_disc_log(const char *action,const char *reason,const char *c
    if(slot==0u || slot==3u){history[1].line[0]=0;history[2].line[0]=0;}
    ArcRpcDiscStatus status;arc_engine_rpc_disc_status(&status);
    char line[384];snprintf(line,sizeof(line),
-      "RPC disc: signal=%s gate=%s name=%s active=%u notified=%u replacement=%s candidate=%s action=%s reason=%s observation=%s:%s\n",
-      status.signal,status.gate,status.name,status.active,status.notified,status.replacement,candidate,action,reason,status.last_signal,status.last_reason);
+      "RPC disc: signal=%s gate=%s active=%u notified=%u candidate=%s action=%s reason=%s observation=%s:%s. The guest requested another disc.\n",
+      status.signal,status.gate,status.active,status.notified,candidate,action,reason,status.last_signal,status.last_reason);
    uint64_t time=arc_engine_disc_time_us(),session=arc_session_id;
    if(time<history[slot].time)history[slot].time=time;
    bool busy_repeat=slot==2u && time-history[slot].time>=UINT64_C(2000000);
@@ -5376,9 +5414,10 @@ static void arc_disc_boundary(void)
       }
    }
    arc_rpc_disc_log(action,reason,candidate_text);
-   if (arc_log) arc_log(RETRO_LOG_INFO,
-      "Disc request: signal=A name=%s candidate=%s action=%s reason=%s\n",
-      request.a_name, candidate_text, action, reason);
+   if(arc_log && arc_kind==ARC_SESSION_KIND_RISCPC)arc_log(RETRO_LOG_INFO,
+      "Disc request: signal=A candidate=%s action=%s reason=%s. The guest requested another disc.\n",candidate_text,action,reason);
+   else if(arc_log)arc_log(RETRO_LOG_INFO,
+      "Disc request: signal=A name=%s candidate=%s action=%s reason=%s\n",request.a_name,candidate_text,action,reason);
    arc_engine_disc_a_notified();
 }
 
@@ -5421,7 +5460,7 @@ static bool arc_disk_set_eject(bool ejected)
       if (!arc_disk_insert_entry(entry, ARC_INSERT_MANUAL,
                                  error, sizeof(error)))
       {
-         arc_message(error, RETRO_LOG_ERROR);
+         arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"The selected disc could not be loaded. Check that the file is complete and a supported type.":error, RETRO_LOG_ERROR);
          return false;
       }
    }
@@ -5492,7 +5531,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
    {
       if (!arc_media[index].populated && index + 1u == arc_media_count)
          --arc_media_count;
-      arc_message(error[0] ? error : "Replacement floppy image is invalid.", RETRO_LOG_ERROR);
+      arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"The selected disc could not be loaded. Check that the file is complete and a supported type.":error[0] ? error : "Replacement floppy image is invalid.", RETRO_LOG_ERROR);
       return false;
    }
    if (!(arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_machine_accepts_media(arc_session_machine, &replacement,
@@ -5501,7 +5540,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
       arc_discard_candidate(&replacement);
       if (!arc_media[index].populated && index + 1u == arc_media_count)
          --arc_media_count;
-      arc_message(error, RETRO_LOG_ERROR);
+      arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"The selected disc could not be loaded. Check that the file is complete and a supported type.":error, RETRO_LOG_ERROR);
       return false;
    }
    ArcMediaEntry previous=arc_media[index];
@@ -6447,6 +6486,11 @@ static void arc_integrate_stick(uint64_t elapsed_us)
    arc_input_motion(&arc_inputs, dx, dy, true);
 }
 
+#if ARC_RPC_ORDINARY_LOAD
+#define ARC_RPC_ARCHIMEDES_HELP " Archimedes sessions only. RiscPC starts manually with its hard disc attached."
+#else
+#define ARC_RPC_ARCHIMEDES_HELP ""
+#endif
 static const struct retro_core_option_v2_definition arc_base_options[] = {
    {"arcdroid_machine", "Machine", NULL, "Automatic machine selection.", NULL,
     NULL, {{"Auto", NULL}, {"A3000", NULL}, {"A3010", NULL}, {"A3020", NULL}, {"A4000", NULL}, {NULL, NULL}}, "Auto"},
@@ -6458,7 +6502,7 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"Auto", NULL}, {"RISC OS 3.11", NULL}, {"RISC OS 3.10", NULL},
            {"RISC OS 3.19", NULL}, {"RISC OS 3.00", NULL},
            {"RISC OS 2.00", NULL}, {"Arthur 1.20", NULL}, {NULL, NULL}}, "Auto"},
-   {"arcdroid_joystick_if", "Joystick Interface", NULL, "Keyboard mapping is the Slice 1 default.", NULL,
+   {"arcdroid_joystick_if", "Joystick Interface", NULL, "Keyboard mapping is the Slice 1 default." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"Auto", NULL}, {"Keyboard", NULL}, {"A3010", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_pointer_mode", "Pointer Mode", NULL, "Use pointer input as a relative trackpad.", NULL,
     NULL, {{"disabled", NULL}, {"relative", NULL}, {NULL, NULL}}, "relative"},
@@ -6468,31 +6512,31 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"300", NULL}, {"450", NULL}, {"600", NULL}, {"900", NULL}, {"1200", NULL}, {NULL, NULL}}, "600"},
    {"arcdroid_pointer_deadzone", "Pointer Dead Zone", NULL, "Radial analog-stick dead zone percentage.", NULL,
     NULL, {{"0", "0 %"}, {"10", "10 %"}, {"15", "15 %"}, {"20", "20 %"}, {"25", "25 %"}, {NULL, NULL}}, "15"},
-   {"arcdroid_launch", "Launch", NULL, "Automatically launch a root application, disable launch automation, or choose a numbered candidate.", NULL,
+   {"arcdroid_launch", "Launch", NULL, "Automatically launch a root application, disable launch automation, or choose a numbered candidate." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"auto", "Auto"}, {"off", "Off"}, {"app1", "Application 1"}, {"app2", "Application 2"},
            {"app3", "Application 3"}, {"app4", "Application 4"}, {"app5", "Application 5"},
            {"app6", "Application 6"}, {"app7", "Application 7"}, {"app8", "Application 8"}, {NULL, NULL}}, "auto"},
    {"arcdroid_launch_chooser", "Launch Chooser", NULL,
-    "Remember the selected application, or ask on every eligible launch.", NULL,
+    "Remember the selected application, or ask on every eligible launch." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"remember", "Remember"}, {"ask", "Ask every time"},
            {NULL, NULL}}, "remember"},
    {"arcdroid_launch_ramdisc", "Native launch RAM disc", NULL,
-    "Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.", NULL,
+    "Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"Auto", NULL}, {"Disabled", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_jfd_boot", "JFD Boot", NULL,
-    "Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.", NULL,
+    "Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"auto", "Auto"}, {"native", "Native"},
            {"adffs", "ADFFS preferred"}, {NULL, NULL}}, "auto"},
    {"arcdroid_jfd_write_protect", "Write-protect Tab", NULL,
     "JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.", NULL,
     NULL, {{"as-imaged", "As imaged"}, {"off", "Off"}, {NULL, NULL}}, "as-imaged"},
    {"arcdroid_adffs_package", "ADFFS Package", NULL,
-    "Restrict ADFFS to a verified package profile, or allow an untested package.", NULL,
+    "Restrict ADFFS to a verified package profile, or allow an untested package." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {"arcdroid_hard_disc", "Hard Disc", NULL,
-    "Attach a persistent hard disc to native A3020 sessions.", NULL,
+    "Attach a persistent hard disc to native A3020 sessions." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"auto", "Auto"}, {"off", "Off"}, {NULL, NULL}}, "auto"},
    {"arcdroid_short_tail", "Short image tail", NULL,
     "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.", NULL,
@@ -6681,39 +6725,55 @@ static bool arc_resolve_inputs(const ArcCoreOptions *options,
    return true;
 }
 
-/* RetroArch copies the primary library to create a secondary. Its advertised
- * GET_LIBRETRO_PATH remains the primary path. Compare loaded module identities
- * before making any frontend registration or admitting any content. These
- * loader probes never load another module and release all temporary references. */
-static bool arc_is_secondary(retro_environment_t environment)
+/* An old Android linker may reuse this module for RA's copied core. Keep the
+ * live primary environment and ignore that nested init/unload/deinit sequence. */
+static bool arc_rpc_alias_lifecycle;
+/* RA 1.22.2 loads BOTH instances before setting frame callbacks. Its secondary
+ * environment forwards GET_LIBRETRO_PATH unchanged, identifying the primary
+ * module. Use a private function's address: public symbols can be interposed.
+ * Android API 21-22 can alias the two modules; see the run C source note. */
+static bool arc_rpc_secondary_instance(void)
 {
-   const char *primary_path=NULL;
-   if(!environment||!environment(RETRO_ENVIRONMENT_GET_LIBRETRO_PATH,&primary_path)||
-      !primary_path||!*primary_path)return false;
-#if defined(_WIN32)
-   wchar_t path[32768];HMODULE own=NULL;
-   if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,primary_path,-1,path,32768)||
-      !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                         (LPCWSTR)(uintptr_t)&arc_is_secondary,&own))return true;
-   HMODULE primary=GetModuleHandleW(path);
-   return !primary||own!=primary;
+   const char *path = NULL;
+   if (!arc_environment ||
+       !arc_environment(RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, &path) ||
+       !path || !*path) return false; /* Frontends without this optional API. */
+   bool (*anchor)(void) = arc_rpc_secondary_instance;
+   const void *address = NULL;
+   _Static_assert(sizeof(address) == sizeof(anchor), "module address size");
+   memcpy(&address, &anchor, sizeof(address));
+#ifdef _WIN32
+   HMODULE self = NULL;
+   wchar_t wide[32768];
+   if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
+                            wide, sizeof(wide) / sizeof(wide[0])) ||
+       !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          (LPCWSTR)address, &self)) return true;
+   return self != GetModuleHandleW(wide);
 #else
-   Dl_info identity;
-   if(!dladdr((void *)(uintptr_t)&arc_is_secondary,&identity)||!identity.dli_fname)return true;
-   void *own=dlopen(identity.dli_fname,RTLD_LAZY|RTLD_NOLOAD);
-   void *primary=dlopen(primary_path,RTLD_LAZY|RTLD_NOLOAD);
-   bool secondary=!own||!primary||own!=primary;
-   if(primary)dlclose(primary);
-   if(own)dlclose(own);
+   Dl_info self, primary;
+   void *handle = dlopen(path, RTLD_NOW | RTLD_NOLOAD);
+   if (!handle) return true;
+   const void *entry = dlsym(handle, "retro_init");
+   bool secondary = !dladdr(address, &self) || !entry ||
+                    !dladdr(entry, &primary) || self.dli_fbase != primary.dli_fbase;
+   dlclose(handle);
    return secondary;
 #endif
 }
 
 RETRO_API void retro_set_environment(retro_environment_t callback)
 {
-   arc_secondary_instance=arc_is_secondary(callback);
-   arc_environment=callback;
-   if(arc_secondary_instance)return;
+   /* Check against the retained primary callback before assigning a new one.
+    * API 21-22 can route copied-library calls into this same module. */
+   if (arc_loaded || arc_rpc_plan_admitted) {
+      arc_rpc_alias_lifecycle = callback != arc_environment;
+      if (arc_rpc_alias_lifecycle) return;
+   }
+   arc_environment = callback;
+   arc_secondary_instance = arc_rpc_secondary_instance();
+   if (arc_secondary_instance) return;
    bool no_game = false;
    arc_build_options();
    arc_environment = callback;
@@ -6725,11 +6785,18 @@ RETRO_API void retro_set_environment(retro_environment_t callback)
    }
 }
 
-RETRO_API void retro_set_video_refresh(retro_video_refresh_t callback) { arc_video = callback; }
-RETRO_API void retro_set_audio_sample(retro_audio_sample_t callback) { arc_audio = callback; }
-RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t callback) { arc_audio_batch = callback; }
-RETRO_API void retro_set_input_poll(retro_input_poll_t callback) { arc_input_poll = callback; }
-RETRO_API void retro_set_input_state(retro_input_state_t callback) { arc_input_state = callback; }
+RETRO_API void retro_set_video_refresh(retro_video_refresh_t callback) { if(arc_secondary_instance || arc_rpc_alias_lifecycle)return; arc_video = callback; }
+RETRO_API void retro_set_audio_sample(retro_audio_sample_t callback) { if(arc_secondary_instance || arc_rpc_alias_lifecycle)return; arc_audio = callback; }
+RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t callback) { if(arc_secondary_instance || arc_rpc_alias_lifecycle)return; arc_audio_batch = callback; }
+RETRO_API void retro_set_input_poll(retro_input_poll_t callback)
+{
+   if(arc_secondary_instance || arc_rpc_alias_lifecycle)return;
+   arc_input_poll = callback;
+   /* RetroArch installs primary callbacks AFTER loading content. Capture that
+    * first poll without replacing the identity on later speculative swaps. */
+   if(!arc_state_real_poll && !arc_state_boundary_armed)arc_state_real_poll=callback;
+}
+RETRO_API void retro_set_input_state(retro_input_state_t callback) { if(arc_secondary_instance || arc_rpc_alias_lifecycle)return; arc_input_state = callback; }
 
 RETRO_API unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 
@@ -6737,7 +6804,11 @@ RETRO_API void retro_get_system_info(struct retro_system_info *info)
 {
    if (!info) return;
    memset(info, 0, sizeof(*info));
+#if ARC_RPC_CATALOGUE_AUTHORED
+   info->library_name = "ArcDroid Ordinary Route Test";
+#else
    info->library_name = "ArcDroid";
+#endif
    info->library_version = ARCDROID_VERSION;
    info->valid_extensions = "adf|adl|jfd|m3u|zip";
 #if defined(ARCDROID_TEST_PLANS)
@@ -6761,12 +6832,29 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.sample_rate = ARC_AUDIO_RATE;
 }
 
+__attribute__((used)) static const char arc_rpc_build_descriptor[]="ARCDROID-ROUTE-V1:gate="
+#if ARC_RPC_ORDINARY_LOAD
+"open"
+#else
+"closed"
+#endif
+";catalogue="
+#if ARC_RPC_CATALOGUE_AUTHORED
+"authored"
+#else
+"production"
+#endif
+";end";
 static void arc_build_identity(void)
 {
    if (arc_log) arc_log(RETRO_LOG_INFO,
-      "ArcDroid build: version=%s commit=%s target=%s config=%s gate=closed substitutions=%s catalogue=%s init=%llu\n",
+      "ArcDroid build: version=%s commit=%s target=%s config=%s gate=%s substitutions=%s catalogue=%s init=%llu\n",
       ARCDROID_VERSION, ARC_BUILD_COMMIT, ARC_BUILD_TARGET, ARC_BUILD_CONFIG,
-#if defined(ARCDROID_RPC_LOCKSTEP)
+      /* A volatile byte read keeps the descriptor referenced under ELF GC. */
+      ((const volatile char *)arc_rpc_build_descriptor)[sizeof("ARCDROID-ROUTE-V1:gate=")-1]=='o'?"open":"closed",
+#if ARC_RPC_CATALOGUE_AUTHORED
+      ARC_BUILD_SUBSTITUTIONS[0] ? ARC_BUILD_SUBSTITUTIONS : "authored-catalogue",
+#elif defined(ARCDROID_RPC_LOCKSTEP)
       "lockstep,test-faults,test-plans",
 #elif defined(ARCDROID_RPC_MEASUREMENT)
       "measurement,test-plans",
@@ -6777,7 +6865,9 @@ static void arc_build_identity(void)
 #else
       ARC_BUILD_SUBSTITUTIONS[0] ? ARC_BUILD_SUBSTITUTIONS : "none",
 #endif
-#if defined(ARCDROID_TEST_FAULTS)
+#if ARC_RPC_CATALOGUE_AUTHORED
+      "authored",
+#elif defined(ARCDROID_TEST_FAULTS)
       arc_test_rpc_catalogue ? "test-override" : "production",
 #else
       "production",
@@ -6790,7 +6880,13 @@ static void arc_build_identity(void)
 #endif
 RETRO_API void retro_init(void)
 {
-   if(arc_secondary_instance)return;
+   if (arc_rpc_alias_lifecycle || arc_loaded || arc_rpc_plan_admitted) return;
+   if (arc_secondary_instance || arc_rpc_secondary_instance()) {
+      struct retro_log_callback log = {NULL};
+      if (arc_environment && arc_environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log))
+         arc_log = log.log;
+      return; /* A secondary never replaces frontend registrations. */
+   }
    static const struct retro_disk_control_ext_callback disk = {
       arc_disk_set_eject, arc_disk_get_eject, arc_disk_get_index,
       arc_disk_set_index, arc_disk_get_count, arc_disk_replace,
@@ -6861,6 +6957,7 @@ RETRO_API void retro_init(void)
 
 RETRO_API void retro_deinit(void)
 {
+   if (arc_rpc_alias_lifecycle) { arc_rpc_alias_lifecycle = false; return; }
    if(arc_secondary_instance)return;
    if(arc_state_boundary_finish())arc_persist_cmos();
    arc_release_session();
@@ -7546,6 +7643,100 @@ static void arc_notify_av_change(unsigned width, unsigned height, double rate)
    }
 }
 
+#if ARC_RPC_ORDINARY_LOAD
+static uint64_t arc_rpc_load_entry_ns;
+#endif
+static ArcRpcFrontendOps arc_riscpc_host_ops(void);
+static int arc_rpc_check_selection(const char *firmware_dir,bool ordinary,const char *system_dir,const char *save_dir,uint64_t load_ns)
+{
+
+   size_t rpc_count;
+   const ArcRpcFirmwareFingerprint *rpc_table = arc_riscpc_firmware_catalogue(&rpc_count);
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_rpc_catalogue) { rpc_table=arc_test_rpc_catalogue; rpc_count=arc_test_rpc_catalogue_count; }
+#endif
+   ArcRpcCompatibility rpc_discs[ARC_PLAYLIST_MAX_ENTRIES];
+   bool rpc_scan_needed = false;
+   for (unsigned i=0; i<arc_media_count; ++i) {
+      rpc_discs[i] = arc_media[i].compatibility;
+      if (arc_riscpc_notice_required(rpc_discs[i])) rpc_scan_needed = true;
+   }
+   ArcRpcFirmwareInventory rpc_inventory = {.state=ARC_RPC_INVENTORY_SKIPPED};
+   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(
+      firmware_dir, rpc_table, rpc_count);
+   ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
+      &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
+#if ARC_RPC_ORDINARY_LOAD
+   if(ordinary)arc_rpc_staging_finish(true);
+#endif
+   if (arc_log) {
+      char diagnostic[256];
+      arc_riscpc_selection_diagnostic(&rpc_selection, diagnostic, sizeof(diagnostic));
+#if ARC_RPC_ORDINARY_LOAD
+      if(ordinary){char *mark=strstr(diagnostic,"diagnostic-only ");if(mark)memmove(mark,mark+16,strlen(mark+16)+1);}
+#endif
+      arc_log(RETRO_LOG_INFO, "%s", diagnostic);
+   }
+
+#if ARC_RPC_ORDINARY_LOAD
+   if(ordinary){
+      ArcRpcFrontendOps ops=arc_riscpc_host_ops();ops.load_entry_ns=load_ns;
+      char error[512]={0};
+      arc_rpc_staging_finish(true);
+      arc_kind=ARC_SESSION_KIND_RISCPC;ops.kind=arc_kind;
+      if(rpc_selection.reason!=ARC_RPC_SELECTION_SELECTED){
+         const char *id=arc_riscpc_route_notice(&rpc_selection,&rpc_inventory,error,sizeof(error));
+         arc_release_session();arc_riscpc_host_load_failure(&ops,id,error);return -1;
+      }
+      void *firmware=NULL;size_t firmware_size=0;
+      if(!arc_riscpc_firmware_read(&rpc_inventory,rpc_selection.os,&firmware,&firmware_size)){
+         arc_release_session();arc_riscpc_host_load_failure(&ops,"N-B firmware","RiscPC firmware could not be read and verified. Check <system>/arcdroid/firmware/, then close and reload this content.");return -1;
+      }
+      const ArcRpcFirmwareFingerprint *fingerprint=NULL;
+      for(size_t i=0;i<rpc_count;++i)if(rpc_table[i].os==rpc_selection.os)fingerprint=&rpc_table[i];
+      ArcRpcStorePresence presence=arc_riscpc_store_presence(save_dir,arc_content_digest.sha1);
+      if(presence!=ARC_RPC_STORE_EXISTS){
+         const char *cause=NULL,*id="N-6";
+         if(presence==ARC_RPC_STORE_UNKNOWN){id="N-19";cause="The RiscPC save folder could not be checked. Check that it is readable and choose a native save folder.";}
+         else{
+            static const char *archives[]={"HardDisc4.zip","PlingSystem.zip"};char missing[64]={0};bool unknown=false;
+            for(unsigned i=0;i<2;++i){ArcRpcStorePresence archive=arc_riscpc_boot_archive_presence(system_dir,archives[i]);
+               if(archive==ARC_RPC_STORE_ABSENT){if(*missing)strcat(missing," and ");strcat(missing,archives[i]);}
+               else if(archive!=ARC_RPC_STORE_EXISTS)unknown=true;}
+            if(unknown){id="N-20";cause="The RiscPC boot archives could not be checked. Use readable HardDisc4.zip and PlingSystem.zip files.";}
+            else if(*missing){snprintf(error,sizeof(error),"First use of a RiscPC title needs %s in <system>/arcdroid/riscpc/boot/. Add the missing files, then close and reload this content.",missing);cause=error;}
+         }
+         if(cause){free(firmware);char text[512];snprintf(text,sizeof(text),"%s",cause);arc_release_session();arc_riscpc_host_load_failure(&ops,id,text);return -1;}
+      }
+      ArcMediaEntry *entry=&arc_media[0];
+      if(!arc_refresh_jfd(entry,arc_core_options.disk_writes,arc_core_options.jfd_write_policy,error,sizeof(error))){free(firmware);arc_release_session();arc_riscpc_host_load_failure(&ops,"N-B attach","The selected disc could not be loaded. Check that the file is complete and a supported type.");return -1;}
+      arc_finish_jfd_preparation(entry,true,arc_core_options.jfd_write_policy);
+      ArcEngineMedia media=arc_engine_media(entry);
+      ArcRpcPreparationRequest request={.firmware=firmware,.firmware_size=firmware_size,.fingerprint=fingerprint,
+         .selection=rpc_selection,.save=save_dir,.system=system_dir,.media=&media,.hard_disc=true,.populate=true,.ordinary=true,.session_id=arc_session_id};
+      request.key.model=(unsigned)rpc_selection.model-1;request.key.layout=rpc_selection.os==ARC_RPC_OS_350?1:rpc_selection.os==ARC_RPC_OS_360?2:3;
+      snprintf(request.key.content,sizeof(request.key.content),"%s",arc_content_digest.sha1);
+      if(!arc_riscpc_route_epoch(&request.epoch)){free(firmware);arc_release_session();arc_riscpc_host_load_failure(&ops,"N-21","The local clock could not be used for RiscPC settings. Check the system clock, then close and reload this content.");return -1;}
+      arc_plan.disk_writes=arc_core_options.disk_writes;
+      arc_rpc_host=arc_riscpc_host_begin(&request,&ops,error,sizeof(error));free(firmware);
+      if(!arc_rpc_host){arc_release_session();return -1;}
+      arc_rpc_preparation_route=true;arc_loaded=true;arc_ejected=false;arc_session=ARC_SESSION_RUNNING;
+      arc_video_width=ARC_WIDTH;arc_video_height=ARC_HEIGHT;arc_video_rate=60.0;
+      arc_frame_number=arc_audio_fraction=arc_rpc_fault_audio_fraction=0;
+      arc_fault_reported=arc_rpc_av_attempted=false;
+      static const struct retro_controller_description types[]={{"RiscPC keys and pointer",ARC_DEVICE_KEYS},{"RiscPC mouse",ARC_DEVICE_MOUSE}};
+      static const struct retro_controller_info ports[]={{types,2},{types,2},{NULL,0}};
+      arc_environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO,(void *)ports);
+      (void)arc_resolve_inputs(&arc_core_options,true);arc_io_set_write_observer(arc_disc_write_observer);
+      if(arc_log)arc_log(RETRO_LOG_INFO,"RPC options: ignored=Hard Disc,ADFFS,JFD Boot,A3010 joystick,Launch,Chooser,RAM disc\n");
+      return 1;
+   }
+#else
+   (void)ordinary;(void)system_dir;(void)save_dir;(void)load_ns;
+#endif
+   return 0;
+}
+
 static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
 {
    enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -7631,20 +7822,48 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_io_set_vfs(arc_state_io_attach(arc_vfs));
    strcpy(arc_save_path, save_dir);
    arc_riscpc_notice_shown = false;
+#if ARC_RPC_ORDINARY_LOAD
+   bool rpc_auto=arc_core_options.machine_auto && arc_core_options.cpu_auto && arc_core_options.requested_os==ARC_OS_UNKNOWN;
+   if(rpc_auto)arc_rpc_staging_begin();
+#endif
    if (!arc_prepare_media_list(game->path, arc_core_options.disk_writes,
                                error, sizeof(error)))
    {
       arc_message(error, RETRO_LOG_ERROR);
+#if ARC_RPC_ORDINARY_LOAD
+      arc_rpc_staging_finish(arc_rpc_staging.flagged);
+#endif
       arc_release_session();
       return false;
    }
    arc_image_index = 0u;
+#if ARC_RPC_ORDINARY_LOAD
+   bool flagged=false;for(unsigned i=0;i<arc_media_count;++i)flagged|=arc_riscpc_notice_required(arc_media[i].compatibility);
+   if(rpc_auto && flagged){
+      arc_kind=ARC_SESSION_KIND_RISCPC;
+      if(!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,&system_dir) || !system_dir || !*system_dir || strlen(system_dir)>=sizeof(arc_system_path) ||
+         snprintf(firmware_dir,sizeof(firmware_dir),"%s/arcdroid/firmware",system_dir)<0 || strlen(system_dir)+18>=sizeof(firmware_dir)){
+         arc_rpc_staging_finish(true);ArcRpcFrontendOps ops=arc_riscpc_host_ops();ops.load_entry_ns=arc_rpc_load_entry_ns;arc_release_session();
+         arc_riscpc_host_load_failure(&ops,"N-5","ArcDroid cannot find or read <system>/arcdroid/firmware/. Create that folder and add your RiscPC firmware, or check that it is readable.");return false;
+      }
+      strcpy(arc_system_path,system_dir);
+      return arc_rpc_check_selection(firmware_dir,true,system_dir,save_dir,arc_rpc_load_entry_ns)>0;
+   }
+   arc_rpc_staging_finish(false);
+#endif
    bool has_hd_media = false;
    for (unsigned i = 0u; i < arc_media_count; ++i)
       if (arc_media_is_hd(&arc_media[i])) has_hd_media = true;
    arc_session_machine = arc_core_options.machine_auto ?
       (has_hd_media ? ARC_MACHINE_A3020 : ARC_MACHINE_A3000) :
       arc_core_options.requested_machine;
+#if ARC_RPC_ORDINARY_LOAD
+   if(arc_rpc_override_pending){
+      arc_rpc_override_pending=false;
+      char text[256];snprintf(text,sizeof(text),"This title is flagged for RiscPC-class machines; starting on %s because it is selected in core options.",arc_machine_descriptor(arc_session_machine)->name);
+      arc_message(text,RETRO_LOG_WARN);if(arc_log)arc_log(RETRO_LOG_INFO,"N-9: %s\n",text);
+   }
+#endif
    if (has_hd_media &&
        arc_machine_descriptor(arc_session_machine)->io != ARC_IO_NEW_82C711)
    {
@@ -7684,28 +7903,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    strcpy(arc_system_path, system_dir);
-   /* R3a has no authority over the legacy search, options, ownership or plan. */
-   size_t rpc_count;
-   const ArcRpcFirmwareFingerprint *rpc_table = arc_riscpc_firmware_catalogue(&rpc_count);
-#if defined(ARCDROID_TEST_FAULTS)
-   if (arc_test_rpc_catalogue) { rpc_table=arc_test_rpc_catalogue; rpc_count=arc_test_rpc_catalogue_count; }
-#endif
-   ArcRpcCompatibility rpc_discs[ARC_PLAYLIST_MAX_ENTRIES];
-   bool rpc_scan_needed = false;
-   for (unsigned i=0; i<arc_media_count; ++i) {
-      rpc_discs[i] = arc_media[i].compatibility;
-      if (arc_riscpc_notice_required(rpc_discs[i])) rpc_scan_needed = true;
-   }
-   ArcRpcFirmwareInventory rpc_inventory = {.state=ARC_RPC_INVENTORY_SKIPPED};
-   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(
-      firmware_dir, rpc_table, rpc_count);
-   ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
-      &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
-   if (arc_log) {
-      char diagnostic[256];
-      arc_riscpc_selection_diagnostic(&rpc_selection, diagnostic, sizeof(diagnostic));
-      arc_log(RETRO_LOG_INFO, "%s", diagnostic);
-   }
+   (void)arc_rpc_check_selection(firmware_dir,false,system_dir,save_dir,0);
    search.requested_os = arc_core_options.requested_os;
    search.machine = arc_core_options.machine;
    arc_io_walk(firmware_dir, 8u, arc_visit_firmware, &search);
@@ -7975,7 +8173,12 @@ static bool arc_rpc_stage_safe(void *opaque,const char *content,const char *help
 static void arc_riscpc_host_log(void *opaque,enum retro_log_level level,const char *text)
 {(void)opaque;if(arc_log)arc_log(level,"%s\n",text);}
 static bool arc_rpc_attach(void *opaque,char *error,size_t n)
-{(void)opaque;if(error&&n)*error=0;arc_loaded=true;arc_session=ARC_SESSION_RUNNING;arc_io_set_write_observer(arc_disc_write_observer);return true;}
+{(void)opaque;if(error&&n)*error=0;arc_loaded=true;arc_session=ARC_SESSION_RUNNING;arc_io_set_write_observer(arc_disc_write_observer);
+#if ARC_RPC_ORDINARY_LOAD
+ if(!arc_rpc_plan_admitted && arc_log){unsigned cells=0;for(unsigned bit=1;bit<=128;bit<<=1)if(arc_engine_rpc_observers_capability(bit))cells|=bit;
+    arc_log(RETRO_LOG_INFO,"RPC route: production-observer-cells=%u\n",cells);}
+#endif
+ return true;}
 static void arc_rpc_diagnostics(void *opaque)
 {(void)opaque;arc_engine_rpc_diagnostics();}
 static bool arc_rpc_reset_rebind(void *opaque,char *error,size_t n)
@@ -8143,7 +8346,14 @@ static void arc_plan_log(const char *message) { if(arc_log)arc_log(RETRO_LOG_ERR
 #endif
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
-   if(arc_secondary_instance)return false;
+   if(arc_loaded || arc_rpc_plan_admitted || arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance()) {
+      /* R-SS3g: all content and both gate states, before any release/staging. */
+      if(arc_log)arc_log(RETRO_LOG_INFO,"RPC secondary load refused before preparation, guest execution and writable stores.\n");
+      return false;
+   }
+#if ARC_RPC_ORDINARY_LOAD
+   arc_rpc_load_entry_ns=arc_riscpc_preparation_clock(NULL);
+#endif
 #if defined(ARCDROID_TEST_PLANS)
    if (game && arc_test_plan_path(game->path)) {
       uint64_t load_entry_ns=arc_riscpc_preparation_clock(NULL);
@@ -8208,6 +8418,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 
 RETRO_API void retro_unload_game(void)
 {
+   if (arc_rpc_alias_lifecycle) return;
    if(arc_secondary_instance)return;
    if(arc_state_boundary_finish()) {arc_boot_persist_seed();arc_persist_cmos();}
    if (arc_engine_active() && arc_log)
@@ -8231,6 +8442,7 @@ RETRO_API void retro_unload_game(void)
 }
 RETRO_API void retro_reset(void)
 {
+   if (arc_rpc_alias_lifecycle) return;
    if(arc_secondary_instance)return;
    if(arc_rpc_preparation_route){
       arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
@@ -8271,11 +8483,11 @@ RETRO_API void retro_reset(void)
       memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_input_sampling_reset(false);
       arc_guest_time_us=0;
-      if(!arc_engine_reset(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+      if(!arc_engine_reset(error,sizeof(error)))arc_message("The RiscPC could not restart. Close and reload this content.",RETRO_LOG_ERROR);
 #if defined(ARCDROID_TEST_FAULTS)
       else {
 #if defined(ARCDROID_TEST_PLANS)
-         if(!arc_rpc_plan_reset_media(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+         if(!arc_rpc_plan_reset_media(error,sizeof(error)))arc_message("The RiscPC could not restart. Close and reload this content.",RETRO_LOG_ERROR);
 #endif
          arc_test_plan_reset_input();
       }
@@ -8665,7 +8877,7 @@ static void arc_rpc_present_run(void)
       const char *fault = NULL;
       if (!arc_fault_reported && arc_engine_faulted(&fault))
       {
-         if(!arc_rpc_preparation_route)arc_message(fault && fault[0] ? fault : "The emulated machine faulted.", RETRO_LOG_ERROR);
+         if(!arc_rpc_preparation_route)arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"The emulated RiscPC stopped. Close and reload this content.":fault && fault[0] ? fault : "The emulated machine faulted.", RETRO_LOG_ERROR);
          arc_fault_reported = true;
       }
       memset(&frame, 0, sizeof(frame));
@@ -8740,6 +8952,7 @@ static void arc_rpc_present_run(void)
 
 static void arc_run(void)
 {
+   if (arc_rpc_alias_lifecycle) return;
    arc_state_boundary_frame();
    if(arc_rpc_preparation_route){
 #if defined(ARCDROID_TEST_PLANS)
@@ -8945,7 +9158,7 @@ static void arc_run(void)
       const char *fault = NULL;
       if (!arc_fault_reported && arc_engine_faulted(&fault))
       {
-         if(!arc_rpc_preparation_route)arc_message(fault && fault[0] ? fault : "The emulated machine faulted.", RETRO_LOG_ERROR);
+         if(!arc_rpc_preparation_route)arc_message(arc_kind==ARC_SESSION_KIND_RISCPC?"The emulated RiscPC stopped. Close and reload this content.":fault && fault[0] ? fault : "The emulated machine faulted.", RETRO_LOG_ERROR);
          arc_fault_reported = true;
       }
       memset(&frame, 0, sizeof(frame));
@@ -9054,7 +9267,7 @@ static void arc_run(void)
 
 RETRO_API void retro_run(void)
 {
-   if(arc_secondary_instance||arc_state_rollback_failed)return;
+   if(arc_secondary_instance||arc_rpc_alias_lifecycle||arc_state_rollback_failed)return;
    /* Callback restoration alone never finalizes a speculative execution. */
    if(arc_state_speculation&&arc_input_poll==arc_state_real_poll)return;
    arc_state_inside_run=true;arc_run();
@@ -9114,11 +9327,11 @@ static size_t arc_snapshot_session_bound(const ArcMachineDescriptor *machine)
 }
 static bool arc_snapshot_available(void)
 {
-   return !arc_secondary_instance&&!arc_state_inside_run&&arc_loaded&&arc_kind==ARC_SESSION_KIND_ARCULATOR&&arc_engine_active()&&arc_state_capacity;
+   return !arc_secondary_instance&&!arc_rpc_alias_lifecycle&&!arc_state_inside_run&&arc_loaded&&arc_kind==ARC_SESSION_KIND_ARCULATOR&&arc_engine_active()&&arc_state_capacity;
 }
 RETRO_API size_t retro_serialize_size(void)
 {
-   if(arc_secondary_instance||!arc_loaded||arc_kind!=ARC_SESSION_KIND_ARCULATOR)return 0u;
+   if(arc_secondary_instance||arc_rpc_alias_lifecycle||!arc_loaded||arc_kind!=ARC_SESSION_KIND_ARCULATOR)return 0u;
    return arc_state_capacity;
 }
 RETRO_API bool retro_serialize(void *data,size_t size)
@@ -9148,6 +9361,7 @@ RETRO_API bool retro_serialize(void *data,size_t size)
 }
 RETRO_API bool retro_unserialize(const void *data,size_t size)
 {
+   if(arc_secondary_instance || arc_rpc_alias_lifecycle)return false;
    if(arc_state_rollback_failed)return false;
    /* Pessimistic until commit, including every early refusal path. */
    if(arc_state_speculation)arc_state_rollback_failed=true;
@@ -9213,6 +9427,7 @@ RETRO_API bool retro_load_game_special(unsigned type, const struct retro_game_in
 { (void)type; (void)info; (void)count; return false; }
 RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
 {
+   if(arc_secondary_instance || arc_rpc_alias_lifecycle)return;
    if (port >= 2u) return;
    if (device == RETRO_DEVICE_NONE || device == RETRO_DEVICE_JOYPAD ||
        device == RETRO_DEVICE_MOUSE || device == ARC_DEVICE_KEYS ||

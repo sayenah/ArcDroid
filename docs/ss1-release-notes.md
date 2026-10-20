@@ -9,14 +9,10 @@ all-floppy bound is 16,638,196 bytes, below 16 MiB and small enough for
 RetroArch 1.22.2's default 20,000,000-byte rewind-buffer initialization.
 Native hard-disc sessions reserve a larger buffer and require a larger rewind
 setting. Local tests are evidence, not approval to ship.
-The copied-module isolation proof still does not cover Android API 21–22
-loaders that alias the copy to the primary.
-
-R-SS3g replaces the proposed Android version restriction; no API-level switch
-is added. After R3d-4 merges, its R-1a guard must extend to both gate states and
-every Archimedes load. That guard refuses loads over a live session and ignores
-nested secondary lifecycle calls, including aliased legacy Android modules.
-Current distinct-module handling remains unchanged until that integration.
+Run L integrates R3d-4's R-1a lifecycle guard in both gate states and every
+Archimedes load. It refuses loads over a live session and ignores nested
+secondary lifecycle calls, including aliased legacy Android modules. R-SS3g
+replaces the proposed Android version restriction; no API-level switch is used.
 
 Arculator save/load and single-instance run-ahead use a fixed session buffer.
 RiscPC states remain unavailable. The launch chooser reports the admitted bound
@@ -59,3 +55,6 @@ Presented pixels may differ in host picture content until scanout rewrites it,
 including both interlace parities and retained tails; no one-field convergence
 limit is promised. The original full-buffer save/load/save byte identity remains
 required; output spare capacity is zeroed (R-SS4d).
+
+Distinct copies are identified when the frontend supplies GET_LIBRETRO_PATH.
+Legitimate content switches unload first; outgoing CMOS publication is preserved.

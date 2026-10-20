@@ -283,6 +283,12 @@ bool arc_engine_active(void)
    return arc_backend->active();
 }
 
+bool arc_engine_rpc_calendar_year(uint64_t epoch,unsigned *year)
+{
+    ArcRpcCalendar calendar;
+    if(!year || !arc_rpc_calendar(epoch,0,&calendar))return false;
+    *year=calendar.year;return true;
+}
 bool arc_engine_rpc_start_begin(unsigned model,const uint8_t *rom,size_t size,
     const uint8_t seed[256],uint64_t epoch,bool factory,char *e,size_t n)
 {
@@ -321,7 +327,7 @@ void arc_engine_rpc_observers_bind(unsigned catalogue)
 {
     if(!arc_engine_is_rpc())return;
     ArcDigest digest;size_t count=0;unsigned actual=0;
-    const ArcRpcFirmwareFingerprint *table=arc_riscpc_firmware_catalogue(&count);
+    const ArcRpcFirmwareFingerprint *table=arc_riscpc_production_catalogue(&count);
     if(arc_rpc_session_firmware(&digest)){
         const ArcRpcFirmwareFingerprint *fingerprint=arc_riscpc_firmware_recognize(&digest,table,count);
         if(fingerprint)actual=(unsigned)fingerprint->os;

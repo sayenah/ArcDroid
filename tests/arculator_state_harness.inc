@@ -322,7 +322,7 @@ if(ss1_mode) {
             assert(!retro_load_game(&game)&&!retro_serialize_size());uint8_t poison[64];memset(poison,0xa7,sizeof(poison));
             assert(!retro_serialize(poison,sizeof(poison))&&!retro_unserialize(poison,sizeof(poison)));
             retro_run();retro_reset();retro_cheat_set(0,true,"authored");retro_cheat_reset();retro_unload_game();retro_deinit();
-            assert(!ss1_secondary_calls&&!ss1_context_queries&&before==ss1_native_mutations);
+            assert(!ss1_secondary_calls&&ss1_secondary_log_queries&&!ss1_context_queries&&before==ss1_native_mutations);
             assert(!memcmp(&primary_disk,&disk_control,sizeof(primary_disk)));assert(!dlclose(secondary));assert(!remove(copy));
          }
          retro_run();assert(write_cmos(216u,0x52));persist();assert(ss1_native_mutations>before);

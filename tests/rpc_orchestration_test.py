@@ -4,6 +4,7 @@ import struct,subprocess,sys,tempfile
 from rpc_boot_packages_test import inputs, package, BASE
 from rpc_cmos_factory_rom import generate, factory
 from rpc_launch_controller_guest import firmware
+from rpc_year_rom import factory_calendar_reader
 exe,fixtures,profile=sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-') as temp:
     root=Path(temp)
@@ -19,6 +20,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-') as temp:
     roms=generate(root/'roms')
     (system/'guest-return.rom').write_bytes(firmware(b''))
     (system/'guest-reset.rom').write_bytes(firmware(b'',failure='reset-during'))
+    words=factory_calendar_reader()
+    (system/'calendar.rom').write_bytes(struct.pack('<%dI'%len(words),*words)+struct.pack('<I',0xeafffffe)*(524288-len(words)))
     if profile in ('sanitizer','mutant-idle','host-b'):
         # Keep the complete factory write sequence and 45 s oracle, but idle
         # on a production SA-110 after the last payload write. The ordinary

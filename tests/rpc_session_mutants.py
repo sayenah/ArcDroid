@@ -25,7 +25,7 @@ mutants=[
  ('rpc-log-callback','engine/arcdroid_engine.c','arc_rpc_backend.set_log_callback(callback ? arc_test_log_proxy : NULL, NULL);','(void)0;'),
  ('frontend-empty-kind','libretro/arcdroid_libretro.c','arc_kind = ARC_SESSION_KIND_EMPTY;','(void)0;'),
  ('rpc-storage-notice-dedup','libretro/arcdroid_libretro.c','if (fresh) {','if (fresh && !arc_rpc_refusal_noticed) {'),
- ('rpc-write-observer','libretro/arcdroid_libretro.c','arc_io_set_write_observer(arc_disc_write_observer);','(void)0;',5),
+ ('rpc-write-observer','libretro/arcdroid_libretro.c','arc_io_set_write_observer(arc_disc_write_observer);','(void)0;',6),
  ('rpc-max-geometry','libretro/arcdroid_libretro.c','info->geometry.max_width = 4096u;','info->geometry.max_width = arc_kind == ARC_SESSION_KIND_RISCPC ? 2048u : 4096u;'),
  ('raw-deleted-refusal','engine/rpc/rpc_floppy.c','{refused(d,r,"deleted-data");return ARC_RPC_FLOPPY_WRITE_PROTECT;}','{return ARC_RPC_FLOPPY_WRITE_PROTECT;}'),
  ('raw-storage-warning','engine/rpc/rpc_floppy.c','storage_failures|=1u<<drive;','',2),
@@ -40,8 +40,10 @@ mutants += [
  ('arc-log-only-if-current','engine/arcdroid_engine.c','   arc_arculator_backend.set_log_callback(callback, opaque);','   if (arc_backend == &arc_arculator_backend) arc_arculator_backend.set_log_callback(callback, opaque);'),
  ('refusal-info-every-frame','libretro/arcdroid_libretro.c','else if (arc_rpc_refusal_pending && !arc_rpc_refusal_noticed)','else if (arc_rpc_refusal_pending)'),
  ('plan-clear-retains-terminal','libretro/rpc_preparation_host.c','*h->progress=*h->terminal=*h->advisory=*h->logged_progress=0;','*h->progress=*h->advisory=*h->logged_progress=0;'),
- ('plan-switch-loses-cmos','libretro/arcdroid_libretro.c','      if (arc_loaded) arc_persist_cmos();',''),
- ('plan-switch-publishes-seed','libretro/arcdroid_libretro.c','      if (arc_loaded) arc_persist_cmos();','      arc_boot_persist_seed(); arc_persist_cmos();'),
+ # R-1a makes implicit replacement unreachable. Preserve the persistence
+ # killers at the legitimate unload boundary and the new live-load barrier.
+ ('unload-loses-cmos','libretro/arcdroid_libretro.c','if(arc_state_boundary_finish()) {arc_boot_persist_seed();arc_persist_cmos();}','if(arc_state_boundary_finish()) {arc_boot_persist_seed();}'),
+ ('live-reload-admitted','libretro/arcdroid_libretro.c','if(arc_loaded || arc_rpc_plan_admitted || arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance())','if(arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance())'),
 ]
 import re
 front=(root/'libretro/arcdroid_libretro.c').read_text()
@@ -97,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix='arc-session-mutants-') as directory:
             result=subprocess.run([str(video),str(library),'--paths','0'],capture_output=True,text=True,timeout=60)
             killed=result.returncode!=0
         else:
-            try:run(exe,library,fixtures,'guards' if label.startswith('guard-') else 'qa-lows' if label in ('arc-refusal-only-if-current','arc-log-only-if-current','plan-switch-loses-cmos','plan-switch-publishes-seed') else 'probe');killed=False
+            try:run(exe,library,fixtures,'guards' if label.startswith('guard-') else 'qa-lows' if label in ('arc-refusal-only-if-current','arc-log-only-if-current','unload-loses-cmos','live-reload-admitted') else 'probe');killed=False
             except RuntimeError:killed=True
         if not killed:raise RuntimeError('session mutant survived: '+label)
         print('session mutant killed: '+label,flush=True)
@@ -116,4 +118,5 @@ with tempfile.TemporaryDirectory(prefix='arc-session-id-mutants-') as directory:
         result=subprocess.run([str(binary)],capture_output=True,timeout=30)
         if not result.returncode:raise RuntimeError('allocator mutant survived: '+label)
         print('session allocator mutant killed: '+label,flush=True)
-print('Equivalent isolated reversions: frontend policy predicates to the lifecycle-aware engine query after successful admission; raw observer installation at either one of its two RPC sites; these cannot recreate stale backend identity alone. The ten persistence guard reversions now have independent behavioural killers. Removing only the explicit RPC release notice clear is masked by preparation_free calling the same clear; the retained-terminal mutation tests that operation directly; the stopped/failed-start/chooser behavioural mutations above and the source guard cover their boundaries.')
+print('Equivalent isolated reversions: frontend policy predicates to the lifecycle-aware engine query after successful admission; an isolated redundant raw observer installation; these cannot recreate stale backend identity alone. The ten persistence guard reversions now have independent behavioural killers. Removing only the explicit RPC release notice clear is masked by preparation_free calling the same clear; the retained-terminal mutation tests that operation directly; the stopped/failed-start/chooser behavioural mutations above and the source guard cover their boundaries.')
+print('R-1a: the former plan-load CMOS loss/seed-publication mutations are unreachable under legal unload-before-load sequences. Their behavioural obligations are now checked by unload-loses-cmos and live-reload-admitted; no dead mutation is claimed killed.')

@@ -150,20 +150,29 @@ static void h_persistence_guards(const char *arc_path)
 }
 static void h_switch_persistence(const char *arc_path,const char *chooser,const char *rpc_path)
 {
-    uint8_t reference[256];
+    uint8_t reference[2][256];
     for(unsigned plan=0;plan<2;++plan)for(unsigned choice=0;choice<2;++choice){
         h_launch=choice?"auto":"off";
         struct retro_game_info outgoing=h_game(choice?chooser:arc_path);assert(h_load(&outgoing));
         char path[4096];snprintf(path,sizeof(path),"%s/arcdroid/cmos/switch-%u-%u",save_directory,plan,choice);
         assert(!h_guard(choice?3:2,0,path)); /* Pending chooser seed or dirty CMOS. */
-        h_launch="off";struct retro_game_info next=h_game(plan?rpc_path:arc_path);assert(h_load(&next));
-        FILE *file=fopen(path,"rb");
-        if(choice)assert(!file); /* Neither load publishes a pending seed. */
-        else {uint8_t bytes[256];assert(file&&fread(bytes,1,sizeof(bytes),file)==sizeof(bytes));assert(!fclose(file));
-            if(!plan)memcpy(reference,bytes,sizeof(bytes));else assert(!memcmp(reference,bytes,sizeof(bytes)));}
+        struct retro_game_info next=h_game(plan?rpc_path:arc_path);
+        unsigned reads=h_vfs_reads,writes=h_vfs_writes;
+        assert(!h_load(&next)); /* R-1a refuses implicit replacement before effects. */
+        assert(reads==h_vfs_reads&&writes==h_vfs_writes);
+        FILE *file=fopen(path,"rb");assert(!file);
+        h_unload(); /* The established unload contract publishes the chooser seed. */
+        uint8_t bytes[256];file=fopen(path,"rb");
+        assert(file&&fread(bytes,1,sizeof(bytes),file)==sizeof(bytes));assert(!fclose(file));
+        if(!plan)memcpy(reference[choice],bytes,sizeof(bytes));
+        else assert(!memcmp(reference[choice],bytes,sizeof(bytes)));
+        h_launch="off";assert(h_load(&next));
+        file=fopen(path,"rb");uint8_t after[256];
+        assert(file&&fread(after,1,sizeof(after),file)==sizeof(after));assert(!fclose(file));
+        assert(!memcmp(bytes,after,sizeof(bytes))); /* Admission cannot alter the old store. */
         h_unload();h_empty();
     }
-    puts("switch-persistence: ordinary/plan CMOS bytes equal; chooser seed unpublished");
+    puts("switch-persistence: live replacement inert; explicit unload CMOS/seed bytes equal; admission preserves old store");
 }
 static void h_arculator_callbacks(const char *arc_path)
 {
@@ -218,7 +227,7 @@ int main(int argc,char **argv)
                 if(!scenario){settle(h_run);h_run();}
                 struct retro_system_av_info av;h_av(&av);
                 printf("switch-projection:%u:rpc base=%ux%u max=%ux%u fps=%.0f\n",scenario,av.geometry.base_width,av.geometry.base_height,av.geometry.max_width,av.geometry.max_height,av.timing.fps);
-                char path[4096];snprintf(path,sizeof(path),"%s/arc.adf",system_directory);struct retro_game_info arc=h_game(path);assert(h_load(&arc));
+                h_unload();char path[4096];snprintf(path,sizeof(path),"%s/arc.adf",system_directory);struct retro_game_info arc=h_game(path);assert(h_load(&arc));
                 h_av(&av);printf("switch-projection:%u:arc base=%ux%u max=%ux%u fps=%.0f\n",scenario,av.geometry.base_width,av.geometry.base_height,av.geometry.max_width,av.geometry.max_height,av.timing.fps);
                 h_hash=UINT64_C(14695981039346656037);h_video_calls=h_audio_calls=0;
                 for(unsigned i=0;i<4;++i)h_run();
@@ -340,7 +349,9 @@ int main(int argc,char **argv)
             h_fail_flush=false;assert(h_flush_failures==1&&h_refusal_logs==1&&h_storage_notices==1);
             for(unsigned i=0;i<4;++i)h_run();assert(h_ram(0x20000,&marker)&&marker==4);
             assert(h_refusal_logs==1&&h_refusal_notices==1&&h_storage_notices==1);
-            if(!repeat){h_bind();h_empty();}else{h_unload();h_empty();}
+            /* RetroArch tears down before a fresh init; an init of a live
+             * aliased library must preserve its primary session (R-1a). */
+            if(!repeat){h_deinit();h_bind();h_empty();}else{h_unload();h_empty();}
         }
         /* Guest FORMAT changes the cached name used by signal-A automatic
          * replacement. The cache was populated before any guest instruction. */

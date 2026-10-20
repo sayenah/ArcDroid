@@ -10,8 +10,10 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
     root=Path(temporary);system=root/'system';roms=generate(system)
     firmware=system/'arcdroid/firmware';firmware.mkdir(parents=True)
     shutil.copyfile(Path(fixtures)/'arcdroid-test.rom',firmware/'authored.data')
+    if mode=='shipping-override-os':
+        shutil.copyfile(Path(fixtures)/'arcdroid-unsupported-launch-test.rom',firmware/'authored.data')
     content=root/'authored.jfd';image=bytearray(build_extended_jfd(bytes(256),b'Authored host fixture'))
-    struct.pack_into('<I',image,304,(20<<8)|(12<<16));content.write_bytes(image)
+    struct.pack_into('<I',image,304,0 if mode=='shipping-legacy' else (20<<8)|(12<<16));content.write_bytes(image)
     seed=system/'seed';seed.write_bytes(bytes(256))
     (system/'direct.arcplan').write_text(f'version=1\nmodel=sa110\nfirmware={roms/"full.rom"}\ncmos=seed\nseed={seed}\nrate_mips=1\nrtc_epoch=0\n')
     selected_rom=roms/'full.rom'
@@ -43,21 +45,33 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
     outputs=[];stores=[]
     for i,library in enumerate([core,*extra]):
         save=root/(f'HOST-PRIVATE-SENTINEL-save{i}' if mode.startswith(('freeze','message-')) else f'save{i}');save.mkdir()
-        command=[exe,library,str(content if mode=='shipping' else plan),str(system),str(save),mode]
-        if mode!='shipping':
+        command=[exe,library,str(content if mode.startswith('shipping') else plan),str(system),str(save),mode]
+        if not mode.startswith('shipping'):
             copied=root/('secondary'+Path(library).suffix);shutil.copyfile(library,copied);command.append(str(copied))
         env=dict(os.environ)
-        if mode!='shipping':
+        if not mode.startswith('shipping'):
             # Deliberate dlopen of a copied C module; duplicate exported global
             # names are expected. Memory and undefined-behaviour checks stay on.
             env['ASAN_OPTIONS']=env.get('ASAN_OPTIONS','')+':detect_odr_violation=0'
         run=subprocess.run(command,capture_output=True,text=True,timeout=120,env=env)
         assert run.returncode==0,run.stdout+run.stderr
-        outputs.append(run.stdout.replace(str(save),'<save>').replace(str(root),'<case>'))
+        output=run.stdout
+        if mode.startswith('shipping-override'):
+            old='This title is flagged for RiscPC-class machines (StrongARM/RISC OS 3.5+), which ArcDroid does not emulate; booting anyway.'
+            new='This title is flagged for RiscPC-class machines; starting on A3000 because it is selected in core options.'
+            if not extra or i:
+                lines=output.splitlines()
+                assert sum(line==f'log:1:N-9: {new}' for line in lines)==1,output
+                assert sum(line.startswith('message:') and line.endswith(':'+new) for line in lines)==1,output
+                assert old not in output,output
+            else:assert 'N-9:' not in output and old in output,output
+            output='\n'.join(line for line in output.split('\n') if 'N-9:' not in line and new not in line and old not in line)
+        outputs.append(output.replace(str(save),'<save>').replace(str(root),'<case>'))
         stores.append(save_snapshot(save))
     if extra:
         assert outputs[0]==outputs[1], '\n'.join(__import__('difflib').unified_diff(outputs[0].splitlines(),outputs[1].splitlines()))
-        assert stores[0]==stores[1] and stores[0]
+        assert stores[0]==stores[1] and stores[0], 'save projection differs: '+repr(sorted(name for name in stores[0].keys()|stores[1].keys() if stores[0].get(name)!=stores[1].get(name)))
         assert not any('riscpc' in name for name in stores[0])
-        print(f'shipping ordinary RPC-flagged content: complete log/message/AV/media/audio projection and {len(stores[0])} persisted/staged files byte-identical; G-3 excluded')
+        label='unflagged' if mode=='shipping-legacy' else 'RPC-flagged'
+        print(f'shipping ordinary {label} content: complete log/message/AV/media/audio projection and {len(stores[0])} persisted/staged files byte-identical; G-3 excluded')
     else:print(outputs[0],end='')

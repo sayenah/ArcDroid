@@ -109,7 +109,7 @@ static bool av_rate_changed_during_measure;
 static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
 static const char *ss1_primary_path;
-static unsigned ss1_context_queries,ss1_secondary_calls;
+static unsigned ss1_context_queries,ss1_secondary_calls,ss1_secondary_log_queries;
 static bool ss1_context_capability=true;
 static uint64_t ss1_quirks;
 static unsigned ss1_quirks_calls;
@@ -2582,11 +2582,16 @@ static void stick_write_trace(FILE *file, const char *leg,
 
 #include "arculator_state_test_io.h"
 
-/* A copied core may ask only for the primary module identity. In particular
+/* A copied core may ask for its module identity and diagnostic logger. In particular
  * no frontend registrations, writable VFS request or CMOS preparation is allowed. */
 static bool ss1_secondary_environment(unsigned command,void *data)
 {
    if(command==RETRO_ENVIRONMENT_GET_LIBRETRO_PATH){*(const char **)data=ss1_primary_path;return true;}
+   if(command==RETRO_ENVIRONMENT_GET_LOG_INTERFACE){
+      /* This separate library is initializing while the primary is RUNNING.
+       * Answer its read-only query without changing the primary phase. */
+      ++ss1_secondary_log_queries;((struct retro_log_callback *)data)->log=frontend_log;return true;
+   }
    ++ss1_secondary_calls;return environment(command,data);
 }
 int main(int argc, char **argv)
@@ -8857,6 +8862,14 @@ int main(int argc, char **argv)
    retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    phase = PHASE_RUN; retro_run();
+   /* AC-L2: a rejected replacement keeps the live primary. Preserve the
+    * separate empty-session failure/blank-frame oracle by unloading explicitly. */
+   unsigned live_refusal_files=open_files,live_refusal_dirs=open_dirs;
+   struct retro_disk_control_ext_callback live_refusal_disks=disk_control;
+   phase = PHASE_LOAD; assert(!retro_load_game(&bad_game));
+   assert(open_files==live_refusal_files && open_dirs==live_refusal_dirs &&
+          !memcmp(&disk_control,&live_refusal_disks,sizeof(disk_control)));
+   retro_unload_game();
    unsigned blank_before = video_frames;
    unsigned fault_vidc_info_before = vidc_info_log_lines;
    unsigned fault_vidc_warning_before = vidc_warning_log_lines;
@@ -8961,6 +8974,10 @@ int main(int argc, char **argv)
           !memcmp(preserved_cmos_record,
                   preserved_cmos_identity, sizeof(preserved_cmos_identity)));
    option_joystick = "Keyboard";
+   /* AC-L2: the rejected reset retained a live session. Replacing it also
+    * refuses until an explicit unload, in both gate states. */
+   phase = PHASE_LOAD; assert(!retro_load_game(&game));
+   retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    retro_unload_game();
    assert((launch_options_seen & 31u) == 31u);

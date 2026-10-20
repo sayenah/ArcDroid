@@ -9,7 +9,7 @@ static const ArcRpcFirmwareFingerprint catalogue[] = {
    {ARC_RPC_OS_370, 4194304u, UINT32_C(0x63fc131a), "71cbc9f12debaa7aa2aeb91d38682e6c5c4a34a5"},
    {ARC_RPC_OS_371, 4194304u, UINT32_C(0x211cf888), "c5fe0645e48894fb4b245abeefdc9a65d659af59"}
 };
-const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_catalogue(size_t *count)
+const ArcRpcFirmwareFingerprint *arc_riscpc_production_catalogue(size_t *count)
 { if (count) *count = sizeof(catalogue)/sizeof(catalogue[0]); return catalogue; }
 const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_recognize(const ArcDigest *d,
    const ArcRpcFirmwareFingerprint *table, size_t count)

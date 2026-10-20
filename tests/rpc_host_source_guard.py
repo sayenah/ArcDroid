@@ -13,7 +13,11 @@ def block(text,token):
 def validate(files):
     prep=files['rpc_preparation.c'];front=files['arcdroid_libretro.c'];host=files['rpc_preparation_host.c']
     frozen=block(prep,'    if(p->state==ARC_RPC_PREP_RUNNING){')
-    require(hashlib.sha256(frozen.encode()).hexdigest()=='dfa5174d2f8de0a67c85133991067b05e65c436284accf0a74ceb146cddd4fc5','frozen merged RUNNING body changed')
+    require(hashlib.sha256(frozen.encode()).hexdigest()=='05566f690e4d5bbbfc329cc0da8f993105fc424233f7675eaae9adf2cf65941f','frozen merged RUNNING body changed')
+    # R-3 accepts literal-only wording edits; the non-literal transaction is
+    # independently pinned to the merged RUNNING body before those edits.
+    transaction=re.sub(r'"(?:[^"\\]|\\.)*"','""',frozen)
+    require(hashlib.sha256(transaction.encode()).hexdigest()=='8f28b1a6a7d31c9b5c123c32ccedc6455fa8e97ad4203a3335caa3d77302607b','RUNNING reset transaction changed beyond literals')
     require(not re.search(r'\barc_io_(?:remove|rename|create_file|truncate_file)\s*\(',prep),'preparation bypasses a token-bound store')
     reset=block(front,'RETRO_API void retro_reset(void)');route=block(reset,'   if(arc_rpc_preparation_route)')
     require('arc_riscpc_host_reset(' in route and 'arc_engine_reset(' not in route,'preparation reset bypasses host')

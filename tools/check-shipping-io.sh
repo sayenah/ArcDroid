@@ -21,8 +21,12 @@ core/hash_accel.h
 core/hash_crc_slices.h
 core/machine.c
 core/rpc_selection.c
+core/rpc_catalogue_route.c
 core/rpc_selection.h
 libretro/rpc_inventory.c
+libretro/rpc_route.c
+libretro/rpc_route.h
+libretro/rpc_staging.h
 libretro/rpc_inventory.h
 core/input.c
 core/input_mapping.c
