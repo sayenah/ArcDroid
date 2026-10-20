@@ -10,6 +10,7 @@ ninja=next(s.split('=',1)[1] for s in (build/'CMakeCache.txt').read_text().split
 commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-C',str(build),'-t','compdb','-x'],text=True))]
 compile,link=rebuild_commands(commands,source,'rpc_orchestration_test',build,os.name=='nt')
 mutants=[
+ ('calendar-range-admission','if(!arc_engine_rpc_calendar_year(r->epoch,&year)){','if((arc_engine_rpc_calendar_year(r->epoch,&year),false)){'),
  ('session-year-patch','arc_riscpc_cmos_session_year(p->seed+16,year);','(void)year;'),
  ('session-year-checksum','arc_riscpc_cmos_session_year(p->seed+16,year);','uint8_t checksum=p->seed[63];arc_riscpc_cmos_session_year(p->seed+16,year);p->seed[63]=checksum;'),
  ('explicit-image','if(p->request.populate && !p->request.helper && !p->request.helper_override &&','if(p->request.populate && !p->request.helper_override &&'),
@@ -89,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-mutants-') as te
         c.write_text(text)
         subprocess.run(command,cwd=build,check=True,capture_output=True,timeout=60)
         subprocess.run(link,cwd=build,check=True,capture_output=True,timeout=60)
-        selected='calendar-mutant' if label.startswith('session-year-') else profile
+        selected='calendar-range' if label.startswith('calendar-range-') else 'calendar-mutant' if label.startswith('session-year-') else profile
         result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(exe),fixtures,selected],capture_output=True,text=True,timeout=120)
         if label=='baseline':
             if result.returncode:raise RuntimeError('baseline: '+result.stderr[-2000:])

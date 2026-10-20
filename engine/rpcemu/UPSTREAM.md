@@ -118,7 +118,9 @@ read. This is the only session seed patch. Factory/generation captures and
 bare v1 plans retain exact seeds; shared defaults and procedure revision 4
 are unchanged. Running-session reset retains the guest's year; a player-set
 year is replaced at the next load. The PCF8583 still supplies only year modulo
-four, and the guest kernel owns in-session year rollover.
+four, and the guest kernel owns in-session year rollover. AY-1 / L-1 adjusts
+`0x3F` by the year-byte delta rather than recomputing it, preserving any
+pre-existing guest checksum error instead of healing a corrupted record.
 
 ## Exclusions and verification
 

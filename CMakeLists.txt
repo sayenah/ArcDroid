@@ -953,6 +953,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME jfd-engine-reader COMMAND jfd_reader_tests)
   add_executable(cmos_device_tests tests/cmos_device_tests.c engine/arculator/src/cmos.c)
+  target_compile_definitions(cmos_device_tests PRIVATE ARCDROID_TEST_FAULTS=1)
   target_include_directories(cmos_device_tests PRIVATE
     engine engine/compat engine/arculator/src)
   target_compile_options(cmos_device_tests PRIVATE
@@ -962,6 +963,44 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME cmos-device-bus COMMAND cmos_device_tests)
+  add_executable(arc_calendar_test tests/arc_calendar_test.c)
+  target_include_directories(arc_calendar_test PRIVATE core engine libretro/include)
+  target_compile_definitions(arc_calendar_test PRIVATE RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(arc_calendar_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(arc_calendar_test PRIVATE ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arc_calendar_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME cmos-session-calendar COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arc_calendar_fixture.py"
+    $<TARGET_FILE:arc_calendar_test> $<TARGET_FILE:arcdroid_libretro_test>)
+  set_tests_properties(cmos-session-calendar PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  add_executable(calendar_launch_test tests/calendar_launch_test.c)
+  target_include_directories(calendar_launch_test PRIVATE core libretro/include)
+  target_compile_definitions(calendar_launch_test PRIVATE RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(calendar_launch_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(calendar_launch_test PRIVATE ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(calendar_launch_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME cmos-calendar-launch COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/calendar_launch_test.py"
+    $<TARGET_FILE:calendar_launch_test> $<TARGET_FILE:arcdroid_libretro_test>
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  set_tests_properties(cmos-calendar-launch PROPERTIES TIMEOUT 180)
+
+  add_test(NAME rpc-calendar-mutants COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/calendar_mutants.py"
+    "${CMAKE_C_COMPILER}" "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(rpc-calendar-mutants PROPERTIES TIMEOUT 180)
+  if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-calendar-session-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/arc_calendar_session_mutants.py"
+      "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:arc_calendar_test>
+      $<TARGET_FILE:calendar_launch_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+    set_tests_properties(rpc-calendar-session-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  endif()
+
   add_executable(jfd_controller_tests
     tests/jfd_controller_tests.c
       engine/arculator/src/wd1770.c
@@ -2983,6 +3022,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   # Keep the original session bound; the blanket 1200 s merge override was
   # unsupported by a duration measurement. The W4 session bound is unchanged.
   set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  add_test(NAME rpc-session-calendar-range COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+    $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar-range)
+  set_tests_properties(rpc-session-calendar-range PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   if(ARCDROID_SANITIZERS)
     # Keep every pair/year/client and all 200 switches. Debug sanitizer factory
     # generation is much slower; independent process-owned fixtures can shard.
@@ -2990,7 +3033,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       add_test(NAME rpc-session-calendar-${calendar_case} COMMAND "${Python3_EXECUTABLE}" -B
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
         $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar-${calendar_case})
-      set_tests_properties(rpc-session-calendar-${calendar_case} PROPERTIES TIMEOUT 900)
+      set_tests_properties(rpc-session-calendar-${calendar_case} PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
     endforeach()
   else()
     add_test(NAME rpc-session-calendar COMMAND "${Python3_EXECUTABLE}" -B

@@ -57,9 +57,16 @@ int main(void)
     for(unsigned year=1970;year<2400;++year){
         uint8_t before[240],after[240];
         for(unsigned i=0;i<240;++i)before[i]=(uint8_t)(i*13u+year);
-        memcpy(after,before,240);arc_riscpc_cmos_session_year(after,year);
-        assert(after[176]==year%100 && after[177]==year/100 && arc_riscpc_cmos_checksum(after));
-        for(unsigned i=0;i<240;++i)if(i!=47 && i!=176 && i!=177)assert(after[i]==before[i]);
+        unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=before[i];
+        for(unsigned error=0;error<256;++error){
+            before[47]=(uint8_t)(sum+error);
+            memcpy(after,before,240);arc_riscpc_cmos_session_year(after,year);
+            assert(after[176]==year%100 && after[177]==year/100);
+            unsigned expected=1;for(unsigned i=0;i<240;++i)if(i!=47)expected+=after[i];
+            assert((uint8_t)(after[47]-expected)==error);
+            assert(arc_riscpc_cmos_checksum(after)==(error==0));
+            for(unsigned i=0;i<240;++i)if(i!=47 && i!=176 && i!=177)assert(after[i]==before[i]);
+        }
     }
     for(unsigned layout=1;layout<=3;++layout)for(unsigned field=0;field<256;++field){
         uint8_t before[240],after[240];unsigned sum=1;

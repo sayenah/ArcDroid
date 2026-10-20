@@ -259,6 +259,13 @@ static void disk_hash(uint8_t output[32])
     }
     arc_sha256_final(&h,output);
 }
+/* Independent guest checksum residue, including deliberately damaged seeds. */
+static uint8_t calendar_checksum_error(const uint8_t bytes[256])
+{
+    unsigned sum=1;
+    for(unsigned raw=16;raw<256;++raw)if(raw!=63)sum+=bytes[raw];
+    return (uint8_t)(bytes[63]-sum);
+}
 static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
     bool fingerprint,ArcRpcPreparationHost host)
 {
@@ -343,6 +350,37 @@ static void guest_calendar(unsigned expected)
     assert(ram00[(0x20000+0x404)/4]==1); /* guest checksum acceptance */
     assert(ram00[(0x20000+199*4)/4]==2); /* retains generated drive setting */
 }
+static void calendar_range(ArcRpcPreparationHost host,const uint8_t *rom,size_t size)
+{
+    const uint64_t epochs[]={UINT64_C(13569465600),UINT64_MAX};
+    ArcDigest digest=arc_digest(rom,size);
+    ArcRpcFirmwareFingerprint fingerprint={ARC_RPC_OS_350,size,digest.crc32,digest.sha1};
+    for(unsigned existing=0;existing<2;++existing){
+        restore();test_model=0;test_os=ARC_RPC_OS_350;test_epoch=1234567890;clock_mode=1;
+        if(existing){
+            /* Seed a real record without unrelated 45-second factory generation. */
+            ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
+            assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);finish(p);
+        }
+        uint8_t original[32],after[32];disk_hash(original);
+        for(unsigned ordinary=0;ordinary<2;++ordinary)for(unsigned i=0;i<2;++i){
+            uint8_t seed[256],before[256];memset(seed,0x5a,sizeof(seed));memcpy(before,seed,sizeof(seed));
+            ArcRpcPreparationRequest request={.firmware=rom,.firmware_size=size,.save="/save",.system="/system",
+                .epoch=epochs[i],.seed=seed,.hard_disc=true,.populate=true,.ordinary=ordinary!=0,
+                .key={.model=0,.layout=1},.fingerprint=&fingerprint,
+                .selection={.reason=ARC_RPC_SELECTION_SELECTED,.model=(ArcRpcSelectionModel)1,.os=ARC_RPC_OS_350}};
+            strcpy(request.key.content,id);char error[512]={0};uint64_t mutations=namespace_calls;
+            ArcRpcPreparation *p=ordinary?arc_riscpc_preparation_begin(&request,&host,error,sizeof(error)):
+                arc_riscpc_preparation_low_level(&request,&host,error,sizeof(error));
+            assert(!p && strstr(error,"outside the supported range"));
+            assert(!arc_engine_active() && !memcmp(seed,before,sizeof(seed)) && namespace_calls==mutations);
+            disk_hash(after);assert(!memcmp(original,after,sizeof(original)));test_vfs_no_open_handles();
+        }
+    }
+    test_epoch=1234567890;test_ordinary=false;
+    puts("calendar: unsupported epochs refuse before stores/engine; first-use and existing records, seeds and defaults unchanged");
+}
+
 static void calendar_cases(ArcRpcPreparationHost host,bool focused,int pair_filter)
 {
     int file=find("/system/calendar.rom",false);assert(file>=0);
@@ -1773,6 +1811,9 @@ int main(int argc,char **argv)
     file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.lock_backend=&rpc_preparation_test_backend,.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
     if(!strncmp(argv[4],"calendar",8)){
+        if(!strcmp(argv[4],"calendar-range")){
+            calendar_range(host,rom,size);free(rom);fresh_files();return 0;
+        }
         bool switching=!strcmp(argv[4],"calendar-switching");
         bool focused=!strcmp(argv[4],"calendar-mutant");int pair=-1;
         if(!strncmp(argv[4],"calendar-pair-",14))assert(sscanf(argv[4],"calendar-pair-%d",&pair)==1 && pair>=0 && pair<7);
@@ -1811,6 +1852,8 @@ int main(int argc,char **argv)
     helper_ownership(rom,size,host);launch_reset_matrix(rom,size,host);
     scheduler_matrix(rom,size,host);hd_notices(rom,size,host);store_refusals(rom,size,host);
     uint8_t gold[32];
+    /* new_request deliberately supplies checksum 0x51 over its explicit seed settings. */
+    const uint8_t seed_error=(uint8_t)(0x51u-(1u+5u+2u+0x95u+9u));
     for(unsigned mode=0;mode<3;++mode){
         restore();clock_mode=mode;clock_value=UINT64_C(1000000000000);clock_delta=1000;attach_calls=terminal_notices=0;
         ArcRpcPreparation *p=new_request(rom,size,true,mode==0,host);settle(p);
@@ -1818,10 +1861,10 @@ int main(int argc,char **argv)
         uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
         arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
         for(unsigned i=0;i<16;++i)assert(!b[i]);
-        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[0xc0]==9 && b[0xc1]==20 && arc_riscpc_cmos_checksum(b+16));
+        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[0xc0]==9 && b[0xc1]==20 && calendar_checksum_error(b)==seed_error);
         assert(arc_riscpc_preparation_reset(p));arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
         for(unsigned i=0;i<16;++i)assert(!b[i]);
-        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[0xc0]==9 && b[0xc1]==20 && arc_riscpc_cmos_checksum(b+16));
+        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[0xc0]==9 && b[0xc1]==20 && calendar_checksum_error(b)==seed_error);
         ArcRpcHdStats before_tick,after_tick;
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&before_tick);
         unsigned reads=all_clock_reads;
@@ -1864,7 +1907,7 @@ int main(int argc,char **argv)
     uint8_t saved_bytes[256],saved_mask[32];uint64_t saved_writes,saved_last,saved_now;unsigned saved_state;
     arc_engine_rpc_evidence(saved_bytes,saved_mask,&saved_writes,&saved_last,&saved_now,&saved_state);
     for(unsigned i=0;i<16;++i)assert(!saved_bytes[i]);
-    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[0xc0]==9 && saved_bytes[0xc1]==20 && arc_riscpc_cmos_checksum(saved_bytes+16));finish(p);reopen_expected=false;
+    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[0xc0]==9 && saved_bytes[0xc1]==20 && calendar_checksum_error(saved_bytes)==seed_error);finish(p);reopen_expected=false;
     /* A receipt remains a reopen even if its per-content settings vanished. */
     for(unsigned j=0;j<TEST_FILES;++j)if(files[j].present && strstr(files[j].path,"/cmos-riscpc/"))files[j].present=false;
     reopen_expected=true;clock_mode=3;p=new_request(rom,size,false,false,host);

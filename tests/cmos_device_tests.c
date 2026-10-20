@@ -12,10 +12,12 @@
 
 int machine_type = MACHINE_TYPE_NORMAL;
 uint64_t TIMER_USEC = UINT64_C(1) << 32;
+static emu_timer_t *clock_timer;
 void timer_enable(emu_timer_t *timer) { timer->enabled = 1; }
 void timer_add(emu_timer_t *timer, void (*callback)(void *), void *opaque, int start)
-{ timer->callback = callback; timer->p = opaque; timer->enabled = start; }
-int machine_is_a500(void) { return 0; }
+{ timer->callback = callback; timer->p = opaque; timer->enabled = start; clock_timer = timer; }
+static int a500;
+int machine_is_a500(void) { return a500; }
 uint8_t bmu_read(int address) { (void)address; return 0xffu; }
 void bmu_write(int address, uint8_t value) { (void)address; (void)value; }
 void rpclog(const char *format, ...) { (void)format; }
@@ -102,8 +104,62 @@ static uint8_t bus_read(unsigned raw)
    return value;
 }
 
+static void calendar(void)
+{
+   uint8_t seed[256] = {0}, live[256], saved[256];
+   seed[0xc0] = 87; seed[0xc1] = 19; seed[63] = 107;
+   for (int year = 1999; year <= 2104; ++year) {
+      cmos_test_clock(year, 7, 15, 12, 34, 56, 0);
+      cmos_init(); cmos_set_image(seed, sizeof(seed)); cmos_session_year(1,NULL);
+      cmos_get_image(live, sizeof(live));
+      assert(live[192] == year % 100 && live[193] == year / 100);
+      unsigned sum = 1;
+      for (unsigned raw = 16; raw < 256; ++raw) if (raw != 63) sum += live[raw];
+      assert(live[63] == (uint8_t)sum);
+      assert(bus_read(5) == (0x15u | ((year & 3u) << 6)));
+      cmos_get_persisted_image(saved, sizeof(saved));
+      assert(!memcmp(saved + 16, seed + 16, 240));
+      /* Reset reconstructs the live image; it must not erase overlay ownership. */
+      cmos_init(); cmos_set_image(live, sizeof(live));
+      cmos_get_persisted_image(saved, sizeof(saved));
+      assert(!memcmp(saved + 16, seed + 16, 240));
+      const unsigned raw[] = {192, 193, 63};
+      for (unsigned i = 0; i < 3; ++i) {
+         uint8_t value = (uint8_t)(40 + i);
+         bus_write(raw[i], &value, 1);
+         cmos_get_persisted_image(saved, sizeof(saved));
+         for (unsigned j = 0; j < 3; ++j)
+            assert(saved[raw[j]] == (j <= i ? 40 + j : seed[raw[j]]));
+      }
+   }
+   const int dates[][6] = {
+      {1999,12,31,2000,1,1}, {2000,2,28,2000,2,29},
+      {2000,2,29,2000,3,1}, {2001,2,28,2001,3,1},
+      {2099,12,31,2100,1,1}, {2100,2,28,2100,3,1},
+      {2026,4,30,2026,5,1}, {2026,10,31,2026,11,1}
+   };
+   for (unsigned i = 0; i < sizeof(dates)/sizeof(dates[0]); ++i) {
+      const int *d = dates[i];
+      cmos_test_clock(d[0],d[1],d[2],23,59,59,990); cmos_init();
+      clock_timer->callback(clock_timer->p);
+      unsigned day = (unsigned)(d[5] % 10 + 16 * (d[5] / 10));
+      unsigned month = (unsigned)(d[4] % 10 + 16 * (d[4] / 10));
+      assert(bus_read(5) == (day | ((d[3] & 3u) << 6)));
+      assert(bus_read(6) == month && bus_read(4) == 0);
+   }
+   /* A500 has no hardware year bits, but its kernel reads EEPROM C0/C1. */
+   a500=1;cmos_test_clock(2027,7,15,12,0,0,0);cmos_init();
+   cmos_set_image(seed,sizeof(seed)); cmos_session_year(1,NULL);
+   cmos_get_image(live,sizeof(live));assert(live[192]==27 && live[193]==20);
+   assert(bus_read(5)==seed[5]); /* A0 is EEPROM, not the D0 RTC. */
+   cmos_get_persisted_image(saved,sizeof(saved));assert(!memcmp(saved+16,seed+16,240));
+   a500=0; cmos_session_year(0,NULL); cmos_test_clock(0,0,0,0,0,0,0);
+   puts("calendar bus: year residues, checksum, guest-only persistence, reset and Gregorian rollover passed");
+}
+
 int main(void)
 {
+   calendar();
    uint8_t image[256] = {0};
    uint8_t mask[32] = {0};
    image[0xedu] = 0x31u;
