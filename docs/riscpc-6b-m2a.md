@@ -51,7 +51,7 @@ Everything that must stay independent of the emitter is built first, so that it 
 - **R-M2-4 Projection.**
   - Fable writes the shared, non-mutating projection specification for P0 to P3 into M2b's order (Astra 3; due before B-0, `:759`).
   - Until then, M2a encodes phase-conditional inclusion as provisional schema data. The data follows `docs/riscpc-translator-invariants.md:232-235`:
-    - At P0, `issue_*` equals `cpu_due_*`. In integer mode, the issue time comes from the flush formulas without `next_base`. `batch_flush` (`engine/rpc/rpc_mem_timing.c:467-474`) is never used as a canonicaliser or as a test oracle.
+    - At P0, `issue_*` equals `cpu_due_*`. In integer mode, the issue time comes from the flush formulas without `next_base`. `batch_flush` (`engine/rpc/rpc_mem_timing.c:824-839`) is never used as a canonicaliser or as a test oracle.
     - At P2, `cpu_due_*` is excluded while requests are pending.
     - At P3, the state is whatever batch service left.
   - Completed-instruction count and successful-continuation count are separate fields.
@@ -306,7 +306,7 @@ Before the emitter exists, deliver:
 - **Setup.** Apply R-M2-7, then re-ground §2.2, the schema and every citation at the post-#469 head.
 - **Hooks in all three loop copies:**
   - P0 before `arc_rpc_mem_instruction_begin` (`arm.c:597`);
-  - P1 at fetch continuation (`:613`), the accessors (`mem.c:699-731`), `arc_rpc_mem_access` (`rpc_mem_timing.c:325`), LDM/STM (`arm_common.c:271,351,428,494`), SWI (`:569`), CP15 (`cp15.c:163/300`) and the cheap-copy SWI (`arm.c:1907-1909`);
+  - P1 at fetch continuation (`:613`), the accessors (`mem.c:699-731`), `arc_rpc_mem_access` (`rpc_mem_timing.c:652`), LDM/STM (`arm_common.c:271,351,428,494`), SWI (`:569`), CP15 (`cp15.c:163/300`) and the cheap-copy SWI (`arm.c:1907-1909`);
   - P2 after `instruction_end` (`:1960`);
   - P3 after the final flush (`:1975`), including the NULL-batch path.
 - **Sink.** Bytes go through a sink the runner owns. The engine has no stdio (`tools/check-backend-symbols.py:137-155`).

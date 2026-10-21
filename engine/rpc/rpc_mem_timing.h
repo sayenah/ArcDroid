@@ -193,4 +193,7 @@ static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
 }
 #endif
 
+#if defined(ARCDROID_TEST_FAULTS)
+bool arc_rpc_mem_l1_state(bool seed_hint);
+#endif
 #endif

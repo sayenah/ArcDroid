@@ -18,9 +18,11 @@
 #define ARCDROID_TEST_API 1
 #endif
 
-/* 1a-0 owned services are already arc_rpc_-prefixed: exercise/path and
+/* ArcDroid-owned services are already arc_rpc_-prefixed: exercise/path and
  * mem_exercise_*, mem_endpoint*, mem_measure_state/equal, profile_rank*,
- * crosscheck_*, test_exercise/interval_exercise/ranking/capabilities/refusal,
+ * crosscheck_*, test_exercise_v3/interval_exercise_v3/ranking_v3/capabilities/refusal,
+ * profile_snapshot_v3 (revision and size checked before copying),
+ * mem_l1_state/test_l1_state (hot-test-only lifecycle hint accessor),
  * test_refuse/timing_endpoint/prefix_*. Declarations live in rpc_*.h and their
  * explicit service names are registered in engine/backend-symbols.json;
  * no second renaming alias or outside-engine exception is needed. */

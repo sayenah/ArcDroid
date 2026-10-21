@@ -20,6 +20,7 @@ static void (*snapshot_rpc)(ArcRpcTestSnapshot *);
 static bool (*read_ram)(unsigned,uint32_t *);
 static void (*fail_alloc)(unsigned);
 static void (*fault_next)(void);
+static bool (*l1_state)(bool);
 static const ArcEngineBackendOps *(*engine_api)(void);
 static const ArcEngineBackendOps *api;
 static uint8_t *rom;
@@ -40,6 +41,8 @@ static void load_api(void)
 {
     LOAD(start_rpc,"arc_rpc_test_start"); LOAD(advance_rpc,"arc_rpc_test_advance");
     LOAD(snapshot_rpc,"arc_rpc_test_snapshot"); LOAD(read_ram,"arc_rpc_test_read_ram");
+    /* Shared with measurement-core consumers; fault-only seams are loaded
+     * by the tests that require them, using the same mandatory LOAD check. */
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc"); LOAD(fault_next,"arc_rpc_test_fault_next");
     LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
 }
@@ -195,9 +198,12 @@ int main(int argc,char **argv)
         uint8_t *bytes=malloc((size_t)size);assert(bytes&&fread(bytes,1,(size_t)size,f)==(size_t)size);fclose(f);
         uint64_t fresh=arculator_trace(bytes,(size_t)size);
         if(!strcmp(argv[2],"--switch")) {
+            LOAD(l1_state,"arc_rpc_test_l1_state");
             for(unsigned model=0;model<4;++model) {
                 guest_test(model);
-                uint64_t after=arculator_trace(bytes,(size_t)size);assert(after==fresh);
+                assert(start_rpc((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));
+                assert(!l1_state(true)); /* stale hint at a live RPC -> Arculator switch */
+                uint64_t after=arculator_trace(bytes,(size_t)size);assert(after==fresh);assert(l1_state(false));
             }
         }
         printf("arculator-trace=%016llx\n",(unsigned long long)fresh);free(bytes);

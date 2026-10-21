@@ -493,10 +493,10 @@ int main(int argc, char **argv)
             if(!arm(measure_first,measure_last,measure_drained)){fprintf(stderr,"Core refuses endpoint measurement\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
         else {void (*arm)(uint64_t,uint64_t,bool);LOAD(arm,"arc_rpc_test_timing_measure");arm(measure_first,measure_last,measure_drained);}
     }
-    if(print_exercise){bool (*get)(ArcRpcExercise *);LOAD(get,"arc_rpc_test_exercise");ArcRpcExercise e;
-        if(!get(&e)){fprintf(stderr,"Core refuses exercise counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
-    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *);LOAD(get,"arc_rpc_test_ranking");ArcRpcExercise e;uint64_t attempts;
-        if(!get(&e,&attempts)){fprintf(stderr,"Core refuses ranking counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
+    if(print_exercise){bool (*get)(ArcRpcExercise *,unsigned,size_t);LOAD(get,"arc_rpc_test_exercise_v3");ArcRpcExercise e;
+        if(!get(&e,ARC_RPC_COUNTER_ABI,sizeof(e))){fprintf(stderr,"Core refuses exercise counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
+    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *,unsigned,size_t);LOAD(get,"arc_rpc_test_ranking_v3");ArcRpcExercise e;uint64_t attempts;
+        if(!get(&e,&attempts,ARC_RPC_COUNTER_ABI,sizeof(e))){fprintf(stderr,"Core refuses ranking counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
     if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());unload();deinit();vfs_assert_no_open_handles();return 2;}
     /* Pending black/silent frames are tested separately; requested goldens use
      * exactly the baseline counters and input frame-zero boundary. */
@@ -520,11 +520,11 @@ int main(int argc, char **argv)
     FILE *profile_file=NULL;uint64_t *profile_times=NULL;
     size_t profile_frames=0;uint64_t profile_second=0,profile_epoch=0,last_frame=0,last_ns=0;
     unsigned profile_records=0;
-    void (*profile_snapshot)(ArcRpcProfile *)=NULL;
+    bool (*profile_snapshot)(ArcRpcProfile *,unsigned,size_t)=NULL;
     void (*profile_probes)(uint64_t *)=NULL;
     if(profile_path){
         void (*configure)(unsigned,uint64_t (*)(void))=NULL;
-        void *config_symbol=symbol("arc_rpc_profile_configure"),*snapshot_symbol=symbol("arc_rpc_profile_snapshot");
+        void *config_symbol=symbol("arc_rpc_profile_configure"),*snapshot_symbol=symbol("arc_rpc_profile_snapshot_v3");
         if(!config_symbol || !snapshot_symbol){fprintf(stderr,"Core lacks RPC profiling\n");free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();vfs_assert_no_open_handles();return 2;}
         memcpy(&configure,&config_symbol,sizeof(configure));memcpy(&profile_snapshot,&snapshot_symbol,sizeof(profile_snapshot));
         void *probe_symbol=symbol("arc_rpc_profile_probe_snapshot");
@@ -581,7 +581,7 @@ int main(int argc, char **argv)
         period_ns = (uint64_t)llround(1000000000.0 / fps);
 #if defined(ARCDROID_RPC_PROFILE)
         if(profile_file){
-            ArcRpcProfile p;profile_snapshot(&p);profile_times[profile_frames++]=elapsed;
+            ArcRpcProfile p;if(!profile_snapshot(&p,ARC_RPC_COUNTER_ABI,sizeof(p))){fprintf(stderr,"Counter ABI mismatch\n");exit(2);}profile_times[profile_frames++]=elapsed;
             last_frame=f;last_ns=s.now_ns;
             uint64_t second=s.now_ns/1000000000u;
             if((f+1)%profile_interval==0 || second!=profile_second || p.epoch!=profile_epoch){
@@ -688,7 +688,7 @@ int main(int argc, char **argv)
     if (dump_failed) result = 2;
 #if defined(ARCDROID_RPC_PROFILE)
     if(profile_file){
-        ArcRpcProfile p;profile_snapshot(&p);
+        ArcRpcProfile p;if(!profile_snapshot(&p,ARC_RPC_COUNTER_ABI,sizeof(p))){fprintf(stderr,"Counter ABI mismatch\n");exit(2);}
         if(profile_records)fputs(",\n",profile_file);
         uint64_t probes[ARC_RPC_COST_COUNT+2]={0};if(profile_probes)profile_probes(probes);
         arc_runner_profile_json(profile_file,&p,last_frame,last_ns,"exit",profile_times,profile_frames,probes);
@@ -708,8 +708,8 @@ int main(int argc, char **argv)
     void (*observation_status)(ArcRpcTraceStatus *)=NULL;
     void *observation_symbol=symbol("arc_engine_test_observation_status");
     if(observation_symbol && (core_test_caps&ARC_RPC_TEST_TRACE)){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));observation_status(&observation);}
-    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *);LOAD(get,"arc_rpc_test_ranking");ArcRpcExercise e;uint64_t attempts;
-        if(!get(&e,&attempts))result=2;
+    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *,unsigned,size_t);LOAD(get,"arc_rpc_test_ranking_v3");ArcRpcExercise e;uint64_t attempts;
+        if(!get(&e,&attempts,ARC_RPC_COUNTER_ABI,sizeof(e)))result=2;
         else {fprintf(stderr,"ranking attempts=%" PRIu64 "\n",attempts);
 #define PRINT_RANKING(name) fprintf(stderr,"ranking " #name "=%" PRIu64 "\n",e.values[ARC_RPC_COUNT_##name]);
             ARC_RPC_COUNTER_NAMES(PRINT_RANKING)
@@ -720,8 +720,8 @@ int main(int argc, char **argv)
         if(!get(&p)){fprintf(stderr,"Prefix ordinal was not reached\n");result=1;}
         else fprintf(stderr,"prefix %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n",p.instructions,p.issue_ticks,p.now_ns,p.cpu,p.memory,p.scheduler);
     }
-    if(print_exercise){bool (*get)(ArcRpcExercise *);LOAD(get,"arc_rpc_test_exercise");ArcRpcExercise e;
-        if(!get(&e))result=2;
+    if(print_exercise){bool (*get)(ArcRpcExercise *,unsigned,size_t);LOAD(get,"arc_rpc_test_exercise_v3");ArcRpcExercise e;
+        if(!get(&e,ARC_RPC_COUNTER_ABI,sizeof(e)))result=2;
         else {
 #define PRINT_EXERCISE(name) fprintf(stderr,"exercise " #name "=%" PRIu64 "\n",e.values[ARC_RPC_COUNT_##name]);
             ARC_RPC_COUNTER_NAMES(PRINT_EXERCISE)

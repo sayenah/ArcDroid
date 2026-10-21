@@ -17,10 +17,21 @@ static void *library;
 static void *symbol(const char *s) { return dlsym(library,s); }
 #endif
 #define LOAD(var,name) do { void *p=symbol(name);assert(p);memcpy(&var,&p,sizeof(var)); } while(0)
+static const char *(*reference_status)(uint64_t *,uint64_t *);
+static void reference_check(void)
+{
+    if(reference_status){
+        uint64_t calls,failed;const char *field=reference_status(&calls,&failed);
+        if(field || failed){fprintf(stderr,"RPC cross-check mismatch: %s (%llu/%llu)\n",
+            field?field:"unnamed",(unsigned long long)failed,(unsigned long long)calls);abort();}
+    }
+}
 static bool (*admit_frontend)(void);
 static bool (*start_rpc)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static bool (*factory_rpc)(ArcRpcModel,const uint8_t *,size_t,uint64_t,char *,size_t);
-static bool (*advance_rpc)(uint64_t);
+static bool (*advance_raw)(uint64_t);
+static bool advance_rpc(uint64_t ns)
+{ bool ok=advance_raw(ns);reference_check();return ok; }
 static void (*snapshot_rpc)(ArcRpcTestSnapshot *);
 static bool (*read_rpc)(unsigned,uint32_t *);
 static void (*counts_rpc)(ArcRpcAudioCounts *);
@@ -31,7 +42,8 @@ static void (*cmos_rpc)(uint8_t *);
 static void (*fault_next)(void);
 static const ArcEngineBackendOps *(*engine_api)(void);
 static const ArcEngineBackendOps *api;
-static void (*run_retro)(void),(*init_retro)(void),(*deinit_retro)(void),(*reset_retro)(void);
+static void (*run_retro_raw)(void),(*init_retro)(void),(*deinit_retro)(void),(*reset_retro)(void);
+static void run_retro(void) { run_retro_raw();reference_check(); }
 static void (*set_environment)(retro_environment_t),(*set_audio)(retro_audio_sample_batch_t);
 static void (*set_poll)(retro_input_poll_t),(*set_state)(retro_input_state_t);
 static void (*set_port)(unsigned,unsigned);
@@ -79,7 +91,7 @@ static void start(unsigned model,const uint32_t *words,size_t count)
     arc_input_reset(&input);logs=0;api->set_log_callback(log_message,NULL);
     uint8_t actual[256];cmos_rpc(actual);assert(!memcmp(actual,seed,256));
 }
-static void frame(void) { ArcEngineFrame f;assert(api->run_frame(&input,&f));assert(!api->faulted(NULL)); }
+static void frame(void) { ArcEngineFrame f;assert(api->run_frame(&input,&f));reference_check();assert(!api->faulted(NULL)); }
 static void frames(unsigned n) { for(unsigned i=0;i<n;++i)frame(); }
 static void until(uint64_t ns)
 {
@@ -322,13 +334,16 @@ int main(int argc,char **argv)
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
     assert(library);
+    void *reference=symbol("arc_rpc_crosscheck_status");
+    if(reference)memcpy(&reference_status,&reference,sizeof(reference_status));
+
     rpc_golden_begin(symbol,model);
-    LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(factory_rpc,"arc_rpc_test_factory_start");LOAD(advance_rpc,"arc_rpc_test_advance");
+    LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(factory_rpc,"arc_rpc_test_factory_start");LOAD(advance_raw,"arc_rpc_test_advance");
     LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_rpc,"arc_rpc_test_read_ram");LOAD(counts_rpc,"arc_rpc_test_audio_counts");
     LOAD(peek_rpc,"arc_rpc_test_audio_peek");LOAD(commit_rpc,"arc_rpc_test_audio_commit");LOAD(capture_rpc,"arc_rpc_test_capture_status");
     LOAD(cmos_rpc,"arc_rpc_test_cmos_snapshot");LOAD(fault_next,"arc_rpc_test_fault_next");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
     LOAD(set_environment,"retro_set_environment");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_state,"retro_set_input_state");
-    LOAD(set_port,"retro_set_controller_port_device");LOAD(run_retro,"retro_run");LOAD(init_retro,"retro_init");LOAD(deinit_retro,"retro_deinit");LOAD(reset_retro,"retro_reset");
+    LOAD(set_port,"retro_set_controller_port_device");LOAD(run_retro_raw,"retro_run");LOAD(init_retro,"retro_init");LOAD(deinit_retro,"retro_deinit");LOAD(reset_retro,"retro_reset");
     for(unsigned i=0;i<256;++i)seed[i]=(uint8_t)(i^0xa5);
     if(!strcmp(argv[2],"--factory")) { assert(model>=2);factory(model); }
     else { assert(!strcmp(argv[2],"--guest"));check_pcm(model,false);check_pcm(model,true);dma_state(model);pressure(model);keyboard(model,false);keyboard(model,true);pad_mouse(model); }

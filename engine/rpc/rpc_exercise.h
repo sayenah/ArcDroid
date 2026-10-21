@@ -3,7 +3,9 @@
 #define ARC_RPC_EXERCISE_H
 #include <stdint.h>
 #include <stdbool.h>
-/* Stable schema-2 scalar order, followed by two 64-way hit histograms. */
+/* Append-only scalar names; binary ABI revision 3 moves the histograms.
+ * Profile JSON remains schema 2 (name-based). Runner/core must match revisions. */
+#define ARC_RPC_COUNTER_ABI 3u
 #define ARC_RPC_COUNTER_NAMES(X) \
  X(lookup_access_empty) X(lookup_access_miss) X(lookup_access_hit) \
  X(lookup_access_probes) X(lookup_access_hit_probes) X(lookup_access_beyond_zero) \
@@ -16,7 +18,9 @@
  X(tlb_data_walk) X(tlb_data_hit) X(tlb_data_eligible) \
  X(tlb_fetch_walk) X(tlb_fetch_hit) X(tlb_fetch_eligible) \
  X(integer_unobserved) X(integer_observed) X(integer_cheap) \
- X(rational_unobserved) X(rational_observed) X(rational_cheap)
+ X(rational_unobserved) X(rational_observed) X(rational_cheap) \
+ X(l1_hint_accepted) X(l1_hint_rejected) X(l1_mirror_search) \
+ X(l1_mirror_recheck_failed) X(l1_linear_fallback)
 #define ARC_RPC_COUNTER_ENUM(name) ARC_RPC_COUNT_##name,
 enum { ARC_RPC_COUNTER_NAMES(ARC_RPC_COUNTER_ENUM) ARC_RPC_COUNT_SCALARS,
     ARC_RPC_COUNT_ACCESS_WAYS=ARC_RPC_COUNT_SCALARS,
