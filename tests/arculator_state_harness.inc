@@ -55,6 +55,7 @@ if(ss1_mode) {
       if(!output_only)assert(ss1_tables_check());
       {struct retro_system_av_info av;retro_get_system_av_info(&av);geometry_width=av.geometry.base_width;geometry_height=av.geometry.base_height;current_reported_rate=last_notified_rate=av.timing.fps;}
       if(!output_only){memset(ss1_last_input,0,sizeof(ss1_last_input));retro_set_input_state(ss1_logged_input);}
+#include "arculator_state_followups.inc"
       if(!strcmp(argv[5],"--ss1-created-cold")||!strcmp(argv[5],"--ss1-created-cold-refusal")) {
          bool (*create)(unsigned,unsigned,unsigned,uint8_t)=dlsym(module,"arc_libretro_test_ss1_jfd_create");
          uint8_t (*slot)(unsigned,unsigned,unsigned,uint32_t*,uint32_t*)=dlsym(module,"arc_libretro_test_jfd_slot_state");
@@ -99,8 +100,8 @@ if(ss1_mode) {
       if(!strcmp(argv[5],"--ss1-large-derived")) {
          bool (*prepare)(void)=dlsym(module,"arc_libretro_test_ss1_large_derived");assert(prepare);
          retro_run();assert(prepare());size_t n=retro_serialize_size();assert(n<=16u*1024u*1024u);
-         /* Even the conservative union of the parser's payload/slot limits,
-          * maximal bitmap and 31 inactive graphs must fit the advertised cap. */
+         /* Conservative parser payload envelope over this session's metadata.
+          * SS-1b's capacity-set case separately checks all 32 admitted slots. */
          size_t worst=n+65536u+16u+
             (ARC_JFD_MAX_TRACK_SIDES*ARC_JFD_MAX_SECTORS_PER_TRACK+ARC_JFD_PDD5_SLOTS+7u)/8u+
             ARC_JFD_MAX_DECODED+ARC_JFD_PDD5_SLOTS*1024u+(ARC_PLAYLIST_MAX_ENTRIES-1u)*96u;

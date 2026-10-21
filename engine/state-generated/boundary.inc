@@ -14,7 +14,11 @@ static void arc_state_boundary_reset(void)
    arc_state_boundary_armed=arc_state_publication_noticed=false;
    arc_state_speculation=arc_state_rollback_failed=false;
    arc_state_mode_noticed=false;
-   arc_state_real_poll=arc_input_poll;
+   arc_state_media_noticed=arc_state_pending_noticed=false;
+   arc_state_media_slots=0;
+   /* A closing session may still have Preemptive Frames' null poll installed.
+    * Capture the next primary installation, never that outgoing callback. */
+   arc_state_real_poll=NULL;
    memset(arc_state_committed_hd,0,sizeof(arc_state_committed_hd));
    memset(arc_state_committed_jfd,0,sizeof(arc_state_committed_jfd));
    arc_state_io_clear();arc_state_io_forget_stores();arc_io_state_clear();
@@ -45,6 +49,7 @@ static bool arc_state_boundary_finish(void)
 static void arc_state_boundary_frame(void)
 {
    if(arc_kind!=ARC_SESSION_KIND_ARCULATOR){arc_state_io_speculate(false);return;}
+   if(!arc_state_real_poll)arc_state_real_poll=arc_input_poll;
    bool real=!arc_state_boundary_armed||arc_state_callbacks_real();
    if(!real)arc_state_speculation=true;
    if(real)(void)arc_state_boundary_finish();

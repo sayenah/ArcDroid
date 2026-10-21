@@ -115,3 +115,51 @@ static uint64_t ss1_write_batch(const Ss1WritePath *path)
 }
 static int ss1_ns_order(const void *a,const void *b)
 {uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return (x>y)-(x<y);}
+
+/* Independently authored size/accounting model of RetroArch v1.22.2
+ * state_manager.c: raw_compress/find_same and push_do. No upstream code is
+ * linked or copied. Two-byte reverse patches stop at an equal 32-bit pair;
+ * odd-address handling follows NO_UNALIGNED_MEM on the arm64 host.
+ * Input has state_manager_raw_alloc's zero/sentinel padding. */
+static size_t ss1_rewind_patch_size(const uint16_t *a,const uint16_t *b,size_t bytes)
+{
+   size_t words=(bytes+1u)/2u,at=0,out=6u;
+   while(at<words) {
+      size_t start=at;while(at<words&&a[at]==b[at])++at;
+      if(at==words)break;
+      size_t skip=at-start;
+      if(skip>65535u){out+=6u;continue;}
+      size_t end=at;
+#if !defined(__x86_64__) && !defined(__i386__)
+      if(end&1u)++end;
+      if(a[end]!=b[end]) {
+#endif
+      while(a[end]!=b[end]||a[end+1u]!=b[end+1u])end+=2u;
+      if(end>at&&a[end-1u]==b[end-1u])--end;
+#if !defined(__x86_64__) && !defined(__i386__)
+      }
+#endif
+      size_t count=end-at;if(count>65535u)count=65535u;
+      assert(count&&count<=words-at);out+=4u+count*2u;at+=count;
+   }
+   return out;
+}
+
+static void ss1_rewind_model_check(void)
+{
+   uint16_t a[32]={0},b[32]={0};assert(ss1_rewind_patch_size(a,b,16u)==6u);
+   a[1]=1u;assert(ss1_rewind_patch_size(a,b,16u)==12u);a[3]=2u;
+#if !defined(__x86_64__) && !defined(__i386__)
+   assert(ss1_rewind_patch_size(a,b,16u)==18u); /* Two odd, one-word edits. */
+#else
+   assert(ss1_rewind_patch_size(a,b,16u)==16u); /* Unaligned pair scanning. */
+#endif
+   memset(a,0,sizeof(a));a[0]=1u;a[2]=2u;
+   assert(ss1_rewind_patch_size(a,b,16u)==16u);
+   for(unsigned i=0;i<8u;++i)a[i]=(uint16_t)(i+1u);
+   assert(ss1_rewind_patch_size(a,b,16u)==26u);
+   uint16_t *long_a=calloc(65548u,sizeof(*long_a)),*long_b=calloc(65548u,sizeof(*long_b));
+   assert(long_a&&long_b);long_a[65536u]=1u;
+   assert(ss1_rewind_patch_size(long_a,long_b,131080u)==18u);
+   free(long_a);free(long_b);
+}

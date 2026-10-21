@@ -215,6 +215,26 @@ def verify(root, manifest):
     identities = [(r['source'], r['symbol']) for r in manifest['objects']]
     if len(identities) != len(set(identities)):
         raise ValueError('duplicate static object identity')
+    # Declaration coverage alone cannot detect a removed codec in a function
+    # body. Every serialized generated owner also needs its object selection
+    # and a payload visitor before the next selection. arc_state_io's five
+    # queue roots use the handwritten, bounded io.pending blob instead.
+    visitors = {}
+    for name in names:
+        if name.startswith('engine/state-generated/') and name.endswith('.inc'):
+            source = ' '.join(tokens((root / name).read_text()))
+            selections = list(re.finditer(r'arc_state_object \( s , "([^"]+)" \)', source))
+            for i, selection in enumerate(selections):
+                end = selections[i + 1].start() if i + 1 < len(selections) else len(source)
+                body = source[selection.end():end]
+                if re.search(r'arc_state_(?:value|boolean|reference|typed_reference|memory_reference|'
+                             r'string_bounded|raw_cache|media_entry_values|raster|heap|blob)\w* \(', body):
+                    visitors[selection[1]] = True
+    for row in manifest['objects']:
+        if row['classification'] == 'serialized' and row['source'] != 'libretro/arc_state_io.c':
+            identity = row['source'] + ':' + row['symbol']
+            if identity not in visitors:
+                raise ValueError('serialized object lacks a generated payload visitor: ' + identity)
     return len(names), total
 
 

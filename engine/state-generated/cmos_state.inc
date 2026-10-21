@@ -54,6 +54,6 @@ void arc_state_visit_engine_arculator_src_cmos(ArcState *s)
    if(arc_state_loading(s)) {
       ARC_STATE_BOUND(s,year_written,0,7);ARC_STATE_BOUND(s,year_overlay,0,1);
       ARC_STATE_BOUND(s,i2c.pos,0,8);/* Sequential transfers increment the int cursor past 255; RAM accesses mask it. */
-      if(cmos.addr<0)arc_state_fail(s,"cmos.addr range");ARC_STATE_BOUND(s,systemtime.mon,1,12);ARC_STATE_BOUND(s,systemtime.day,1,31);ARC_STATE_BOUND(s,systemtime.msec,0,999);ARC_STATE_BOUND(s,systemtime.sec,0,60);ARC_STATE_BOUND(s,systemtime.min,0,59);ARC_STATE_BOUND(s,systemtime.hour,0,23);
+      ARC_STATE_BOUND(s,cmos.addr,0,65535);ARC_STATE_BOUND(s,systemtime.mon,1,12);ARC_STATE_BOUND(s,systemtime.day,1,31);ARC_STATE_BOUND(s,systemtime.msec,0,999);ARC_STATE_BOUND(s,systemtime.sec,0,60);ARC_STATE_BOUND(s,systemtime.min,0,59);ARC_STATE_BOUND(s,systemtime.hour,0,23);
    }
 }
