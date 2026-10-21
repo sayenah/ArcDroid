@@ -61,3 +61,8 @@ void writecp15(int reg, uint32_t val)
 	}
 }
 
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/cp15_state.inc"
+#endif

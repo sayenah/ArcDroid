@@ -332,3 +332,8 @@ void lc_write(uint32_t addr, uint8_t val)
 		lc.pal[(addr >> 2) & 0xf] = lc_palette[val & 0xf];
 	//rpclog("lc_write: addr=%07x val=%02x PC=%07x\n", addr, val, PC);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/lc_state.inc"
+#endif

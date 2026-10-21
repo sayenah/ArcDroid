@@ -49,17 +49,31 @@ policy_sites={'arc_disk_insert_entry':1,'arc_disc_commit':5,
     'arc_disc_observation':2,'arc_disc_setup':1,'arc_rpc_disc_log':1,
     'arc_disc_boundary':2,'arc_disk_replace':4,'arc_poll_inputs':4,
     'arc_disk_set_eject':2,'arc_disk_set_index':1,'arc_disk_add':1,'arc_keyboard':1,
-    'retro_reset':1,'retro_run':2}
+    'retro_reset':1,'arc_run':2}
 for name,count in policy_sites.items():
     require(len(re.findall(r'\barc_kind\s*==\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==count,f'{name}: changed session-kind policy census')
 media_error='arc_kind==ARC_SESSION_KIND_RISCPC?"The selected disc could not be loaded. Check that the file is complete and a supported type.":'
 for name,count in [('arc_disk_replace',2),('arc_disk_set_eject',1)]:
     require(body(name).count(media_error)==count,f'{name}: changed safe RPC media error owner')
-require('arc_kind==ARC_SESSION_KIND_RISCPC?"The emulated RiscPC stopped. Close and reload this content.":' in body('retro_run'),
+require('arc_kind==ARC_SESSION_KIND_RISCPC?"The emulated RiscPC stopped. Close and reload this content.":' in body('arc_run'),
         'retro_run: changed safe RPC fault owner')
 for name,signal in [('arc_disc_observation','B'),('arc_disc_boundary','A')]:
     require(re.search(r'if\([^\n]*arc_kind==ARC_SESSION_KIND_RISCPC\)\s*arc_log\(RETRO_LOG_INFO,\s*"Disc request: signal='+signal,body(name)),
             f'{name}: changed safe RPC disc log owner')
+# R-SS4e: secondary/failed rollback stops execution, callback restoration alone
+# cannot publish speculation, and the outer real return finalizes storage.
+# Pin the full delegation/ordering; comments and whitespace carry no policy.
+wrapper=re.sub(r'/\*.*?\*/|//[^\n]*','',body('retro_run'),flags=re.S)
+expected_wrapper='''
+   if(arc_secondary_instance||arc_rpc_alias_lifecycle||arc_state_rollback_failed)return;
+   if(arc_state_speculation&&arc_input_poll==arc_state_real_poll)return;
+   arc_state_inside_run=true;arc_run();
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR&&!arc_state_speculation)
+      (void)arc_state_boundary_finish();
+   arc_state_inside_run=false;
+'''
+require(''.join(wrapper.split())==''.join(expected_wrapper.split()),
+        'retro_run: changed secondary/reentrancy/speculation/publication wrapper')
 for name in ('arc_disc_commit','arc_disk_set_eject','arc_disk_set_index','arc_disk_replace','arc_disk_add','arc_keyboard'):
     require(len(re.findall(r'\barc_kind\s*!=\s*ARC_SESSION_KIND_RISCPC\b',body(name)))==1,f'{name}: changed part 2 non-RPC policy census')
 poll=body('arc_poll_inputs')

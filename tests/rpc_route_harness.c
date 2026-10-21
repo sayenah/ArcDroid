@@ -5,6 +5,9 @@
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1 /* RTLD_NODELETE in the Mac ASan run-ahead model. */
+#endif
 #endif
 #include "libretro.h"
 #include "../libretro/arc_session.h"
@@ -31,7 +34,9 @@ static bool discarded_failure,ask_chooser,chooser_seen,fault_core;
 static bool trace_logs;
 static unsigned selected_reads;
 static const char *primary_library_path;
-static unsigned registrations,secondary_refusals;
+static unsigned registrations,secondary_refusals,mode_notices;
+static bool ss1_case,no_module_path;
+static unsigned secondary_queries,primary_polls;
 static bool change_locator,system_unavailable;
 static bool boot_unreadable,preflight_unavailable,preflight_ready;
 static uint64_t last_session;
@@ -102,8 +107,8 @@ static void log_capture(enum retro_log_level level,const char *format,...)
 {
     char text[8192];va_list args;va_start(args,format);int length=vsnprintf(text,sizeof(text),format,args);va_end(args);
     if(trace_logs){fprintf(stderr,"route-log: level=%u formatted-length=%d format=[%s] text=[%s]\n",(unsigned)level,length,format,text);fflush(stderr);}
-    if(strstr(text,"RPC secondary load refused before preparation"))++secondary_refusals;
-    if(!strncmp(text,"ArcDroid build:",15)){if(!metadata_only)assert(strstr(text,"gate=open"));
+    if(strstr(text,"secondary load refused before preparation"))++secondary_refusals;
+    if(!strncmp(text,"ArcDroid build:",15)){if(!metadata_only && !ss1_case)assert(strstr(text,"gate=open"));
         if(fault_core){assert(strstr(text,"substitutions=authored-catalogue,test-faults,test-plans"));
             if(symbol("arc_route_probe_position"))assert(strstr(text,",read-only-position,unit-clock"));}
         if(strstr(text,"target=arcdroid_rpcroute_libretro"))assert(strstr(text,"substitutions=authored-catalogue catalogue=authored"));}
@@ -121,7 +126,7 @@ static void log_capture(enum retro_log_level level,const char *format,...)
 static bool environment(unsigned command,void *data)
 {
     switch(command){
-    case RETRO_ENVIRONMENT_GET_LIBRETRO_PATH:*(const char **)data=primary_library_path;return true;
+    case RETRO_ENVIRONMENT_GET_LIBRETRO_PATH:if(no_module_path)return false;*(const char **)data=primary_library_path;return true;
     case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:++registrations;return true;
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:if(metadata_only){*(unsigned *)data=2;return true;}return false;
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:{
@@ -143,8 +148,8 @@ static bool environment(unsigned command,void *data)
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
     case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:++registrations;disks=*(struct retro_disk_control_ext_callback *)data;return true;
     case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{if(legacy_interface)return false;struct retro_message_ext *m=data;
-        if(m->type==RETRO_MESSAGE_TYPE_STATUS){assert(m->target==RETRO_MESSAGE_TARGET_OSD);assert(m->priority==(*m->msg && m->level!=RETRO_LOG_ERROR?2u:3u));assert(!*m->msg?m->duration==1u:m->level==RETRO_LOG_ERROR?m->duration==~0u:(m->duration==2000u || m->duration==5000u));}++notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
-    case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;++notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
+        if(m->type==RETRO_MESSAGE_TYPE_STATUS){assert(m->target==RETRO_MESSAGE_TARGET_OSD);assert(m->priority==(*m->msg && m->level!=RETRO_LOG_ERROR?2u:3u));assert(!*m->msg?m->duration==1u:m->level==RETRO_LOG_ERROR?m->duration==~0u:(m->duration==2000u || m->duration==5000u));}++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
+    case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
     default:return false;
     }
 }
@@ -162,10 +167,21 @@ static void route_raster(const void *p,unsigned w,unsigned h,size_t pitch){
 static void video(const void *p,unsigned w,unsigned h,size_t pitch){route_raster(p,w,h,pitch);(void)p;(void)w;(void)h;(void)pitch;++videos;if(tracing){trace(&w,sizeof(w));trace(&h,sizeof(h));if(p)for(unsigned y=0;y<h;++y)trace((const unsigned char *)p+y*pitch,w*4);}
     if(p){const unsigned char *row=p;bool nonzero=false;for(unsigned y=0;y<h && !nonzero;++y)for(unsigned x=0;x<w*4;++x)if(row[y*pitch+x]){nonzero=true;break;}if(!allow_arculator && !running)assert(!nonzero);if(nonzero)++guest_fields;}}
 static size_t audio(const int16_t *p,size_t n){if(!allow_arculator && !running)for(size_t i=0;i<n*2;++i)assert(!p[i]);if(tracing)trace(p,n*4);++audios;return n;}
-static void poll(void){}
+static void poll(void){++primary_polls;}
+static void null_poll(void){} /* RetroArch's non-NULL preempt/fake poll hook. */
 static int16_t input(unsigned a,unsigned b,unsigned c,unsigned d){(void)a;(void)b;(void)c;(void)d;return 0;}
 static void sample(int16_t left,int16_t right){(void)left;(void)right;}
 static bool (*primary_load)(const struct retro_game_info *);
+static size_t (*state_size)(void);
+static bool (*serialize)(void *,size_t),(*unserialize)(const void *,size_t);
+static void (*actual_run)(void);
+static void rpc_state_refused(void)
+{
+    unsigned char bytes[64];memset(bytes,0x5a,sizeof(bytes));
+    assert(state_size()==0 && !serialize(bytes,sizeof(bytes)) && !unserialize(bytes,sizeof(bytes)));
+    for(unsigned i=0;i<sizeof(bytes);++i)assert(bytes[i]==0x5a);
+}
+static void checked_run(void){actual_run();if(!allow_arculator)rpc_state_refused();}
 static void (*set_video)(retro_video_refresh_t),(*set_sample)(retro_audio_sample_t),(*set_audio)(retro_audio_sample_batch_t),(*set_poll)(retro_input_poll_t),(*set_input)(retro_input_state_t);
 static unsigned (*api_version)(void);
 static void (*av_info)(struct retro_system_av_info *);
@@ -175,6 +191,7 @@ static bool load_primary(const struct retro_game_info *game)
      * before core_init_libretro_cbs (:4634-4638), then queries AV (:4664).
      * In particular, the first primary load has NO frame callbacks. */
     if(!primary_load(game))return false;
+    if(!allow_arculator)rpc_state_refused();
     assert(api_version()==RETRO_API_VERSION);
     set_video(video);set_sample(sample);set_audio(audio);set_input(input);set_poll(poll);
     callbacks_ready=true;
@@ -186,6 +203,7 @@ static bool probe_environment(unsigned command,void *data)
 static bool ignored_environment(unsigned command,void *data){(void)command;(void)data;return false;}
 static bool secondary_environment(unsigned command,void *data)
 {
+    if(command!=RETRO_ENVIRONMENT_GET_LIBRETRO_PATH && command!=RETRO_ENVIRONMENT_GET_LOG_INTERFACE)++secondary_queries;
     /* runahead.c:390-406 forwards to the SAME primary environment; the only
      * secondary override is GET_VARIABLE[_UPDATE], not GET_LIBRETRO_PATH. */
     if(command==RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE){*(bool *)data=true;return true;}
@@ -206,10 +224,11 @@ static void check_alias(const struct retro_game_info *game,void (*env)(retro_env
     secondary_refusals=0;
 }
 #define LOAD(v,n) do{void *p=symbol(n);assert(p);memcpy(&(v),&p,sizeof(v));}while(0)
+#include "arculator_runahead_model.inc"
 int main(int argc,char **argv)
 {
     if(argc==2 && !strcmp(argv[1],"--check-discarded-paths")){check_discarded_paths();return 0;}
-    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));trace_logs=argc==8;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
+    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));trace_logs=argc==8;ss1_case=!strncmp(argv[5],"ss1-secondary",13)||!strncmp(argv[5],"ss1-runahead:",13);no_module_path=strstr(argv[5],"-no-path")!=NULL;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
@@ -217,8 +236,8 @@ int main(int argc,char **argv)
 #endif
     assert(library);
     void (*env)(retro_environment_t),(*init)(void),(*deinit)(void),(*unload)(void),(*run)(void),(*reset)(void);
-    bool (*load)(const struct retro_game_info *),(*serialize)(void *,size_t),(*unserialize)(const void *,size_t);size_t (*state_size)(void);
-    LOAD(env,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(unload,"retro_unload_game");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(primary_load,"retro_load_game");raw_load=load_primary;load_calendar=!strcmp(argv[5],"calendar");load=load_with_calendar;
+    bool (*load)(const struct retro_game_info *);
+    LOAD(env,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(unload,"retro_unload_game");LOAD(actual_run,"retro_run");run=checked_run;LOAD(reset,"retro_reset");LOAD(primary_load,"retro_load_game");raw_load=load_primary;load_calendar=!strcmp(argv[5],"calendar");load=load_with_calendar;
     if(load_calendar)LOAD(captured_year,"arc_libretro_test_rpc_load_year");
     LOAD(api_version,"retro_api_version");LOAD(av_info,"retro_get_system_av_info");LOAD(set_sample,"retro_set_audio_sample");
     LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");
@@ -232,11 +251,89 @@ int main(int argc,char **argv)
     if(!strcmp(argv[5],"primary-menu")){info(&system);env(probe_environment);env(ignored_environment);}
     info(&system);env(probe_environment);env(ignored_environment);info(&system);
     env(environment);init();struct retro_game_info game={.path=argv[4]};
+    if(!strncmp(argv[5],"ss1-runahead:",13)){
+        unsigned settings=0;assert(sscanf(argv[5]+13,"%u:%u",&settings,&model_poll_type)==2);
+        assert(settings<16 && model_poll_type<3);
+        model_session(&game,argv[6],unload,deinit,settings);return 0;
+    }
     if(metadata_only){
         printf("system|%s|%s|%s|%u|%u\n",system.library_name,system.library_version,system.valid_extensions,system.need_fullpath,system.block_extract);deinit();return 0;
     }
     assert(!callbacks_ready && !videos && !audios && !secondary_refusals);
     legacy_interface=!strcmp(argv[5],"legacy");
+    if(ss1_case){
+        bool cold=strstr(argv[5],"-cold")!=NULL;
+        allow_arculator=true;assert(load(&game));
+        if(!cold)run(); /* A cheat may create the copy before the first frame. */
+        size_t bytes=state_size();assert(bytes>0 && bytes<=16u*1024u*1024u);
+        unsigned char *before=malloc(bytes),*after=malloc(bytes);assert(before && after);memset(before,0x5a,bytes);
+        void (*cheat_reset)(void),(*cheat_set)(unsigned,bool,const char *);
+        LOAD(cheat_reset,"retro_cheat_reset");LOAD(cheat_set,"retro_cheat_set");
+        static const char *routes[]={"run-ahead create","failed-preempt re-entry","cheat set","cheat reset"};
+        /* v1.22.2 runahead.c secondary_core_create always sets environment,
+         * initializes and loads BEFORE installing frame callbacks. Its failed
+         * load destroys the copy with unload/deinit. Cheats independently call
+         * ensure_exists after the primary cheat; preempt teardown restores
+         * availability without clearing the known-size bit. These are authored
+         * public-entry-point models, with both copied and aliased libraries. */
+        for(unsigned alias=no_module_path?1u:0u;alias<2;++alias)for(unsigned route=cold?2u:0u;route<4;++route){
+            if(route==1){set_poll(null_poll);assert(!serialize(after,bytes));set_poll(poll);}
+            if(route==2)cheat_set(0,true,"00000000");
+            if(route==3)cheat_reset();
+            if(!cold){
+                assert(serialize(before,bytes));
+                /* Capture itself must retain the raw stream cursor after a guest
+                 * write through an established durable frontier. */
+                assert(serialize(after,bytes) && !memcmp(before,after,bytes));
+            } /* Cheats can create the copy before ANY successful save. */
+            unsigned w=writes,n=notices,r=registrations,v=videos,a=audios,q=secondary_queries,p=primary_polls;
+            struct retro_disk_control_ext_callback registered=disks;
+            void (*se)(retro_environment_t)=env,(*si)(void)=init,(*sd)(void)=deinit,(*su)(void)=unload,(*sr)(void)=run,(*sx)(void)=reset;
+            bool (*sl)(const struct retro_game_info *)=primary_load,(*save)(void *,size_t)=serialize,(*restore)(const void *,size_t)=unserialize;
+            size_t (*sz)(void)=state_size;
+#ifndef _WIN32
+            void *primary=library,*copy=NULL;
+#else
+            HMODULE primary=library,copy=NULL;
+#endif
+            if(!alias){
+#ifdef _WIN32
+                copy=LoadLibraryA(argv[6]);
+#else
+                copy=dlopen(argv[6],RTLD_NOW|RTLD_LOCAL);
+#endif
+                assert(copy);library=copy;
+                LOAD(se,"retro_set_environment");LOAD(si,"retro_init");LOAD(sd,"retro_deinit");LOAD(su,"retro_unload_game");LOAD(sr,"retro_run");LOAD(sx,"retro_reset");LOAD(sl,"retro_load_game");
+                LOAD(sz,"retro_serialize_size");LOAD(save,"retro_serialize");LOAD(restore,"retro_unserialize");
+            }
+            se(secondary_environment);si();assert(!sl(&game));
+            memset(after,0x5a,bytes);assert(sz()==0 && !save(after,bytes) && !restore(before,bytes));
+            for(size_t i=0;i<bytes;++i)assert(after[i]==0x5a);
+            /* Also challenge ignored lifecycle calls while the nested owner is
+             * active. The real frontend failure path only unloads/deinitializes. */
+            sx();sr();su();sd();
+            if(copy){
+#ifdef _WIN32
+                assert(FreeLibrary(copy));
+#else
+                assert(!dlclose(copy));
+#endif
+                library=primary;
+            }
+            assert(writes==w && notices==n && registrations==r && videos==v && audios==a && secondary_queries==q && primary_polls==p);
+            assert(!memcmp(&registered,&disks,sizeof(disks)));
+            if(!cold)assert(serialize(after,bytes) && !memcmp(before,after,bytes));
+            /* Refused live replacement is independently covered, without a
+             * secondary callback marker. Primary remains exactly saveable. */
+            assert(!primary_load(&game));
+            if(!cold)assert(serialize(after,bytes) && !memcmp(before,after,bytes));
+            assert(writes==w && registrations==r && notices==n);
+            run();assert(videos==v+1 && audios>a);
+            printf("SS-1 %s %s: refused; zero writes/registrations; %s primary survives\n",alias?"alias":"copy",routes[route],cold?"before first capture;":"exact saved");
+        }
+        assert(serialize(after,bytes) && unserialize(after,bytes));run();
+        free(before);free(after);unload();deinit();vfs_assert_no_open_handles();return 0;
+    }
     if(!strcmp(argv[5],"primary-arc")){
         allow_arculator=true;assert(load(&game) && callbacks_ready && arculator_starts==1);
         check_alias(&game,env,init,reset,run,unload,deinit);
@@ -348,8 +445,8 @@ int main(int argc,char **argv)
         void *secondary=dlopen(argv[6],RTLD_NOW|RTLD_LOCAL);assert(secondary);library=secondary;
 #endif
         void (*se)(retro_environment_t),(*si)(void),(*sd)(void),(*su)(void),(*sr)(void),(*sc)(void),(*ss)(unsigned,bool,const char *);
-        bool (*sl)(const struct retro_game_info *);
-        LOAD(se,"retro_set_environment");LOAD(si,"retro_init");LOAD(sd,"retro_deinit");LOAD(su,"retro_unload_game");LOAD(sr,"retro_run");LOAD(sl,"retro_load_game");LOAD(sc,"retro_cheat_reset");LOAD(ss,"retro_cheat_set");
+        bool (*sl)(const struct retro_game_info *),(*save)(void *,size_t),(*restore)(const void *,size_t);size_t (*sz)(void);
+        LOAD(se,"retro_set_environment");LOAD(si,"retro_init");LOAD(sd,"retro_deinit");LOAD(su,"retro_unload_game");LOAD(sr,"retro_run");LOAD(sl,"retro_load_game");LOAD(sc,"retro_cheat_reset");LOAD(ss,"retro_cheat_set");LOAD(sz,"retro_serialize_size");LOAD(save,"retro_serialize");LOAD(restore,"retro_unserialize");
         unsigned w=writes,n=notices,v=videos,a=audios,r=registrations,refused=secondary_refusals;
         se(secondary_environment);si();
         /* Initial create, failed-preempt re-entry, cheat reset, cheat set all
@@ -359,6 +456,8 @@ int main(int argc,char **argv)
          * newly loaded copy, as this loop does. */
         assert(!sl(&game));
         assert(secondary_refusals==refused+1);
+        unsigned char denied[64];memset(denied,0x5a,sizeof(denied));assert(sz()==0 && !save(denied,sizeof(denied)) && !restore(denied,sizeof(denied)));
+        for(unsigned i=0;i<sizeof(denied);++i)assert(denied[i]==0x5a);
         sc();ss(0,true,"00000000");sr();su();sd();
         assert(writes==w && notices==n && videos==v && audios==a && running==1 && registrations==r);
         assert(!memcmp(&disks,&primary_disks,sizeof(disks)));

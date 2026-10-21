@@ -211,3 +211,8 @@ uint8_t printer_status_read(void)
 
 	return temp;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/printer_state.inc"
+#endif

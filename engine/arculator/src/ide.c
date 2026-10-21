@@ -396,3 +396,8 @@ void writeide(ide_t *ide, uint32_t address, uint8_t value)
     default: return;
     }
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/ide_state.inc"
+#endif

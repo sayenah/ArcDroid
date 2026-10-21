@@ -180,3 +180,8 @@ uint8_t joystick_rtfm_read(uint32_t a)
 	}
 	return temp;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/joystick_state.inc"
+#endif

@@ -457,3 +457,8 @@ static disc_funcs_t jfd_disc_funcs = {
    .close = jfd_close,
    .multiwrite = 1
 };
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/disc_jfd_state.inc"
+#endif

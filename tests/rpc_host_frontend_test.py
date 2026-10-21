@@ -1,6 +1,6 @@
 """Author-only production frontend lifecycle and shipping A/B. GPL-2.0-only."""
 from pathlib import Path
-import shutil,subprocess,sys,tempfile,struct,zipfile
+import os,shutil,subprocess,sys,tempfile,struct,zipfile
 from rpc_cmos_factory_rom import generate
 from generate_fixtures import build_extended_jfd
 from rpc_video_rom import program
@@ -45,7 +45,15 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
     outputs=[];stores=[]
     for i,library in enumerate([core,*extra]):
         save=root/(f'HOST-PRIVATE-SENTINEL-save{i}' if mode.startswith(('freeze','message-')) else f'save{i}');save.mkdir()
-        run=subprocess.run([exe,library,str(content if mode.startswith('shipping') else plan),str(system),str(save),mode],capture_output=True,text=True,timeout=120)
+        command=[exe,library,str(content if mode.startswith('shipping') else plan),str(system),str(save),mode]
+        if not mode.startswith('shipping'):
+            copied=root/('secondary'+Path(library).suffix);shutil.copyfile(library,copied);command.append(str(copied))
+        env=dict(os.environ)
+        if not mode.startswith('shipping'):
+            # Deliberate dlopen of a copied C module; duplicate exported global
+            # names are expected. Memory and undefined-behaviour checks stay on.
+            env['ASAN_OPTIONS']=env.get('ASAN_OPTIONS','')+':detect_odr_violation=0'
+        run=subprocess.run(command,capture_output=True,text=True,timeout=120,env=env)
         assert run.returncode==0,run.stdout+run.stderr
         output=run.stdout
         if mode.startswith('shipping-override'):
@@ -62,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='arc-r3d3-frontend-') as temporary:
         stores.append(save_snapshot(save))
     if extra:
         assert outputs[0]==outputs[1], '\n'.join(__import__('difflib').unified_diff(outputs[0].splitlines(),outputs[1].splitlines()))
-        assert stores[0]==stores[1] and stores[0]
+        assert stores[0]==stores[1] and stores[0], 'save projection differs: '+repr(sorted(name for name in stores[0].keys()|stores[1].keys() if stores[0].get(name)!=stores[1].get(name)))
         assert not any('riscpc' in name for name in stores[0])
         label='unflagged' if mode=='shipping-legacy' else 'RPC-flagged'
         print(f'shipping ordinary {label} content: complete log/message/AV/media/audio projection and {len(stores[0])} persisted/staged files byte-identical; G-3 excluded')

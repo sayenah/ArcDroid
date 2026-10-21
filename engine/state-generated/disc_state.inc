@@ -1,0 +1,70 @@
+/* Generated from the reviewed SS-1 inventory; GPL-2.0-only. */
+#include "arc_state.h"
+void arc_state_visit_engine_arculator_src_disc(ArcState *s)
+{
+   arc_state_region(s,"engine/arculator/src/disc.c:discname",&discname,sizeof(discname));
+   arc_state_region(s,"engine/arculator/src/disc.c:defaultwriteprot",&defaultwriteprot,sizeof(defaultwriteprot));
+   arc_state_region(s,"engine/arculator/src/disc.c:disc_timer",&disc_timer,sizeof(disc_timer));
+   arc_state_region(s,"engine/arculator/src/disc.c:drive_funcs",&drive_funcs,sizeof(drive_funcs));
+   arc_state_region(s,"engine/arculator/src/disc.c:disc_drivesel",&disc_drivesel,sizeof(disc_drivesel));
+   arc_state_region(s,"engine/arculator/src/disc.c:disc_notfound",&disc_notfound,sizeof(disc_notfound));
+   arc_state_region(s,"engine/arculator/src/disc.c:curdrive",&curdrive,sizeof(curdrive));
+   arc_state_region(s,"engine/arculator/src/disc.c:discchange",&discchange,sizeof(discchange));
+   arc_state_region(s,"engine/arculator/src/disc.c:fdctype",&fdctype,sizeof(fdctype));
+   arc_state_region(s,"engine/arculator/src/disc.c:readflash",&readflash,sizeof(readflash));
+   arc_state_region(s,"engine/arculator/src/disc.c:motoron",&motoron,sizeof(motoron));
+   arc_state_region(s,"engine/arculator/src/disc.c:writeprot",&writeprot,sizeof(writeprot));
+   arc_state_region(s,"engine/arculator/src/disc.c:disc_current_track",&disc_current_track,sizeof(disc_current_track));
+   arc_state_region(s,"engine/arculator/src/disc.c:disc_poll_time",&disc_poll_time,sizeof(disc_poll_time));
+   arc_state_region(s,"engine/arculator/src/disc.c:fdc_funcs",&fdc_funcs,sizeof(fdc_funcs));
+   arc_state_region(s,"engine/arculator/src/disc.c:fdc_p",&fdc_p,sizeof(fdc_p));
+   arc_state_region(s,"engine/arculator/src/disc.c:fdc_timer",&fdc_timer,sizeof(fdc_timer));
+   arc_state_region(s,"engine/arculator/src/disc.c:fdc_overridden",&fdc_overridden,sizeof(fdc_overridden));
+   arc_state_region(s,"engine/arculator/src/disc.c:fdc_ready",&fdc_ready,sizeof(fdc_ready));
+   arc_state_target(s,&disc_timer,ARC_STATE_REFERENCE_TIMER);
+   if (!arc_state_pass(s)) return;
+   arc_state_object(s,"engine/arculator/src/disc.c:discname");
+   arc_state_value(s,&(discname),sizeof(discname));
+   arc_state_object(s,"engine/arculator/src/disc.c:defaultwriteprot");
+   arc_state_value(s,&(defaultwriteprot),sizeof(defaultwriteprot));
+   arc_state_object(s,"engine/arculator/src/disc.c:disc_timer");
+   arc_state_value(s,&((disc_timer).ts_integer),sizeof((disc_timer).ts_integer));
+   arc_state_value(s,&((disc_timer).ts_frac),sizeof((disc_timer).ts_frac));
+   arc_state_value(s,&((disc_timer).enabled),sizeof((disc_timer).enabled));
+   arc_state_typed_reference(s,(void*)&((disc_timer).prev),0,1,1,ARC_STATE_REFERENCE_TIMER);
+   arc_state_typed_reference(s,(void*)&((disc_timer).next),0,1,1,ARC_STATE_REFERENCE_TIMER);
+   arc_state_object(s,"engine/arculator/src/disc.c:drive_funcs");
+   for (size_t ss_i0=0; ss_i0<sizeof(drive_funcs)/sizeof((drive_funcs)[0]); ++ss_i0) {
+      arc_state_typed_reference(s,(void*)&((drive_funcs)[ss_i0]),0,1,1,ARC_STATE_REFERENCE_DISC_FUNCTIONS);
+   }
+   arc_state_object(s,"engine/arculator/src/disc.c:disc_drivesel");
+   arc_state_value(s,&(disc_drivesel),sizeof(disc_drivesel));
+   arc_state_object(s,"engine/arculator/src/disc.c:disc_notfound");
+   arc_state_value(s,&(disc_notfound),sizeof(disc_notfound));
+   arc_state_object(s,"engine/arculator/src/disc.c:curdrive");
+   arc_state_value(s,&(curdrive),sizeof(curdrive));
+   arc_state_object(s,"engine/arculator/src/disc.c:discchange");
+   arc_state_value(s,&(discchange),sizeof(discchange));
+   arc_state_object(s,"engine/arculator/src/disc.c:fdctype");
+   arc_state_value(s,&(fdctype),sizeof(fdctype));
+   arc_state_object(s,"engine/arculator/src/disc.c:readflash");
+   arc_state_value(s,&(readflash),sizeof(readflash));
+   arc_state_object(s,"engine/arculator/src/disc.c:motoron");
+   arc_state_value(s,&(motoron),sizeof(motoron));
+   arc_state_object(s,"engine/arculator/src/disc.c:writeprot");
+   arc_state_value(s,&(writeprot),sizeof(writeprot));
+   arc_state_object(s,"engine/arculator/src/disc.c:disc_current_track");
+   arc_state_value(s,&(disc_current_track),sizeof(disc_current_track));
+   arc_state_object(s,"engine/arculator/src/disc.c:disc_poll_time");
+   arc_state_value(s,&(disc_poll_time),sizeof(disc_poll_time));
+   arc_state_object(s,"engine/arculator/src/disc.c:fdc_funcs");
+   arc_state_typed_reference(s,(void*)&(fdc_funcs),0,1,1,ARC_STATE_REFERENCE_FDC_FUNCTIONS);
+   arc_state_object(s,"engine/arculator/src/disc.c:fdc_p");
+   arc_state_typed_reference(s,(void*)&(fdc_p),0,1,1,ARC_STATE_REFERENCE_CONTROLLER);
+   arc_state_object(s,"engine/arculator/src/disc.c:fdc_timer");
+   arc_state_typed_reference(s,(void*)&(fdc_timer),0,1,1,ARC_STATE_REFERENCE_TIMER);
+   arc_state_object(s,"engine/arculator/src/disc.c:fdc_overridden");
+   arc_state_value(s,&(fdc_overridden),sizeof(fdc_overridden));
+   arc_state_object(s,"engine/arculator/src/disc.c:fdc_ready");
+   arc_state_value(s,&(fdc_ready),sizeof(fdc_ready));
+}

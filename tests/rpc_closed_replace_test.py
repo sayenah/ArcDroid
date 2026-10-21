@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Closed shipping live-load CMOS save and its negative control. GPL-2.0-only."""
+"""Shipping live-load refusal, explicit unload CMOS save and negative control. GPL-2.0-only."""
 import hashlib
 import json
 import os
@@ -39,7 +39,7 @@ def check(library):
                                 text=True, timeout=120)
         if result.returncode:
             raise RuntimeError(result.stdout + result.stderr)
-        assert 'live session replaced before its first frame' in result.stdout
+        assert 'live replacement refused; explicit unload preserves outgoing CMOS' in result.stdout
         # Independent ARCCMOS2 wire oracle: test OS=1, A3000=4 MiB,
         # machine-name polynomial tag, CRC32 of the ASCII content SHA1.
         content = hashlib.sha1(image).hexdigest()
@@ -67,8 +67,8 @@ if '--mutant' in sys.argv[5:]:
         [ninja, '-t', 'compdb', '-x'], cwd=build, text=True))]
     source = root / 'libretro/arcdroid_libretro.c'
     original = source.read_text()
-    start = original.index('static bool arc_load_game(')
-    anchor = '   if (arc_loaded) arc_persist_cmos();'
+    start = original.index('RETRO_API void retro_unload_game(')
+    anchor = 'if(arc_state_boundary_finish()) {arc_boot_persist_seed();arc_persist_cmos();}'
     offset = original.index(anchor, start)
     cc, link = rebuild_commands(commands, source, 'arcdroid_libretro', build, os.name == 'nt')
     assert not any('ARCDROID_TEST_' in arg for arg in cc)
@@ -76,7 +76,7 @@ if '--mutant' in sys.argv[5:]:
     with tempfile.TemporaryDirectory(prefix='rpc-closed-replace-mutant-') as directory:
         temporary = Path(directory)
         mutated = temporary / source.name
-        mutated.write_text(original[:offset] + original[offset:].replace(anchor, '   (void)0;', 1))
+        mutated.write_text(original[:offset] + original[offset:].replace(anchor, 'if(arc_state_boundary_finish()) {arc_boot_persist_seed();}', 1))
         obj = temporary / 'frontend.o'
         library = temporary / core.name
         previous = cc[cc.index('-o') + 1]

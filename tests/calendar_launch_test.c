@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #ifdef _WIN32
 #include <windows.h>
 static HMODULE library;
@@ -23,17 +24,24 @@ static void *symbol(const char *s){return dlsym(library,s);}
 #define LOAD(v,n) do{void *p=symbol(n);assert(p);memcpy(&(v),&p,sizeof(v));}while(0)
 #define API(n) __typeof__(&n) p_##n;LOAD(p_##n,#n)
 static const char *system_directory;
-static bool confirm,session_mode;
+static bool confirm,session_mode,save_state_mode;
+static const char *machine="A3000";
+static uint64_t pcm_hash,picture_hash;
+static void calendar_log(enum retro_log_level level,const char *format,...)
+{if(save_state_mode && level>=RETRO_LOG_WARN){va_list args;va_start(args,format);vfprintf(stderr,format,args);va_end(args);}}
+static uint64_t calendar_hash(uint64_t hash,const void *data,size_t bytes)
+{const uint8_t *p=data;for(size_t i=0;i<bytes;++i){hash^=p[i];hash*=UINT64_C(1099511628211);}return hash;}
 static bool environment(unsigned command,void *data)
 {
    switch(command){
+   case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:((struct retro_log_callback *)data)->log=calendar_log;return true;
    case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:((struct retro_vfs_interface_info *)data)->iface=&vfs;return true;
    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:*(const char **)data=system_directory;return true;
    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:*(const char **)data=save_directory;return true;
    case RETRO_ENVIRONMENT_GET_CAN_DUPE:*(bool *)data=true;return true;
    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:return true;
    case RETRO_ENVIRONMENT_GET_VARIABLE:{struct retro_variable *v=data;
-      if(!strcmp(v->key,"arcdroid_machine"))v->value="A3000";
+      if(!strcmp(v->key,"arcdroid_machine"))v->value=machine;
       else if(!strcmp(v->key,"arcdroid_launch"))v->value=session_mode?"off":"auto";
       else if(!strcmp(v->key,"arcdroid_hard_disc"))v->value="off";
       else return false;return true;}
@@ -41,14 +49,15 @@ static bool environment(unsigned command,void *data)
    default:return false;
    }
 }
-static void video(const void *p,unsigned w,unsigned h,size_t pitch){(void)p;(void)w;(void)h;(void)pitch;}
-static size_t audio(const int16_t *p,size_t n){(void)p;return n;}
+static void video(const void *p,unsigned w,unsigned h,size_t pitch)
+{if(save_state_mode && p){picture_hash=calendar_hash(UINT64_C(1469598103934665603),&w,sizeof(w));picture_hash=calendar_hash(picture_hash,&h,sizeof(h));for(unsigned y=0;y<h;++y)picture_hash=calendar_hash(picture_hash,(const uint8_t *)p+y*pitch,w*4u);}}
+static size_t audio(const int16_t *p,size_t n){if(save_state_mode)pcm_hash=calendar_hash(pcm_hash,p,n*2u*sizeof(*p));return n;}
 static void poll(void){}
 static int16_t input(unsigned p,unsigned d,unsigned i,unsigned id)
 {(void)i;return p==0 && d==RETRO_DEVICE_JOYPAD && id==RETRO_DEVICE_ID_JOYPAD_A && confirm;}
 int main(int argc,char **argv)
 {
-   assert(argc==7);unsigned base=(unsigned)strtoul(argv[6],NULL,10);system_directory=argv[2];assert(canonical(argv[3],save_directory));
+   assert(argc==7 || argc==8 || argc==10);if(argc>=8)machine=argv[7];unsigned base=(unsigned)strtoul(argv[6],NULL,10);system_directory=argv[2];assert(canonical(argv[3],save_directory));
 #ifdef _WIN32
    library=LoadLibraryA(argv[1]);
 #else
@@ -69,12 +78,14 @@ int main(int argc,char **argv)
    bool (*write)(unsigned,uint8_t);LOAD(write,"arc_engine_test_cmos_bus_write");
    void (*clock)(int,int,int,int,int,int,int);LOAD(clock,"cmos_test_clock");
    bool construction_only=!strcmp(argv[5],"construction");
-   session_mode=!strcmp(argv[5],"session") || construction_only;
+   save_state_mode=!strncmp(argv[5],"ss1-",4);
+   session_mode=!strcmp(argv[5],"session") || construction_only || save_state_mode;
    p_retro_set_environment(environment);p_retro_set_video_refresh(video);
    p_retro_set_audio_sample_batch(audio);p_retro_set_input_poll(poll);p_retro_set_input_state(input);p_retro_init();
    bool chooser=!strcmp(argv[5],"chooser");
    struct retro_game_info game={.path=argv[4]};
    ArcBootObservation first={0},later={0};char record_path[4096]={0};
+   #include "arculator_state_calendar.inc"
    if(construction_only){
       void (*stop)(void);LOAD(stop,"arc_engine_stop");
       uint32_t (*read_word)(uint32_t);LOAD(read_word,"readmemf_debug");

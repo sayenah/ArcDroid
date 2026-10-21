@@ -295,3 +295,8 @@ void sound_init(void)
 	memset(filter_y_r, 0, sizeof(filter_y_r));
 	memset(filter_x_r, 0, sizeof(filter_x_r));
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/sound_state.inc"
+#endif

@@ -2743,3 +2743,30 @@ void execarm(int cycles_to_execute)
 	LOG_EVENT_LOOP("execarm() finished; and called pollline() %d times (should be ~160)\n",
 		pollline_call_count);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/arm_state.inc"
+#include "../../state-generated/cpu_extra.inc"
+void arc_state_visit_engine_arculator_src_arm_extra(ArcState *s) { arc_state_cpu_extra(s); }
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid modification (2026-10-18): authored differential harness CPU oracle. */
+size_t arc_engine_test_cpu_snapshot(void *output,size_t capacity)
+{
+   uint8_t snapshot[1024]={0};size_t at=0;
+#define ARC_CPU_OBSERVE(v) do { memcpy(snapshot+at,&(v),sizeof(v));at+=sizeof(v); } while(0)
+   ARC_CPU_OBSERVE(armregs);ARC_CPU_OBSERVE(userregs);ARC_CPU_OBSERVE(superregs);
+   ARC_CPU_OBSERVE(fiqregs);ARC_CPU_OBSERVE(irqregs);ARC_CPU_OBSERVE(opcode);
+   ARC_CPU_OBSERVE(opcode2);ARC_CPU_OBSERVE(opcode3);ARC_CPU_OBSERVE(mode);
+   ARC_CPU_OBSERVE(armirq);ARC_CPU_OBSERVE(databort);ARC_CPU_OBSERVE(prefabort);
+   ARC_CPU_OBSERVE(prefabort_next);ARC_CPU_OBSERVE(total_cycles);
+   ARC_CPU_OBSERVE(clock_domain);ARC_CPU_OBSERVE(mem_available_ts);
+   ARC_CPU_OBSERVE(refresh_ts);ARC_CPU_OBSERVE(pending_reads);
+   ARC_CPU_OBSERVE(cache_fill_addr);ARC_CPU_OBSERVE(promote_fetch_to_n);
+#undef ARC_CPU_OBSERVE
+   if(output&&capacity>=at)memcpy(output,snapshot,at);
+   return at;
+}
+#endif

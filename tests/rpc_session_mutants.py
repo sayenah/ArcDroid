@@ -42,8 +42,8 @@ mutants += [
  ('plan-clear-retains-terminal','libretro/rpc_preparation_host.c','*h->progress=*h->terminal=*h->advisory=*h->logged_progress=0;','*h->progress=*h->advisory=*h->logged_progress=0;'),
  # R-1a makes implicit replacement unreachable. Preserve the persistence
  # killers at the legitimate unload boundary and the new live-load barrier.
- ('unload-loses-cmos','libretro/arcdroid_libretro.c','   arc_boot_persist_seed();\n   arc_persist_cmos();','   arc_boot_persist_seed();'),
- ('live-reload-admitted','libretro/arcdroid_libretro.c','if(arc_loaded || arc_rpc_plan_admitted || (arc_rpc_secondary_instance()','if((arc_rpc_secondary_instance()'),
+ ('unload-loses-cmos','libretro/arcdroid_libretro.c','if(arc_state_boundary_finish()) {arc_boot_persist_seed();arc_persist_cmos();}','if(arc_state_boundary_finish()) {arc_boot_persist_seed();}'),
+ ('live-reload-admitted','libretro/arcdroid_libretro.c','if(arc_loaded || arc_rpc_plan_admitted || arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance())','if(arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance())'),
 ]
 import re
 front=(root/'libretro/arcdroid_libretro.c').read_text()

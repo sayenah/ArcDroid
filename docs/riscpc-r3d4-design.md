@@ -222,3 +222,21 @@ Notice corrections for Fable's text check (all class A, existing N-9 unchanged):
 | N-21 | Invalid local clock | The local clock could not be used for RiscPC settings. Check the system clock, then close and reload this content. |
 
 Archive absence uses the same bounded ancestor/enumeration contract as save preflight; invalid metadata never proves absence. Valid receipted reopen still accesses no package metadata. No new private input or observer qualification is introduced.
+
+## 11. SS-1 Run L integration (R-SS3g)
+
+R-1a now applies in both gate states and to Archimedes content. R-6a's two
+previous gate-open-only differences—refusing load over a live session and
+refusing Arculator secondary instances—are shipping behavior in both builds,
+not remaining identity exceptions. Legitimate replacement unloads first and
+retains outgoing CMOS publication. This supersedes §10's outstanding SS-1
+API 21–22 integration obligation; no Android API serialization switch is used.
+See `arculator-save-states.md`'s Run L section and the public-entrypoint suites.
+
+Run L's exact closed shipping projection uses accepted SS-1 Run K (`d92b50a`)
+as its CI baseline: the earlier pre-SS-1 core lacks the two durable CMOS
+frontier files already introduced by SS-1. No files are filtered out of the
+projection. Full log/message/AV/media/audio and save-tree equality remain
+required; the seven allowed open-gate help suffixes and N-9 projection retain
+their independent comparisons. A separate 56-case guest-output/CPU/PCM oracle
+still compares against the incoming pre-SS-1 R3d-4 `241036a` implementation.

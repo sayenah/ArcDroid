@@ -42,7 +42,9 @@ jobs:
         if: github.event_name != 'pull_request' || matrix.shard == 3
         with:
           persist-credentials: false
-          ref: 3eec7e68c43f57b89fe2560d4eb16b93d0dc67bf
+          # SS-1 Run M is the accepted ACFR3 frontier baseline. Preserve exact
+          # save-tree identity across this integration; lifecycle has its own tests.
+          ref: 3c6175889c738b21789b1264ec2cf7426de63d49
           path: build/r3d4-base-source
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache llvm
@@ -87,7 +89,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^rpc-(route-|shipping-route|artifact-classifier|lock-object)'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
@@ -212,7 +214,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^rpc-(route-|shipping-route|artifact-classifier|lock-object)'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
@@ -251,13 +253,13 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest -j "$(nproc)" --test-dir build/sanitize --output-on-failure -R '${{ github.event_name != 'pull_request' && '.*' || '^(rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-session-calendar|cmos-calendar-launch|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$' }}' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }} ${{ github.event_name == 'pull_request' && format('-L ^rpc-sanitizer-pr-{0}$', matrix.shard) || '' }}
+        run: ctest -j "$(nproc)" --test-dir build/sanitize --output-on-failure -R '${{ github.event_name != 'pull_request' && '.*' || '^(arculator-state-.*|rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-session-calendar|cmos-calendar-launch|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$' }}' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }} ${{ github.event_name == 'pull_request' && format('-L ^rpc-sanitizer-pr-{0}$', matrix.shard) || '' }}
       - name: Both gate states and authored ordinary route
         if: github.event_name != 'pull_request' || matrix.shard == 2
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON -DARCDROID_SANITIZERS=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^rpc-(route-|shipping-route|artifact-classifier|lock-object)'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/sanitize --platform ofd
@@ -442,7 +444,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$NUMBER_OF_PROCESSORS"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^rpc-(route-|shipping-route|artifact-classifier|lock-object)'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-windows.sh build/ordinary-open/arcdroid_libretro.dll
           tools/check-windows.sh build/ordinary-open/arcdroid_rpcroute_libretro.dll
           python3 tools/check-rpc-lock-object.py --build build/windows --platform windows

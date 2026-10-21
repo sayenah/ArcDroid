@@ -26,7 +26,7 @@ load=block('static bool arc_load_game(')
 failed=load.split('if (!arc_prepare_media_list(',1)[1].split('   arc_image_index',1)[0]
 assert failed.index('arc_message(error,')<failed.index('arc_rpc_staging_finish(arc_rpc_staging.flagged)')<failed.index('arc_release_session()')
 entry=block('RETRO_API bool retro_load_game(')
-barrier=entry.index('if(arc_loaded || arc_rpc_plan_admitted || (arc_rpc_secondary_instance()')
+barrier=entry.index('if(arc_loaded || arc_rpc_plan_admitted || arc_secondary_instance || arc_rpc_alias_lifecycle || arc_rpc_secondary_instance()')
 assert entry.index('return false;',barrier)<entry.index('arc_rpc_load_entry_ns=')<entry.index('arc_load_game(game, true)')
 identity=block('static bool arc_rpc_secondary_instance(')
 assert 'GET_LIBRETRO_PATH' in identity and 'RTLD_NOLOAD' in identity and 'dli_fbase' in identity
@@ -35,6 +35,6 @@ assert 'arc_video' not in identity
 for token,registration in [('RETRO_API void retro_set_environment(', 'arc_build_options()'),
                            ('RETRO_API void retro_init(', 'RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE')]:
     body=block(token)
-    assert body.index('if (arc_rpc_secondary_instance())')<body.index(registration)
+    assert body.index('arc_rpc_secondary_instance()')<body.index(registration)
 assert 'arc_riscpc_production_catalogue(' in (root/'engine/arcdroid_engine.c').read_text()
 print('rpc-route-source: complete staging producer census, final-error deferral and earliest secondary refusal verified')

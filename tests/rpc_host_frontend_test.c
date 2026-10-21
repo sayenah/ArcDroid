@@ -14,6 +14,8 @@ static bool projection_override;
 static const char *projection_axis;
 static bool shipping,failed,changed,write_off,last_catalogue_message,matrix_mode,following_arculator,direct_start_compat;
 static char terminal[512];
+static const char *primary_core_path;
+static unsigned secondary_environment_calls,secondary_logger_queries;
 static unsigned privacy_ext,privacy_legacy,privacy_notice,privacy_ext_notice,privacy_legacy_notice;
 static void hash(uint64_t *value,const void *data,size_t size)
 {const uint8_t *p=data;for(size_t i=0;i<size;++i){*value^=p[i];*value*=1099511628211ULL;}}
@@ -37,6 +39,7 @@ static void capture_log(enum retro_log_level level,const char *format,...)
 }
 static bool host_environment(unsigned command,void *data)
 {
+    if(command==RETRO_ENVIRONMENT_GET_LIBRETRO_PATH){*(const char **)data=primary_core_path;return true;}
     if(command==RETRO_ENVIRONMENT_GET_LOG_INTERFACE){((struct retro_log_callback *)data)->log=capture_log;return true;}
     if(command==RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE){disks=*(struct retro_disk_control_ext_callback *)data;return true;}
     if(command==RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK){keyboard=*(struct retro_keyboard_callback *)data;return true;}
@@ -74,6 +77,12 @@ static bool host_environment(unsigned command,void *data)
     }
     return environment(command,data);
 }
+static bool secondary_environment(unsigned command,void *data)
+{
+    if(command==RETRO_ENVIRONMENT_GET_LIBRETRO_PATH){*(const char **)data=primary_core_path;return true;}
+    if(command==RETRO_ENVIRONMENT_GET_LOG_INTERFACE){++secondary_logger_queries;return host_environment(command,data);}
+    ++secondary_environment_calls;return host_environment(command,data);
+}
 static void host_video(const void *data,unsigned w,unsigned h,size_t pitch)
 {
     ++videos;
@@ -93,7 +102,7 @@ static bool host_secondary_environment(unsigned command,void *data)
 {return host_environment(command,data);}
 int main(int argc,char **argv)
 {
-    assert(argc==6);matrix_mode=!strncmp(argv[5],"matrix:",7);shipping=!strncmp(argv[5],"shipping",8);projection_override=strstr(argv[5],"override")!=NULL;extended_messages=strstr(argv[5],"fallback")==NULL;system_directory=argv[3];assert(canonical(argv[4],save_directory));
+    assert(argc==6||argc==7);primary_core_path=argv[1];matrix_mode=!strncmp(argv[5],"matrix:",7);shipping=!strncmp(argv[5],"shipping",8);projection_override=strstr(argv[5],"override")!=NULL;extended_messages=strstr(argv[5],"fallback")==NULL;system_directory=argv[3];assert(canonical(argv[4],save_directory));
     projection_axis=strstr(argv[5],"override-cpu")?"arcdroid_cpu":strstr(argv[5],"override-os")?"arcdroid_os":"arcdroid_machine";
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
@@ -104,6 +113,8 @@ int main(int argc,char **argv)
     void (*set_environment)(retro_environment_t),(*init)(void),(*deinit)(void),(*run)(void),(*reset)(void),(*unload)(void);
     void (*set_video)(retro_video_refresh_t),(*set_audio)(retro_audio_sample_batch_t),(*set_poll)(retro_input_poll_t),(*set_input)(retro_input_state_t);
     bool (*load)(const struct retro_game_info *);void (*get_av)(struct retro_system_av_info *);
+    size_t (*state_size)(void);bool (*save_state)(void *,size_t),(*load_state)(const void *,size_t);
+    LOAD(state_size,"retro_serialize_size");LOAD(save_state,"retro_serialize");LOAD(load_state,"retro_unserialize");
     LOAD(get_av,"retro_get_system_av_info");LOAD(set_environment,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");
     LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");
     phase=no_phase;if(!shipping){LOAD(phase,"arc_test_plan_cmos_phase");}
@@ -113,13 +124,46 @@ int main(int argc,char **argv)
     if(reordered)assert(load(&game));
     set_video(host_video);set_audio(host_audio);set_poll(host_poll);set_input(input);
     if(!reordered)assert(load(&game));
+    uint8_t refused_state[64];memset(refused_state,0xa7,sizeof(refused_state));
+    if(!shipping)assert(!state_size()&&!save_state(refused_state,sizeof(refused_state))&&!load_state(refused_state,sizeof(refused_state)));
+    for(unsigned i=0;i<sizeof(refused_state);++i)assert(refused_state[i]==0xa7);
+    if(argc==7){
+        struct retro_disk_control_ext_callback registered=disks;
+        unsigned arc_before=arc_accesses,rpc_before=rpc_accesses,tmp_before=tmp_writes;
+        __typeof__(library) primary_library=library;
+#ifdef _WIN32
+        library=LoadLibraryA(argv[6]);
+#else
+        library=dlopen(argv[6],RTLD_NOW|RTLD_LOCAL);
+#endif
+        assert(library&&library!=primary_library);
+        void (*secondary_set_environment)(retro_environment_t),(*secondary_init)(void),(*secondary_run)(void),(*secondary_reset)(void),(*secondary_unload)(void),(*secondary_deinit)(void);
+        void (*secondary_cheat_set)(unsigned,bool,const char *),(*secondary_cheat_reset)(void);
+        bool (*secondary_load)(const struct retro_game_info *),(*secondary_save)(void *,size_t),(*secondary_restore)(const void *,size_t);size_t (*secondary_size)(void);
+        LOAD(secondary_set_environment,"retro_set_environment");LOAD(secondary_init,"retro_init");LOAD(secondary_load,"retro_load_game");LOAD(secondary_run,"retro_run");LOAD(secondary_reset,"retro_reset");LOAD(secondary_unload,"retro_unload_game");LOAD(secondary_deinit,"retro_deinit");
+        LOAD(secondary_cheat_set,"retro_cheat_set");LOAD(secondary_cheat_reset,"retro_cheat_reset");LOAD(secondary_save,"retro_serialize");LOAD(secondary_restore,"retro_unserialize");LOAD(secondary_size,"retro_serialize_size");
+        secondary_set_environment(secondary_environment);secondary_init();assert(!secondary_load(&game));
+        secondary_cheat_set(0,true,"authored");secondary_cheat_reset();secondary_run();secondary_reset();
+        assert(!secondary_size()&&!secondary_save(refused_state,sizeof(refused_state))&&!secondary_restore(refused_state,sizeof(refused_state)));
+        secondary_unload();secondary_deinit();
+        assert(!secondary_environment_calls&&secondary_logger_queries==1&&arc_accesses==arc_before&&rpc_accesses==rpc_before&&tmp_writes==tmp_before&&!memcmp(&registered,&disks,sizeof(disks)));
+#ifdef _WIN32
+        assert(FreeLibrary(library));
+#else
+        assert(!dlclose(library));
+#endif
+        library=primary_library;
+    }
     if(!strcmp(argv[5],"shipping-replace")){
         /* No run/reset/unload can persist the outgoing session first. The
          * distinct replacement has a different CMOS key, including at deinit. */
         char replacement[4096];snprintf(replacement,sizeof(replacement),"%s/replacement.adf",system_directory);
-        struct retro_game_info next={.path=replacement};assert(load(&next));
+        struct retro_game_info next={.path=replacement};
+        unsigned before=tmp_writes;struct retro_disk_control_ext_callback registered=disks;
+        assert(!load(&next)&&before==tmp_writes&&!memcmp(&registered,&disks,sizeof(disks)));
+        unload();assert(load(&next));
         unload();deinit();vfs_assert_no_open_handles();
-        puts("closed shipping: live session replaced before its first frame");return 0;
+        puts("closed shipping: live replacement refused; explicit unload preserves outgoing CMOS");return 0;
     }
     if(reordered){
         if(!shipping){
@@ -158,6 +202,7 @@ int main(int argc,char **argv)
             assert(frame<20000 && (state<ARC_RPC_PREP_RUNNING || target==ARC_RPC_PREP_FAILED));
             unsigned v=videos,a=audios;uint64_t samples=audio_frames;
             run();position(&state,&substep);assert(videos==v+1 && audios==a+1 && audio_frames==samples+800);
+            assert(!state_size()&&!save_state(refused_state,sizeof(refused_state))&&!load_state(refused_state,sizeof(refused_state)));
         }
         if(target!=ARC_RPC_PREP_RUNNING){
             uint8_t before[32],after[32],attempt_before[32],attempt_after[32];fingerprint(before);attempt_fingerprint(attempt_before);
@@ -177,8 +222,9 @@ int main(int argc,char **argv)
         }
         else if(!strcmp(action,"unload"))unload();else{assert(!strcmp(action,"deinit"));deinit();set_environment(host_environment);init();set_video(host_video);set_audio(host_audio);set_poll(host_poll);set_input(input);}
         following_arculator=true;char ordinary[4096];snprintf(ordinary,sizeof(ordinary),"%s/ordinary.adf",system_directory);
-        struct retro_game_info arculator={.path=ordinary};assert(load(&arculator));run();unload();deinit();vfs_assert_no_open_handles();
-        assert(summary_lines==2);return 0;
+        struct retro_game_info arculator={.path=ordinary};assert(load(&arculator));assert(state_size());run();unload();assert(summary_lines==2);
+        following_arculator=false;assert(load(&game));assert(!state_size()&&!save_state(refused_state,sizeof(refused_state))&&!load_state(refused_state,sizeof(refused_state)));unload();deinit();vfs_assert_no_open_handles();
+        return 0;
     }
     if(shipping){for(unsigned i=0;i<8;++i)run();reset();run();}
     else{

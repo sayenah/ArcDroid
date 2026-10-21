@@ -508,3 +508,22 @@ static disc_funcs_t adf_disc_funcs =
 	.stop        = adf_stop,
 	.close       = adf_close
 };
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/raw_cache.inc"
+#include "../../state-generated/disc_adf_state.inc"
+void arc_state_visit_engine_arculator_src_disc_adf_extra(ArcState *s) {
+ for(unsigned i=0;i<4u;++i){char name[48];snprintf(name,sizeof(name),"adf.file.%u",i);arc_io_state_file(s,name,adf[i].f);}
+}
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid modification (2026-10-18): authored in-flight cache delta fixture. */
+void arc_engine_test_seed_raw_cache(void)
+{ if(adf[0].f)adf[0].track_data[0][511]^=0x5au; }
+/* ArcDroid modification (2026-10-18): borrowed handle for authored sector-cost probes. */
+void *arc_engine_test_raw_file(unsigned drive)
+{ return drive<4u?adf[drive].f:NULL; }
+
+#endif

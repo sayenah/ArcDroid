@@ -290,6 +290,21 @@ host library lifetime, not guest state. All FPA register resets, instruction
 behavior, timing and the exit diagnostic itself remain unchanged. No existing
 test or golden is changed.
 
+
+SS-1 Run K (D-215) adds a load-only pure picture reconstruction function to
+`vidc.c`/`vidc.h`; ordinary scanout remains unchanged. Test-only VIDC scenario
+and deterministic RTC epoch hooks support exact guest-state differential tests
+across independently reset authored fixtures. Dated notices identify these
+changes; the pinned upstream and GPL-2.0-only provenance remain unchanged.
+
+Run K sanitizer video coverage also replaces signed left shifts of potentially
+negative border offsets in `vidc.c` with bounded multiplication by two; this
+retains the ordinary scanout arithmetic without undefined behavior.
+The low-rate 1-bpp loop is bounded to its existing 32-pixel host scanout,
+so it never shifts a 32-bit word by 32–62 bits. Release disassembly verifies
+the preserved Mac behavior; no attempt to redesign this legacy pixel path is
+part of SS-1.
+
 AY-1 (2026-10-19) updates `src/cmos.c`/`src/cmos.h`: the PCF8583 date
 register includes the captured local clock's year modulo four. A session-only
 year overlay sets C0/C1 and recomputes the live checksum before the first

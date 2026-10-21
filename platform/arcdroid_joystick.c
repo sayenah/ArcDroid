@@ -29,3 +29,7 @@ void arc_platform_joystick_snapshot(bool active,
       joystick_state[port].button[0] = active && v && v[ARC_PAD_A];
    }
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "../engine/state-generated/arcdroid_joystick_state.inc"
+#endif
