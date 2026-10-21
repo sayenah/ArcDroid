@@ -1079,3 +1079,24 @@ Primary source: [RetroArch v1.22.2](https://github.com/libretro/RetroArch/tree/v
 `input/input_driver.c`). These are authored interface models; native Windows
 RetroArch confirmation runs in CI, and Android device evidence remains owed
 under D-217.
+
+On Apple Clang 21.0.0 / macOS 26.6.2, unloading an ASan-instrumented copy
+leaves poisoned global shadow behind. A later image can reuse that address:
+ASan's image constructor calls `getsectiondata`, whose intercepted `strcmp`
+then reports a global overflow before any core entry point. The standalone
+[`macos_asan_dlopen_repro.py`](../tests/macos_asan_dlopen_repro.py) contains no
+core code: two copies of a three-array library, ordinary heap allocation and
+repeated `dlopen`/`dlclose` reproduce that call chain; the `RTLD_NODELETE`
+control completes 200 iterations. The diagnostic also observes the retained
+poison after close. ASan can fault again while formatting the first error
+through unloaded global metadata; a terminating signal handler preserves the
+original registration stack in the standalone diagnostic.
+
+Only the run-ahead model's copied-image loads on **macOS with ASan** use
+`RTLD_NODELETE`. This omits physical image unmapping between retries, while
+balancing every loader handle and executing all secondary environment, init,
+refused-load, unload and deinit calls. All 48 mode cells, exact retry/save
+counts, notice and command assertions, primary teardown and memory/UB checks
+remain active. Linux sanitizer jobs and every non-ASan build still execute
+the full image unload/reload sequence. The separate secondary-route test is
+unchanged. No production loader behavior or sanitizer memory check is changed.

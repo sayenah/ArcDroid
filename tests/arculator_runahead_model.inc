@@ -34,7 +34,21 @@ static void model_secondary(const struct retro_game_info *game,const char *path)
 #ifdef _WIN32
     HMODULE primary=library,copy=LoadLibraryA(path);
 #else
-    void *primary=library,*copy=dlopen(path,RTLD_NOW|RTLD_LOCAL);
+    int flags=RTLD_NOW|RTLD_LOCAL;
+#if defined(__APPLE__) && defined(__has_feature)
+#if __has_feature(address_sanitizer)
+    /* Apple Clang 21/macOS 26 leaves global shadow poisoned after dlclose.
+     * A later image can land on that shadow and fail in getsectiondata during
+     * ASan registration, before any core entry point. Standalone evidence:
+     * tests/macos_asan_dlopen_repro.py (no core code). Retain only this test's
+     * secondary mapping until process exit; still run every secondary's
+     * set_environment/init/refused-load/unload/deinit and balance each handle.
+     * Only physical image unmap/reload between attempts is omitted here.
+     * Linux ASan and all non-ASan builds retain the full loader sequence. */
+    flags|=RTLD_NODELETE;
+#endif
+#endif
+    void *primary=library,*copy=dlopen(path,flags);
 #endif
     assert(copy);library=copy;
     void (*se)(retro_environment_t),(*si)(void),(*su)(void),(*sd)(void);

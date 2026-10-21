@@ -6545,6 +6545,12 @@
         "citation": "docs/arculator-save-states.md:Run K design as built",
         "reason": "Arculator rollback publication authority. RPC never arms speculation, and session retirement clears it before a different backend runs; RPC state remains size zero."
       },
+      "::arc_state_mode_noticed": {
+        "declaration": "static bool arc_state_mode_noticed",
+        "classification": "host-only/excluded",
+        "citation": "docs/arculator-save-states.md:Run O",
+        "reason": "Host-only Arculator unsupported-mode notice deduplication. RPC serialization refuses before this latch is read or set; it cannot affect RPC execution, storage or compared output."
+      },
       "::arc_rpc_build_descriptor": {
         "declaration": "static const char arc_rpc_build_descriptor[]=xxxxxxxxxxxxxxxxxxxxxxxxx #if ARC_RPC_ORDINARY_LOAD xxxxxx #else xxxxxxxx #endif xxxxxxxxxxxxx #if ARC_RPC_CATALOGUE_AUTHORED xxxxxxxxxx #else xxxxxxxxxxxx #endif xxxxxx",
         "citation": "docs/riscpc-r3d4-design.md:§9; docs/decision-log.md:D-211",

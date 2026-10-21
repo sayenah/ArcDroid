@@ -5,6 +5,9 @@
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1 /* RTLD_NODELETE in the Mac ASan run-ahead model. */
+#endif
 #endif
 #include "libretro.h"
 #include "../libretro/arc_session.h"
