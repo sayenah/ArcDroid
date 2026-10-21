@@ -715,7 +715,7 @@ static void unit(ArcRpcPreparation *p)
             p->stats.attachment_operations+=advice_io.operations;p->stats.attachment_bytes+=advice_io.bytes;
             p->stats.attachment_namespace+=advice_io.namespace_operations;
             if(owner_lost(&p->content_owner)){failed(p,NULL);break;}
-            if(changed)notice_event(p,"The RiscPC model changed because the available firmware changed. This model uses separate RiscPC settings.",ARC_RPC_NOTICE_ADVISORY,"pair-changed",false);
+            if(changed)notice_event(p,"The RiscPC model or operating system changed. This combination has separate RiscPC settings; the content's hard disc is kept.",ARC_RPC_NOTICE_ADVISORY,"pair-changed",false);
         }
         p->state=ARC_RPC_PREP_RUNNING;p->execution_barrier=false;
         if(!p->refusal_reported)notice(p,"",false);

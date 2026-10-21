@@ -751,9 +751,21 @@ typedef struct {
    ArcInputOverride pad[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
    ArcOskToggle osk_toggle;
    bool left_stick_dpad[ARC_PAD_PORTS];
+#if ARC_RPC_ORDINARY_LOAD
+   ArcRpcSelectionModel rpc_model;
+   ArcRpcSelectionOs rpc_os;
+#endif
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
+#if ARC_RPC_ORDINARY_LOAD
+/* Load-time selection is independent of later input/media option samples. */
+static struct {
+   unsigned initial[5];
+   bool sampled, invalid_noticed, reload_noticed[5];
+} arc_rpc_selection_options;
+static void arc_read_rpc_options(ArcCoreOptions *options);
+#endif
 static const char *arc_left_stick_option_names[ARC_PAD_PORTS] = {
    "arcdroid_pad1_left_stick", "arcdroid_pad2_left_stick"
 };
@@ -986,6 +998,9 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(osk_toggle, "R3")) options->osk_toggle = ARC_OSK_TOGGLE_R3;
    else if (!strcmp(osk_toggle, "Off")) options->osk_toggle = ARC_OSK_TOGGLE_OFF;
    else goto invalid;
+#if ARC_RPC_ORDINARY_LOAD
+   arc_read_rpc_options(options);
+#endif
    return true;
 invalid:
    if (error && error_size) snprintf(error, error_size, "Invalid ArcDroid core option value");
@@ -1240,6 +1255,7 @@ static void arc_release_session(void)
 #endif
 #if ARC_RPC_ORDINARY_LOAD
    arc_rpc_override_pending=false;
+   memset(&arc_rpc_selection_options,0,sizeof(arc_rpc_selection_options));
 #endif
    arc_rpc_plan_admitted=arc_rpc_preparation_route=false;memset(arc_rpc_option_noticed,0,sizeof(arc_rpc_option_noticed));
 #if defined(ARCDROID_TEST_FAULTS)
@@ -1492,6 +1508,49 @@ static void arc_message(const char *text, enum retro_log_level level)
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
+#if ARC_RPC_ORDINARY_LOAD
+static void arc_rpc_option_advisory(const char *id,const char *text)
+{
+   if(arc_rpc_host)arc_riscpc_host_advisory(arc_rpc_host,id,text);
+   else {
+      arc_message(text,RETRO_LOG_WARN);
+      if(arc_log)arc_log(RETRO_LOG_INFO,"%s: %s\n",id,text);
+   }
+}
+static void arc_read_rpc_options(ArcCoreOptions *options)
+{
+   static const char *const model[]={"auto","arm610","arm710","sa110","arm7500"};
+   static const char *const os[]={"auto","350","360","370","371"};
+   const char *values[]={arc_option_value("arcdroid_rpc_model","auto"),
+                         arc_option_value("arcdroid_rpc_os","auto")};
+   unsigned parsed[2]={0,0};
+   for(unsigned axis=0;axis<2;++axis){
+      const char *const *tokens=axis?os:model;
+      unsigned i=0;for(;i<5;++i)if(!strcmp(values[axis],tokens[i]))break;
+      if(i<5)parsed[axis]=i;
+      else if(!arc_rpc_selection_options.invalid_noticed){
+         arc_rpc_option_advisory("N-23","An unrecognised RiscPC option value was received. Auto is used for that option.");
+         arc_rpc_selection_options.invalid_noticed=true;
+      }
+   }
+   options->rpc_model=(ArcRpcSelectionModel)parsed[0];
+   options->rpc_os=(ArcRpcSelectionOs)parsed[1];
+   const unsigned current[]={parsed[0],parsed[1],
+      options->machine_auto?0u:(unsigned)options->requested_machine+1u,
+      options->cpu_auto?0u:(unsigned)options->cpu+1u,(unsigned)options->requested_os};
+   if(!arc_rpc_selection_options.sampled){
+      memcpy(arc_rpc_selection_options.initial,current,sizeof(current));
+      arc_rpc_selection_options.sampled=true;return;
+   }
+   static const char *const labels[]={"RiscPC model","RiscPC operating system","Machine","CPU","Operating System"};
+   for(unsigned i=0;i<5;++i){
+      if(i>=2 && arc_kind!=ARC_SESSION_KIND_RISCPC)continue;
+      if(current[i]==arc_rpc_selection_options.initial[i] || arc_rpc_selection_options.reload_noticed[i])continue;
+      char text[128];snprintf(text,sizeof(text),"%s takes effect after reloading the content.",labels[i]);
+      arc_rpc_option_advisory("N-24",text);arc_rpc_selection_options.reload_noticed[i]=true;
+   }
+}
+#endif
 static void arc_disc_queue_notice(const char *text)
 {
    unsigned next = (arc_disc_notice_write + 1u) % 8u;
@@ -6508,17 +6567,23 @@ static void arc_integrate_stick(uint64_t elapsed_us)
 
 #if ARC_RPC_ORDINARY_LOAD
 #define ARC_RPC_ARCHIMEDES_HELP " Archimedes sessions only. RiscPC starts manually with its hard disc attached."
+#define ARC_RPC_SELECTOR_HELP " Archimedes sessions only. A non-Auto choice takes precedence over the RiscPC options at load. During RiscPC sessions, changes apply after reloading the content; Restart keeps the current model and operating system."
+#define ARC_RPC_MEMORY_HELP " Archimedes sessions only; ignored on RiscPC."
+#define ARC_RPC_MEDIA_HELP " On RiscPC, changes take effect after Restart or reloading the content."
 #else
 #define ARC_RPC_ARCHIMEDES_HELP ""
+#define ARC_RPC_SELECTOR_HELP ""
+#define ARC_RPC_MEMORY_HELP ""
+#define ARC_RPC_MEDIA_HELP ""
 #endif
 static const struct retro_core_option_v2_definition arc_base_options[] = {
-   {"arcdroid_machine", "Machine", NULL, "Automatic machine selection.", NULL,
+   {"arcdroid_machine", "Machine", NULL, "Automatic machine selection." ARC_RPC_SELECTOR_HELP, NULL,
     NULL, {{"Auto", NULL}, {"A3000", NULL}, {"A3010", NULL}, {"A3020", NULL}, {"A4000", NULL}, {NULL, NULL}}, "Auto"},
-   {"arcdroid_cpu", "CPU", NULL, "Automatic CPU selection.", NULL,
+   {"arcdroid_cpu", "CPU", NULL, "Automatic CPU selection." ARC_RPC_SELECTOR_HELP, NULL,
     NULL, {{"Auto", NULL}, {"ARM2", NULL}, {"ARM250", NULL}, {NULL, NULL}}, "Auto"},
-   {"arcdroid_memory", "Memory", NULL, "Automatic memory selection.", NULL,
+   {"arcdroid_memory", "Memory", NULL, "Automatic memory selection." ARC_RPC_MEMORY_HELP, NULL,
     NULL, {{"Auto", NULL}, {"4 MB", NULL}, {NULL, NULL}}, "Auto"},
-   {"arcdroid_os", "Operating System", NULL, "Automatic firmware selection.", NULL,
+   {"arcdroid_os", "Operating System", NULL, "Automatic firmware selection." ARC_RPC_SELECTOR_HELP, NULL,
     NULL, {{"Auto", NULL}, {"RISC OS 3.11", NULL}, {"RISC OS 3.10", NULL},
            {"RISC OS 3.19", NULL}, {"RISC OS 3.00", NULL},
            {"RISC OS 2.00", NULL}, {"Arthur 1.20", NULL}, {NULL, NULL}}, "Auto"},
@@ -6548,26 +6613,36 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"auto", "Auto"}, {"native", "Native"},
            {"adffs", "ADFFS preferred"}, {NULL, NULL}}, "auto"},
    {"arcdroid_jfd_write_protect", "Write-protect Tab", NULL,
-    "JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.", NULL,
+    "JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes." ARC_RPC_MEDIA_HELP, NULL,
     NULL, {{"as-imaged", "As imaged"}, {"off", "Off"}, {NULL, NULL}}, "as-imaged"},
    {"arcdroid_adffs_package", "ADFFS Package", NULL,
     "Restrict ADFFS to a verified package profile, or allow an untested package." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},
-   {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
+   {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored." ARC_RPC_MEDIA_HELP, NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {"arcdroid_hard_disc", "Hard Disc", NULL,
     "Attach a persistent hard disc to native A3020 sessions." ARC_RPC_ARCHIMEDES_HELP, NULL,
     NULL, {{"auto", "Auto"}, {"off", "Off"}, {NULL, NULL}}, "auto"},
    {"arcdroid_short_tail", "Short image tail", NULL,
-    "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.", NULL,
+    "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media." ARC_RPC_MEDIA_HELP, NULL,
     NULL, {{"missing", "Missing"}, {"zero-filled", "Zero-filled"}, {NULL, NULL}}, "missing"},
    {"arcdroid_jfd_omitted", "JFD Omitted Sectors", NULL,
-    "Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.", NULL,
+    "Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset." ARC_RPC_MEDIA_HELP, NULL,
     NULL, {{"file-data", "File data"}, {"strict", "Strict"}, {NULL, NULL}}, "file-data"},
    {"arcdroid_disc_requests", "Disc Requests", NULL,
     "Automatically insert a uniquely requested disc from a loaded multi-image set.", NULL,
     NULL, {{"auto", "Insert automatically"}, {"hint", "Hint only"},
            {"off", "Off"}, {NULL, NULL}}, "auto"},
+#if ARC_RPC_ORDINARY_LOAD
+   {"arcdroid_rpc_model", "RiscPC model", NULL,
+    "Auto selects a qualified installed RiscPC model from the content. A manual choice overrides CPU hints only. A non-Auto Archimedes Machine, CPU or Operating System takes precedence. Changes apply after reloading the content; Restart keeps the admitted combination.", NULL,
+    NULL, {{"auto", "Auto"}, {"arm610", "ARM610"}, {"arm710", "ARM710"},
+           {"sa110", "StrongARM"}, {"arm7500", "ARM7500"}, {NULL, NULL}}, "auto"},
+   {"arcdroid_rpc_os", "RiscPC operating system", NULL,
+    "Auto selects qualified installed RISC OS firmware from the content. A manual choice overrides OS hints only. A non-Auto Archimedes Machine, CPU or Operating System takes precedence. Changes apply after reloading the content; Restart keeps the admitted combination.", NULL,
+    NULL, {{"auto", "Auto"}, {"350", "RISC OS 3.50"}, {"360", "RISC OS 3.60"},
+           {"370", "RISC OS 3.70"}, {"371", "RISC OS 3.71"}, {NULL, NULL}}, "auto"},
+#endif
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
 enum {
@@ -6576,8 +6651,8 @@ enum {
                       ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 3u
 };
 static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
-_Static_assert(ARC_BASE_OPTION_COUNT == 20u, "base option count changed");
-_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 44u,
+_Static_assert(ARC_BASE_OPTION_COUNT == 20u + 2u * ARC_RPC_ORDINARY_LOAD, "base option count changed");
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 44u + 2u * ARC_RPC_ORDINARY_LOAD,
                "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
@@ -7693,10 +7768,18 @@ static int arc_rpc_check_selection(const char *firmware_dir,bool ordinary,const 
       if (arc_riscpc_notice_required(rpc_discs[i])) rpc_scan_needed = true;
    }
    ArcRpcFirmwareInventory rpc_inventory = {.state=ARC_RPC_INVENTORY_SKIPPED};
+#if ARC_RPC_ORDINARY_LOAD
+   if(ordinary && (arc_core_options.rpc_model || arc_core_options.rpc_os))rpc_scan_needed=true;
+#endif
    if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(
       firmware_dir, rpc_table, rpc_count);
+   ArcRpcSelectionModel manual_model=ARC_RPC_SELECT_AUTO;
+   ArcRpcSelectionOs manual_os=ARC_RPC_OS_AUTO;
+#if ARC_RPC_ORDINARY_LOAD
+   if(ordinary){manual_model=arc_core_options.rpc_model;manual_os=arc_core_options.rpc_os;}
+#endif
    ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
-      &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
+      &rpc_inventory, manual_model, manual_os);
 #if ARC_RPC_ORDINARY_LOAD
    if(ordinary)arc_rpc_staging_finish(true);
 #endif
@@ -7857,7 +7940,14 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_riscpc_notice_shown = false;
 #if ARC_RPC_ORDINARY_LOAD
    bool rpc_auto=arc_core_options.machine_auto && arc_core_options.cpu_auto && arc_core_options.requested_os==ARC_OS_UNKNOWN;
-   if(rpc_auto)arc_rpc_staging_begin();
+   bool rpc_manual=arc_core_options.rpc_model || arc_core_options.rpc_os;
+   if(rpc_auto){
+      if(rpc_manual)arc_kind=ARC_SESSION_KIND_RISCPC;
+      arc_rpc_staging_begin();
+      /* The request wins before even malformed/unflagged media is staged.
+       * This also fixes the safe form for the arena's exhaustion path. */
+      if(rpc_manual)arc_rpc_staging_flag();
+   }else if(rpc_manual)arc_rpc_option_advisory("N-22","An Archimedes Machine, CPU or Operating System is selected in core options, so the RiscPC options are ignored for this load.");
 #endif
    if (!arc_prepare_media_list(game->path, arc_core_options.disk_writes,
                                error, sizeof(error)))
@@ -7872,7 +7962,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_image_index = 0u;
 #if ARC_RPC_ORDINARY_LOAD
    bool flagged=false;for(unsigned i=0;i<arc_media_count;++i)flagged|=arc_riscpc_notice_required(arc_media[i].compatibility);
-   if(rpc_auto && flagged){
+   if(rpc_auto && (flagged || rpc_manual)){
       arc_kind=ARC_SESSION_KIND_RISCPC;
       if(!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,&system_dir) || !system_dir || !*system_dir || strlen(system_dir)>=sizeof(arc_system_path) ||
          snprintf(firmware_dir,sizeof(firmware_dir),"%s/arcdroid/firmware",system_dir)<0 || strlen(system_dir)+18>=sizeof(firmware_dir)){

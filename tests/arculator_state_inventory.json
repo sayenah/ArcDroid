@@ -21220,6 +21220,42 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_PLANS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -21295,6 +21331,18 @@
         "declaration": "# include \"rpc_staging.h\"",
         "classification": "host-only",
         "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
       },
       {
         "kind": "preprocessor",
@@ -21688,6 +21736,24 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_SELECTOR_HELP \" Archimedes sessions only. A non-Auto choice takes precedence over the RiscPC options at load. During RiscPC sessions, changes apply after reloading the content; Restart keeps the current model and operating system.\"",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_MEMORY_HELP \" Archimedes sessions only; ignored on RiscPC.\"",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_MEDIA_HELP \" On RiscPC, changes take effect after Restart or reloading the content.\"",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# else",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -21695,6 +21761,36 @@
       {
         "kind": "preprocessor",
         "declaration": "# define ARC_RPC_ARCHIMEDES_HELP \"\"",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_SELECTOR_HELP \"\"",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_MEMORY_HELP \"\"",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# define ARC_RPC_MEDIA_HELP \"\"",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
         "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
       },
@@ -21976,6 +22072,30 @@
       },
       {
         "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# endif",
+        "classification": "host-only",
+        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+      },
+      {
+        "kind": "preprocessor",
+        "declaration": "# if ARC_RPC_ORDINARY_LOAD",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "preprocessor",
         "declaration": "# if defined ( ARCDROID_TEST_FAULTS )",
         "classification": "host-only",
         "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
@@ -22002,7 +22122,7 @@
         "kind": "preprocessor",
         "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22014,7 +22134,7 @@
         "kind": "preprocessor",
         "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22026,7 +22146,7 @@
         "kind": "preprocessor",
         "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22038,7 +22158,7 @@
         "kind": "preprocessor",
         "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22050,7 +22170,7 @@
         "kind": "preprocessor",
         "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22074,7 +22194,7 @@
         "kind": "preprocessor",
         "declaration": "# if ARC_RPC_ORDINARY_LOAD",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22356,7 +22476,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22374,7 +22494,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22392,7 +22512,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22416,7 +22536,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22428,7 +22548,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22440,7 +22560,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "preprocessor",
@@ -22452,7 +22572,7 @@
         "kind": "preprocessor",
         "declaration": "# endif",
         "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "declaration",
@@ -23782,15 +23902,27 @@
       },
       {
         "kind": "layout",
-        "declaration": "typedef struct { ArcOsClass requested_os ; ArcMachine machine ; ArcMachine requested_machine ; bool machine_auto ; ArcCpu cpu ; bool cpu_auto ; bool request_a3010_joystick ; bool pointer_relative ; ArcPointerStick pointer_stick ; unsigned pointer_speed ; unsigned pointer_deadzone ; ArcDiskWriteMode disk_writes ; bool short_tail_zero ; bool jfd_omitted_strict ; bool hard_disc_auto ; ArcLaunchOption launch ; ArcLaunchChooserOption launch_chooser ; bool launch_ramdisc ; ArcJfdBootOption jfd_boot ; ArcJfdWritePolicy jfd_write_policy ; ArcAdffsOption adffs_package ; ArcInputOverride pad [ ARC_PAD_PORTS ] [ ARC_PAD_INPUT_COUNT ] ; ArcOskToggle osk_toggle ; bool left_stick_dpad [ ARC_PAD_PORTS ] ; } ArcCoreOptions ;",
-        "classification": "host-only",
-        "reason": "Compile-time declaration/layout contract; guard all arms and macro bodies so added storage cannot evade review."
+        "declaration": "typedef struct { ArcOsClass requested_os ; ArcMachine machine ; ArcMachine requested_machine ; bool machine_auto ; ArcCpu cpu ; bool cpu_auto ; bool request_a3010_joystick ; bool pointer_relative ; ArcPointerStick pointer_stick ; unsigned pointer_speed ; unsigned pointer_deadzone ; ArcDiskWriteMode disk_writes ; bool short_tail_zero ; bool jfd_omitted_strict ; bool hard_disc_auto ; ArcLaunchOption launch ; ArcLaunchChooserOption launch_chooser ; bool launch_ramdisc ; ArcJfdBootOption jfd_boot ; ArcJfdWritePolicy jfd_write_policy ; ArcAdffsOption adffs_package ; ArcInputOverride pad [ ARC_PAD_PORTS ] [ ARC_PAD_INPUT_COUNT ] ; ArcOskToggle osk_toggle ; bool left_stick_dpad [ ARC_PAD_PORTS ] ; ArcRpcSelectionModel rpc_model ; ArcRpcSelectionOs rpc_os ; } ArcCoreOptions ;",
+        "classification": "serialized",
+        "reason": "Existing option fields retain their reviewed visitors; the two gate-open RiscPC axes affect the next load only, and are host-only. The immutable loaded selection and notice lifetime are deliberately not restored by Arculator states."
       },
       {
         "kind": "declaration",
         "declaration": "static ArcCoreOptions arc_core_options ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static struct { unsigned initial [ 5 ] ; bool sampled , invalid_noticed , reload_noticed [ 5 ] ; } arc_rpc_selection_options ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static void arc_read_rpc_options ( ArcCoreOptions * options ) ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "declaration",
@@ -23929,6 +24061,24 @@
         "declaration": "static const char * const safe [ ] = { \"The selected disc could not be loaded. Check that the file is complete and a supported type.\" , \"The RiscPC could not restart. Close and reload this content.\" , \"The emulated RiscPC stopped. Close and reload this content.\" , \"On-screen keyboard disabled: unable to allocate its presentation surface.\" } ;",
         "classification": "host-only",
         "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+      },
+      {
+        "kind": "local:arc_read_rpc_options",
+        "declaration": "static const char * const model [ ] = { \"auto\" , \"arm610\" , \"arm710\" , \"sa110\" , \"arm7500\" } ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "local:arc_read_rpc_options",
+        "declaration": "static const char * const os [ ] = { \"auto\" , \"350\" , \"360\" , \"370\" , \"371\" } ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
+      },
+      {
+        "kind": "local:arc_read_rpc_options",
+        "declaration": "static const char * const labels [ ] = { \"RiscPC model\" , \"RiscPC operating system\" , \"Machine\" , \"CPU\" , \"Operating System\" } ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "allocation:arc_file_digest_matches",
@@ -24214,9 +24364,9 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static const struct retro_core_option_v2_definition arc_base_options [ ] = { { \"arcdroid_machine\" , \"Machine\" , NULL , \"Automatic machine selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"A3000\" , NULL } , { \"A3010\" , NULL } , { \"A3020\" , NULL } , { \"A4000\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_cpu\" , \"CPU\" , NULL , \"Automatic CPU selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"ARM2\" , NULL } , { \"ARM250\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_memory\" , \"Memory\" , NULL , \"Automatic memory selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"4 MB\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_os\" , \"Operating System\" , NULL , \"Automatic firmware selection.\" , NULL , NULL , { { \"Auto\" , NULL } , { \"RISC OS 3.11\" , NULL } , { \"RISC OS 3.10\" , NULL } , { \"RISC OS 3.19\" , NULL } , { \"RISC OS 3.00\" , NULL } , { \"RISC OS 2.00\" , NULL } , { \"Arthur 1.20\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_joystick_if\" , \"Joystick Interface\" , NULL , \"Keyboard mapping is the Slice 1 default.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"Keyboard\" , NULL } , { \"A3010\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_pointer_mode\" , \"Pointer Mode\" , NULL , \"Use pointer input as a relative trackpad.\" , NULL , NULL , { { \"disabled\" , NULL } , { \"relative\" , NULL } , { NULL , NULL } } , \"relative\" } , { \"arcdroid_pointer_stick\" , \"Pointer Stick\" , NULL , \"Choose the analog stick that drives pointer velocity.\" , NULL , NULL , { { \"right\" , NULL } , { \"left\" , NULL } , { \"disabled\" , NULL } , { NULL , NULL } } , \"right\" } , { \"arcdroid_pointer_speed\" , \"Pointer Speed\" , NULL , \"Maximum pointer speed in mickeys per guest second.\" , NULL , NULL , { { \"300\" , NULL } , { \"450\" , NULL } , { \"600\" , NULL } , { \"900\" , NULL } , { \"1200\" , NULL } , { NULL , NULL } } , \"600\" } , { \"arcdroid_pointer_deadzone\" , \"Pointer Dead Zone\" , NULL , \"Radial analog-stick dead zone percentage.\" , NULL , NULL , { { \"0\" , \"0 %\" } , { \"10\" , \"10 %\" } , { \"15\" , \"15 %\" } , { \"20\" , \"20 %\" } , { \"25\" , \"25 %\" } , { NULL , NULL } } , \"15\" } , { \"arcdroid_launch\" , \"Launch\" , NULL , \"Automatically launch a root application, disable launch automation, or choose a numbered candidate.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { \"app1\" , \"Application 1\" } , { \"app2\" , \"Application 2\" } , { \"app3\" , \"Application 3\" } , { \"app4\" , \"Application 4\" } , { \"app5\" , \"Application 5\" } , { \"app6\" , \"Application 6\" } , { \"app7\" , \"Application 7\" } , { \"app8\" , \"Application 8\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_launch_chooser\" , \"Launch Chooser\" , NULL , \"Remember the selected application, or ask on every eligible launch.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"remember\" , \"Remember\" } , { \"ask\" , \"Ask every time\" } , { NULL , NULL } } , \"remember\" } , { \"arcdroid_launch_ramdisc\" , \"Native launch RAM disc\" , NULL , \"Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"Disabled\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_jfd_boot\" , \"JFD Boot\" , NULL , \"Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"native\" , \"Native\" } , { \"adffs\" , \"ADFFS preferred\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_jfd_write_protect\" , \"Write-protect Tab\" , NULL , \"JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.\" , NULL , NULL , { { \"as-imaged\" , \"As imaged\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"as-imaged\" } , { \"arcdroid_adffs_package\" , \"ADFFS Package\" , NULL , \"Restrict ADFFS to a verified package profile, or allow an untested package.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"verified\" , \"Verified only\" } , { \"untested\" , \"Allow untested\" } , { NULL , NULL } } , \"verified\" } , { \"arcdroid_disk_writes\" , \"Disk Writes\" , NULL , \"Choose where floppy writes are stored.\" , NULL , NULL , { { \"shadow\" , NULL } , { \"original\" , NULL } , { \"off\" , NULL } , { NULL , NULL } } , \"shadow\" } , { \"arcdroid_hard_disc\" , \"Hard Disc\" , NULL , \"Attach a persistent hard disc to native A3020 sessions.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_short_tail\" , \"Short image tail\" , NULL , \"Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.\" , NULL , NULL , { { \"missing\" , \"Missing\" } , { \"zero-filled\" , \"Zero-filled\" } , { NULL , NULL } } , \"missing\" } , { \"arcdroid_jfd_omitted\" , \"JFD Omitted Sectors\" , NULL , \"Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.\" , NULL , NULL , { { \"file-data\" , \"File data\" } , { \"strict\" , \"Strict\" } , { NULL , NULL } } , \"file-data\" } , { \"arcdroid_disc_requests\" , \"Disc Requests\" , NULL , \"Automatically insert a uniquely requested disc from a loaded multi-image set.\" , NULL , NULL , { { \"auto\" , \"Insert automatically\" } , { \"hint\" , \"Hint only\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { NULL , NULL , NULL , NULL , NULL , NULL , { { 0 } } , NULL } } ;",
+        "declaration": "static const struct retro_core_option_v2_definition arc_base_options [ ] = { { \"arcdroid_machine\" , \"Machine\" , NULL , \"Automatic machine selection.\" ARC_RPC_SELECTOR_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"A3000\" , NULL } , { \"A3010\" , NULL } , { \"A3020\" , NULL } , { \"A4000\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_cpu\" , \"CPU\" , NULL , \"Automatic CPU selection.\" ARC_RPC_SELECTOR_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"ARM2\" , NULL } , { \"ARM250\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_memory\" , \"Memory\" , NULL , \"Automatic memory selection.\" ARC_RPC_MEMORY_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"4 MB\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_os\" , \"Operating System\" , NULL , \"Automatic firmware selection.\" ARC_RPC_SELECTOR_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"RISC OS 3.11\" , NULL } , { \"RISC OS 3.10\" , NULL } , { \"RISC OS 3.19\" , NULL } , { \"RISC OS 3.00\" , NULL } , { \"RISC OS 2.00\" , NULL } , { \"Arthur 1.20\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_joystick_if\" , \"Joystick Interface\" , NULL , \"Keyboard mapping is the Slice 1 default.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"Keyboard\" , NULL } , { \"A3010\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_pointer_mode\" , \"Pointer Mode\" , NULL , \"Use pointer input as a relative trackpad.\" , NULL , NULL , { { \"disabled\" , NULL } , { \"relative\" , NULL } , { NULL , NULL } } , \"relative\" } , { \"arcdroid_pointer_stick\" , \"Pointer Stick\" , NULL , \"Choose the analog stick that drives pointer velocity.\" , NULL , NULL , { { \"right\" , NULL } , { \"left\" , NULL } , { \"disabled\" , NULL } , { NULL , NULL } } , \"right\" } , { \"arcdroid_pointer_speed\" , \"Pointer Speed\" , NULL , \"Maximum pointer speed in mickeys per guest second.\" , NULL , NULL , { { \"300\" , NULL } , { \"450\" , NULL } , { \"600\" , NULL } , { \"900\" , NULL } , { \"1200\" , NULL } , { NULL , NULL } } , \"600\" } , { \"arcdroid_pointer_deadzone\" , \"Pointer Dead Zone\" , NULL , \"Radial analog-stick dead zone percentage.\" , NULL , NULL , { { \"0\" , \"0 %\" } , { \"10\" , \"10 %\" } , { \"15\" , \"15 %\" } , { \"20\" , \"20 %\" } , { \"25\" , \"25 %\" } , { NULL , NULL } } , \"15\" } , { \"arcdroid_launch\" , \"Launch\" , NULL , \"Automatically launch a root application, disable launch automation, or choose a numbered candidate.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { \"app1\" , \"Application 1\" } , { \"app2\" , \"Application 2\" } , { \"app3\" , \"Application 3\" } , { \"app4\" , \"Application 4\" } , { \"app5\" , \"Application 5\" } , { \"app6\" , \"Application 6\" } , { \"app7\" , \"Application 7\" } , { \"app8\" , \"Application 8\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_launch_chooser\" , \"Launch Chooser\" , NULL , \"Remember the selected application, or ask on every eligible launch.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"remember\" , \"Remember\" } , { \"ask\" , \"Ask every time\" } , { NULL , NULL } } , \"remember\" } , { \"arcdroid_launch_ramdisc\" , \"Native launch RAM disc\" , NULL , \"Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"Auto\" , NULL } , { \"Disabled\" , NULL } , { NULL , NULL } } , \"Auto\" } , { \"arcdroid_jfd_boot\" , \"JFD Boot\" , NULL , \"Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"native\" , \"Native\" } , { \"adffs\" , \"ADFFS preferred\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_jfd_write_protect\" , \"Write-protect Tab\" , NULL , \"JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.\" ARC_RPC_MEDIA_HELP , NULL , NULL , { { \"as-imaged\" , \"As imaged\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"as-imaged\" } , { \"arcdroid_adffs_package\" , \"ADFFS Package\" , NULL , \"Restrict ADFFS to a verified package profile, or allow an untested package.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"verified\" , \"Verified only\" } , { \"untested\" , \"Allow untested\" } , { NULL , NULL } } , \"verified\" } , { \"arcdroid_disk_writes\" , \"Disk Writes\" , NULL , \"Choose where floppy writes are stored.\" ARC_RPC_MEDIA_HELP , NULL , NULL , { { \"shadow\" , NULL } , { \"original\" , NULL } , { \"off\" , NULL } , { NULL , NULL } } , \"shadow\" } , { \"arcdroid_hard_disc\" , \"Hard Disc\" , NULL , \"Attach a persistent hard disc to native A3020 sessions.\" ARC_RPC_ARCHIMEDES_HELP , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_short_tail\" , \"Short image tail\" , NULL , \"Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.\" ARC_RPC_MEDIA_HELP , NULL , NULL , { { \"missing\" , \"Missing\" } , { \"zero-filled\" , \"Zero-filled\" } , { NULL , NULL } } , \"missing\" } , { \"arcdroid_jfd_omitted\" , \"JFD Omitted Sectors\" , NULL , \"Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.\" ARC_RPC_MEDIA_HELP , NULL , NULL , { { \"file-data\" , \"File data\" } , { \"strict\" , \"Strict\" } , { NULL , NULL } } , \"file-data\" } , { \"arcdroid_disc_requests\" , \"Disc Requests\" , NULL , \"Automatically insert a uniquely requested disc from a loaded multi-image set.\" , NULL , NULL , { { \"auto\" , \"Insert automatically\" } , { \"hint\" , \"Hint only\" } , { \"off\" , \"Off\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_rpc_model\" , \"RiscPC model\" , NULL , \"Auto selects a qualified installed RiscPC model from the content. A manual choice overrides CPU hints only. A non-Auto Archimedes Machine, CPU or Operating System takes precedence. Changes apply after reloading the content; Restart keeps the admitted combination.\" , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"arm610\" , \"ARM610\" } , { \"arm710\" , \"ARM710\" } , { \"sa110\" , \"StrongARM\" } , { \"arm7500\" , \"ARM7500\" } , { NULL , NULL } } , \"auto\" } , { \"arcdroid_rpc_os\" , \"RiscPC operating system\" , NULL , \"Auto selects qualified installed RISC OS firmware from the content. A manual choice overrides OS hints only. A non-Auto Archimedes Machine, CPU or Operating System takes precedence. Changes apply after reloading the content; Restart keeps the admitted combination.\" , NULL , NULL , { { \"auto\" , \"Auto\" } , { \"350\" , \"RISC OS 3.50\" } , { \"360\" , \"RISC OS 3.60\" } , { \"370\" , \"RISC OS 3.70\" } , { \"371\" , \"RISC OS 3.71\" } , { NULL , NULL } } , \"auto\" } , { NULL , NULL , NULL , NULL , NULL , NULL , { { 0 } } , NULL } } ;",
         "classification": "host-only",
-        "reason": "Run L reviewed frontend surface: immutable options/diagnostic definitions, RPC-only routing or host lifecycle admission authority; none is guest state imported from a snapshot."
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "declaration",
@@ -24232,15 +24382,15 @@
       },
       {
         "kind": "declaration",
-        "declaration": "_Static_assert ( ARC_BASE_OPTION_COUNT = = 20u , \"base option count changed\" ) ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+        "declaration": "_Static_assert ( ARC_BASE_OPTION_COUNT = = 20u + 2u * ARC_RPC_ORDINARY_LOAD , \"base option count changed\" ) ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "declaration",
-        "declaration": "_Static_assert ( sizeof ( arc_options ) / sizeof ( arc_options [ 0 ] ) = = 44u , \"option destination size changed\" ) ;",
-        "classification": "serialized",
-        "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
+        "declaration": "_Static_assert ( sizeof ( arc_options ) / sizeof ( arc_options [ 0 ] ) = = 44u + 2u * ARC_RPC_ORDINARY_LOAD , \"option destination size changed\" ) ;",
+        "classification": "host-only",
+        "reason": "R3d-6: gate-open selection options, immutable token/help metadata, or session-only advisory state. Closed compilation is unchanged; reload notices and load selection are never rewound or restored."
       },
       {
         "kind": "declaration",
@@ -37649,6 +37799,13 @@
       "type": "bool",
       "classification": "host-only",
       "reason": "R-SS1b-3: host-only failed-load notice latch, including held rewind at the oldest capture; cleared on successful load or session release, never serialized."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_rpc_selection_options",
+      "type": "struct { unsigned initial[5]; bool sampled, invalid_noticed, reload_noticed[5]; }",
+      "classification": "host-only",
+      "reason": "R3d-6 gate-open load-time option baseline and once-per-session notices. Reset only by session release, never by rewind; no guest state, persistence, or owned allocation."
     }
   ],
   "reachable_storage": [

@@ -27,6 +27,17 @@ static void *symbol(const char *name){return (void *)GetProcAddress(library,name
 static void *library;
 static void *symbol(const char *name){return dlsym(library,name);}
 #endif
+static bool options_case,options_changed;
+static char option_values[64][2][512];
+static unsigned option_count,option_unknown,option_conflict,option_reload[5],option_seen[7],firmware_opens,inventory_opens;
+static const char *option_labels[]={"RiscPC model","RiscPC operating system","Machine","CPU","Operating System"};
+static void option_notice(const char *text)
+{
+    if(!options_case)return;
+    if(!strcmp(text,"An unrecognised RiscPC option value was received. Auto is used for that option."))++option_seen[5];
+    if(!strcmp(text,"An Archimedes Machine, CPU or Operating System is selected in core options, so the RiscPC options are ignored for this load."))++option_seen[6];
+    for(unsigned i=0;i<5;++i){char expected[128];snprintf(expected,sizeof(expected),"%s takes effect after reloading the content.",option_labels[i]);if(!strcmp(text,expected))++option_seen[i];}
+}
 static unsigned package_stats,guest_fields;
 static bool tracing,allow_arculator,raw_expected,metadata_only;
 static unsigned private_lines,arculator_starts;
@@ -74,6 +85,7 @@ static void audit(const char *path,unsigned mode)
     if(raw_expected && allow_arculator && !strcmp(leaf,"peer.jfd"))discarded_failure=true;
     if(trace_logs){fprintf(stderr,"route-vfs: mode=%u discarded-fault=%u path=%s\n",mode,discarded_failure,path);fflush(stderr);}
     if(strstr(path,"/riscpc/boot/"))++package_opens;
+    if(strstr(path,"/ro3") && strstr(path,".rom"))++firmware_opens;
     if(preflight_unavailable && strstr(path,"/ro371.rom") && ++selected_reads==2)preflight_ready=true;
     if(change_locator && strstr(path,"/ro371.rom") && ++selected_reads==2){
         FILE *out=fopen(path,"r+b");assert(out);int byte=fgetc(out);assert(byte!=EOF && !fseek(out,0,SEEK_SET) && fputc(byte^1,out)!=EOF && !fclose(out));
@@ -106,10 +118,19 @@ static int32_t audited_stat(const char *p,int32_t *size){if(strstr(p,"/riscpc/bo
 static void log_capture(enum retro_log_level level,const char *format,...)
 {
     char text[8192];va_list args;va_start(args,format);int length=vsnprintf(text,sizeof(text),format,args);va_end(args);
+    if(options_case){
+        if(!strncmp(text,"RPC selection:",14))inventory_opens=firmware_opens;
+        if(!strncmp(text,"N-22:",5))++option_conflict;
+        if(!strncmp(text,"N-23:",5))++option_unknown;
+        if(!strncmp(text,"N-24:",5))for(unsigned i=0;i<5;++i)if(strstr(text,option_labels[i]))++option_reload[i];
+        printf("options-log:%u:%s%s",(unsigned)level,text,*text && text[strlen(text)-1]!='\n'?"\n":"");
+    }
     if(trace_logs){fprintf(stderr,"route-log: level=%u formatted-length=%d format=[%s] text=[%s]\n",(unsigned)level,length,format,text);fflush(stderr);}
     if(strstr(text,"secondary load refused before preparation"))++secondary_refusals;
-    if(!strncmp(text,"ArcDroid build:",15)){if(!metadata_only && !ss1_case)assert(strstr(text,"gate=open"));
-        if(fault_core){assert(strstr(text,"substitutions=authored-catalogue,test-faults,test-plans"));
+    if(!strncmp(text,"ArcDroid build:",15)){if(!metadata_only && !ss1_case && !options_case)assert(strstr(text,"gate=open"));
+        if(fault_core){
+            if(options_case && !symbol("arc_options_probe"))assert(strstr(text,"substitutions=test-faults catalogue=production"));
+            else assert(strstr(text,"substitutions=authored-catalogue,test-faults,test-plans"));
             if(symbol("arc_route_probe_position"))assert(strstr(text,",read-only-position,unit-clock"));}
         if(strstr(text,"target=arcdroid_rpcroute_libretro"))assert(strstr(text,"substitutions=authored-catalogue catalogue=authored"));}
     if(!strncmp(text,"N-",2))snprintf(failure_id,sizeof(failure_id),"%s",text);
@@ -144,12 +165,13 @@ static bool environment(unsigned command,void *data)
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:if(system_unavailable)return false;*(const char **)data=system_directory;return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:*(bool *)data=true;return true;
-    case RETRO_ENVIRONMENT_GET_VARIABLE:{struct retro_variable *v=data;if(ask_chooser && !strcmp(v->key,"arcdroid_launch_chooser")){v->value="ask";return true;}return false;}
-    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE:{struct retro_variable *v=data;
+        if(options_case)for(unsigned i=0;i<option_count;++i)if(!strcmp(v->key,option_values[i][0])){v->value=option_values[i][1];return true;}if(ask_chooser && !strcmp(v->key,"arcdroid_launch_chooser")){v->value="ask";return true;}return false;}
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=options_changed;options_changed=false;return true;
     case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:++registrations;disks=*(struct retro_disk_control_ext_callback *)data;return true;
-    case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{if(legacy_interface)return false;struct retro_message_ext *m=data;
+    case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{if(legacy_interface)return false;struct retro_message_ext *m=data;option_notice(m->msg);
         if(m->type==RETRO_MESSAGE_TYPE_STATUS){assert(m->target==RETRO_MESSAGE_TARGET_OSD);assert(m->priority==(*m->msg && m->level!=RETRO_LOG_ERROR?2u:3u));assert(!*m->msg?m->duration==1u:m->level==RETRO_LOG_ERROR?m->duration==~0u:(m->duration==2000u || m->duration==5000u));}++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
-    case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
+    case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;option_notice(m->msg);++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
     default:return false;
     }
 }
@@ -225,16 +247,18 @@ static void check_alias(const struct retro_game_info *game,void (*env)(retro_env
 }
 #define LOAD(v,n) do{void *p=symbol(n);assert(p);memcpy(&(v),&p,sizeof(v));}while(0)
 #include "arculator_runahead_model.inc"
+#include "rpc_options_harness.inc"
 int main(int argc,char **argv)
 {
     if(argc==2 && !strcmp(argv[1],"--check-discarded-paths")){check_discarded_paths();return 0;}
-    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));trace_logs=argc==8;ss1_case=!strncmp(argv[5],"ss1-secondary",13)||!strncmp(argv[5],"ss1-runahead:",13);no_module_path=strstr(argv[5],"-no-path")!=NULL;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
+    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));options_case=!strcmp(argv[5],"options");trace_logs=argc==8;ss1_case=!strncmp(argv[5],"ss1-secondary",13)||!strncmp(argv[5],"ss1-runahead:",13);no_module_path=strstr(argv[5],"-no-path")!=NULL;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
     assert(library);
+    if(options_case){allow_arculator=raw_expected=true;fault_core=symbol("arc_libretro_test_rpc_catalogue")!=NULL;}
     void (*env)(retro_environment_t),(*init)(void),(*deinit)(void),(*unload)(void),(*run)(void),(*reset)(void);
     bool (*load)(const struct retro_game_info *);
     LOAD(env,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(unload,"retro_unload_game");LOAD(actual_run,"retro_run");run=checked_run;LOAD(reset,"retro_reset");LOAD(primary_load,"retro_load_game");raw_load=load_primary;load_calendar=!strcmp(argv[5],"calendar");load=load_with_calendar;
@@ -256,6 +280,7 @@ int main(int argc,char **argv)
         assert(settings<16 && model_poll_type<3);
         model_session(&game,argv[6],unload,deinit,settings);return 0;
     }
+    if(options_case){options_script(argv[6],load,reset,run,unload);deinit();vfs_assert_no_open_handles();return 0;}
     if(metadata_only){
         printf("system|%s|%s|%s|%u|%u\n",system.library_name,system.library_version,system.valid_extensions,system.need_fullpath,system.block_extract);deinit();return 0;
     }

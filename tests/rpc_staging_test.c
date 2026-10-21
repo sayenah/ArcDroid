@@ -35,7 +35,7 @@ int main(void)
     arc_rpc_staging_capture("final STAGING-SENTINEL error",RETRO_LOG_ERROR,true);arc_rpc_staging_finish(true);
     assert(logs==2 && notices==1 && !private_lines && last==RETRO_LOG_ERROR);clear();
     for(unsigned flagged=0;flagged<2;++flagged){
-        arc_rpc_staging_begin();arc_rpc_staging.flagged=flagged;
+        arc_rpc_staging_begin();if(flagged)arc_rpc_staging_flag(); /* Manual request, no observed media flag. */
         for(unsigned i=0;i<ARC_RPC_STAGE_EVENTS+3;++i)arc_log(RETRO_LOG_INFO,"STAGING-SENTINEL %u",i);
         arc_rpc_staging_capture("STAGING-SENTINEL returned error",RETRO_LOG_ERROR,true);
         assert(logs==ARC_RPC_STAGE_EVENTS+4 && notices==1 && (flagged?!private_lines:private_lines==logs));
@@ -48,7 +48,7 @@ int main(void)
     arc_rpc_staging_capture("later STAGING-SENTINEL failure",RETRO_LOG_ERROR,true);
     assert(private_lines==permitted && logs==permitted+2 && notices==1 && last==RETRO_LOG_ERROR);
     arc_rpc_staging_finish(true);clear();
-    arc_rpc_staging_begin();arc_rpc_staging.flagged=true;arc_rpc_staging.used=ARC_RPC_STAGE_BYTES-1;
+    arc_rpc_staging_begin();arc_rpc_staging_flag();arc_rpc_staging.used=ARC_RPC_STAGE_BYTES-1;
     arc_log(RETRO_LOG_ERROR,"STAGING-SENTINEL byte exhaustion");arc_rpc_staging_finish(true);assert(logs==1 && !private_lines);clear();
     puts("rpc-staging: copied payloads, raw/safe failure, event/byte exhaustion, severity and cleanup pass");return 0;
 }
