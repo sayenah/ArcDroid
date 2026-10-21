@@ -557,6 +557,92 @@ Empty returns do not enter any L1 mechanism. Reference probe counts derive from
 the returned slot, never the hint. The scalar name order is append-only; both
 histogram offsets and sizeof(ArcRpcExercise) move when scalars are appended.
 Profile JSON remains schema 2 and is compatible by name only. Every exercise,
-ranking, interval-exercise and profile snapshot uses a versioned v3 symbol plus
+ranking, interval-exercise and profile snapshot now uses a versioned v4 symbol plus
 revision/size arguments, refusing mismatches before writing output. Always use
 a runner/core pair from the same revision; baseline comparisons use two pairs.
+
+## Slice 1a-3 S1 design (2026-10-17)
+
+Recorded before implementation, under D-200 and the binding corrections in
+`riscpc-6b-s1.md`. R-s1-1 uses the exact on-demand `visible(m.finish)` ceiling;
+there is no stored finish memo, new writer obligation or M5 cache. B-3 may
+consume this test only while a cycle or video is active. The denominator is
+fixed per binding; control-register writes cannot change this ceiling.
+R-s1-3 and R-s1-4 exclude the M5 demand tweak and B2 resumable-loop skip.
+R-s1-5 guards both commands calls with `m.count || pending`; the inner call
+must clear pending after the final demand retires. R-s1-6 moves the conditional
+integer flush to service entry, before classification and every return; the
+inline fast continuation is unchanged. PROFILE attributes that flush to BUS
+rather than TIMING.
+
+Production invariants: !pending implies count==0 (append sets pending before
+incrementing count; both clearing sites require an empty queue). A cycle
+implies active_valid, !video_active and !restart: all start_cycle callers have
+selected an active packet and passed the video branch; start_cycle clears
+restart. Outside run(), a cycle also implies bus_busy, recomputed at run exit.
+The denominator is assigned only at bind. Cross-check builds assert these.
+
+Given those invariants and !pending, !video_active, cycle_active and
+now < due < visible(finish), due < next_ns and due < limit_ns:
+run(now) has inert commands (count==0), bypasses video, and breaks in the
+cycle branch before retirement or queued-video admission. It recomputes the
+already-true bus_busy. ready() is false because due>now. next() returns due,
+the strict minimum of finish and boundary. run(due) repeats the same inert
+work; ready() now copies due ticks/floor/fraction to issue and returns true.
+The skip performs exactly that copy, sets now=due and counts one service.
+It changes no packet, cursor, restart, ROM history or measurement state.
+The two omitted ticks(now) overflow checks cannot fire: due<ceil(finish/d)
+implies due*d<finish<=UINT64_MAX, and now<due. Tick comparisons cannot replace
+the ceiling test: distinct rational times may share a visible nanosecond.
+
+R-s1-2 retains the TEST_FAULTS measure_last gate. Endpoint admission bounds
+count at last and the loop breaks at linecyc+1==count before batch_next.
+Intrusive end_slow sets test_stop, tested before service in batch_next.
+The gate is reachable through direct batch_service calls or measure(0,last,...),
+so its directed test calls service directly. It compiles out of shipping and
+measurement cores. The test-only force-off switch resets before bind's early
+return and the measurement API explicitly refuses it.
+
+The counter-schema choice is H3: service_s1_taken joins the stable schema,
+with a revision and revision/size handshake on every structure-copy API.
+It remains host-only, outside m and fast, in the existing exercise/interval
+roots. Run B extends L1's revision 3 to counter ABI revision 4, appending the scalar
+after l1_linear_fallback and advancing the four versioned copy APIs to v4.
+Each still refuses a revision or size mismatch before copying. Profile JSON
+remains schema 2, keyed by name; the rank report includes the new scalar.
+The eligibility classification remains independent of the shipping predicate;
+per-call assertions account for the gate and force-off switch.
+
+Cross-check isolation copies only the small fast state and scheduler time
+that the retained run/ready/next sequence can write, and hashes the unchanged
+timing state and measurement record. It does not copy the packet rings or
+caches per skip. Reference execution bypasses only PROFILE wrappers, so no
+profile timer/stage is touched; exercise service bookkeeping is restored.
+Failure evidence survives timing rebind. Directed tests and calibration clients
+consume the latch. Target CI budget: 30 minutes per calibration and 120 seconds
+for the directed test; observed durations must be reported before review.
+The differential begins after flush and uses the guarded reference: it cannot
+verify the flush placement or commands guard. Direct post-call state/counter
+assertions and predecessor comparisons provide those independent checks.
+
+Mutant dispositions (S1 owns all): delete cycle||(video) under !video as
+logically equivalent; dropping !video is equivalent for production states,
+but a synthetic exclusion test may enforce the predicate literally. A missing
+guard at either site and count-only at the outer site are behaviourally
+equivalent; enforce the two-site source contract separately. Count-only at
+the inner site is killed by final demand completion. Late flushes can be
+equivalent at interpreter return but are killed by immediate post-batch_next
+state assertions, including the false return. Flush-after-classification is
+killed by a source-order contract (entry due is unchanged by an integral
+flush). bus_busy and restart mutants write false and true respectively.
+
+S1 is dispatched after M2b (D-198(1)); merge order is M2b, L1, S1 (D-200).
+Run B integrates L1's merge e9ce589 and M2b v1. S1 adds only the force-off
+leaf to the reviewed inventory: counter storage uses the existing excluded
+exercise roots. Only inventory metadata changes; wire compatibility stays fixed.
+Projection/materialisation at quotas 1/7/200, stale-representation mutants and
+lockstep against L1's merge are required after the service-entry flush move.
+Cumulative correctness evidence against the post-P0i anchor remains required.
+Private benefit legs follow the frozen 1a-0 rule and D-201 bands, and report
+p50/p95/p99, guest MIPS, ns/instruction on both cores and the hot/031 budget
+line (p95 <=0.80T, max<=T). MinGW carries D-199(4)'s emitted-loop caveat.

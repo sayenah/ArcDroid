@@ -4,7 +4,7 @@
 #include "rpc_profile.h"
 static void count_equal(void)
 {
-    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v4(&p,ARC_RPC_COUNTER_ABI,sizeof(p));
     assert(!memcmp(&p.ranking,&arc_rpc_exercise,sizeof(arc_rpc_exercise)));
     assert(p.ranking_attempts==p.attempts);
     assert(p.ranking_fetched==p.fetched);
@@ -84,11 +84,11 @@ static void endpoint_execution(CPUModel model)
 static void ranking_reset(void)
 {
     arc_rpc_profile_configure(0,NULL);arc_rpc_mem_bind(NULL,0,0);
-    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.ranking_epoch==1);
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v4(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.ranking_epoch==1);
     arc_rpc_exercise_add(ARC_RPC_COUNT_integer_unobserved,9);
     arc_rpc_profile_fetched(NULL,0xe2800001,true);
-    arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.al==1 && p.ranking_fetched==1);
-    arc_rpc_mem_bind(NULL,0,0);arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.ranking_epoch==2 && !p.ranking_attempts && !p.ranking_fetched && !p.al);
+    arc_rpc_profile_snapshot_v4(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.al==1 && p.ranking_fetched==1);
+    arc_rpc_mem_bind(NULL,0,0);arc_rpc_profile_snapshot_v4(&p,ARC_RPC_COUNTER_ABI,sizeof(p));assert(p.ranking_epoch==2 && !p.ranking_attempts && !p.ranking_fetched && !p.al);
     for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)assert(!p.ranking.values[i] && !arc_rpc_exercise.values[i]);
 }
 static void service_continuation(CPUModel model)
@@ -103,11 +103,19 @@ static void service_continuation(CPUModel model)
         count_equal();
     }
 }
+#if defined(ARCDROID_RPC_CROSSCHECK)
+#include "rpc_crosscheck.h"
+#endif
 int main(void)
 {
     arm_init();protected=1;if(setjmp(boundary))return 1;
     config.mem_size=64;config.vram_size=2;mem_init();
     for(unsigned model=0;model<4;++model){translation_counts((CPUModel)model);endpoint_execution((CPUModel)model);service_continuation((CPUModel)model);}
     ranking_reset();arc_rpc_mem_bind(NULL,0,0);arc_rpc_memory_close();
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    uint64_t calls=0,failed=0;
+    const char *field=arc_rpc_crosscheck_status(&calls,&failed);
+    if(field){fprintf(stderr,"RPC cross-check mismatch: %s\n",field);return 1;}
+#endif
     puts("endpoint CPU: four models, three loops, integral/rational counts, prefix parity, NULL stop, TLB denied/pending/opportunity, schema-2 totals");return 0;
 }

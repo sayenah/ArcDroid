@@ -715,3 +715,24 @@ The launch predicate census includes the host TU. The merge refreshes source
 pins and lexical offsets, preserves both parents' historical audit metadata,
 and marks added entries as not rerun. A pin refresh is not evidence of a new
 exhaustive lexical mutation run.
+
+## S1 service-entry flush
+
+S1 moves the integer flush from batch_next to the first operation of
+batch_service, before classification and every return. P0's fast integer
+continuation remains unchanged. P3 after a service return is materialised even
+when service returns false at an already reached boundary. Projection must
+continue to use the existing phase formulas; it must not call batch_flush or
+next_base as a canonicaliser. Direct S1 tests assert the exact issue/due state
+immediately after both service returns. The M2b projection/materialisation
+checks at quotas 1/7/200 and its stale-representation mutants are required on the integrated S1 head. No v0/v1 encoding ruling is introduced here.
+
+S1 Run B may split the same full manifest into `--cross-quota-only` and
+`--density-only --audit` verification. The former retains every quota 1/7/200
+checkpoint comparison and the materialised oracle; the latter retains both
+dense wire-hash repetitions, every-checkpoint and P1-off guest comparisons,
+and the directed full-audit legs. Both use independently chosen complete
+program endpoints. The default command still runs both sets of assertions.
+The default 64-item manifest is the CI subset. Local evidence adds all 28
+`local-full` seed/model items (92 total) and runs `--audit-fuzz` on all 32
+fuzz items, including the four CI seeds; splitting the work omits no item.

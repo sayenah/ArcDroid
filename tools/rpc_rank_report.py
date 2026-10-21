@@ -29,4 +29,6 @@ report={'schema':1,'first_frame':a.first_frame,'last_frame':a.last_frame,'attemp
     'fetch_share':{'numerator':after['ranking_fetched']-before['ranking_fetched'],'denominator':instructions},
     'per_instruction':{key:{'numerator':value,'denominator':instructions} for key,value in counts.items() if isinstance(value,int)},
     'probes_per_hit':{caller:{'numerator':counts['lookup_'+caller+'_hit_probes'],'denominator':counts['lookup_'+caller+'_hit']} for caller in ('access','maintenance')}}
+if 'service_s1_taken' in counts:
+    report['S1_taken_share']={'numerator':counts['service_s1_taken'],'denominator':counts['service_s1']}
 print(json.dumps(report,indent=2,sort_keys=True))

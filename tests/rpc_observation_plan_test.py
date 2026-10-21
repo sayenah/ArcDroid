@@ -12,12 +12,15 @@ runner, core, shipping, fixtures = sys.argv[1:5]
 fixtures = Path(fixtures).resolve()
 profile = sys.argv[5] if len(sys.argv)>5 else 'full'
 baseline = sys.argv[6] if len(sys.argv)>6 else None
+baseline_runner = sys.argv[7] if len(sys.argv)>7 else None
+if baseline and not baseline_runner:
+    raise RuntimeError('predecessor projection requires its own runner/core pair')
 matrix_frames=3 if profile=='full' else 1
 # Frozen input schedule, RTC and generated seed; no host timing is compared.
 def projection(text):
     return '\n'.join(x for x in text.splitlines() if x.startswith(('frame=','regs=','video=','pcm=','first-raster=','ram=','cmos=')))
 def run(plan, folder, library=core, frames=matrix_frames, pacing='flat', extra=()):
-    r=subprocess.run([runner,'--core',library,'--plan',str(plan),'--system',str(fixtures),
+    r=subprocess.run([baseline_runner if baseline and library==baseline else runner,'--core',library,'--plan',str(plan),'--system',str(fixtures),
         '--save',str(folder),'--frames',str(frames),'--pacing',pacing,*extra],capture_output=True,text=True,timeout=60)
     if r.returncode:raise RuntimeError(r.stderr+r.stdout)
     return r

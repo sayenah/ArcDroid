@@ -144,11 +144,24 @@ def main():
     p.add_argument('--objdump',default=shutil.which('llvm-objdump'))
     p.add_argument('--allow-changed-object',choices=('rpc_mem_timing',),help='L1: permit exactly this object basename in base/candidate code comparison only')
     p.add_argument('--test-loops',action='store_true',help='also run the separate R-e0-1 TEST_FAULTS loop proof')
+    p.add_argument('--slice-s1',action='store_true',help='S1 predecessor: allow only the timing and ARM objects to change; measurement/layout checks stay strict')
     args=p.parse_args()
     if not args.readobj:raise RuntimeError('llvm-readobj is required')
     if args.test_loops and not args.objdump:raise RuntimeError('llvm-objdump is required for the TEST_FAULTS loop proof')
     for target in ('arcdroid_libretro_arculator','arcdroid_libretro_rpc','arcdroid_libretro','arcdroid_core','arcdroid_zlib'):
-        compare_objects(objects(args.base,target),objects(args.candidate,target),args.readobj,'AC-5(a) '+target,allow_changed=args.allow_changed_object if target=='arcdroid_libretro_rpc' else None)
+        left=objects(args.base,target);right=objects(args.candidate,target)
+        if args.slice_s1 and target=='arcdroid_libretro_rpc':
+            allowed={Path('engine/rpc/rpc_mem_timing.c.o'),Path('engine/rpcemu/src/arm.c.o')}
+            if all(k.suffix=='.obj' for k in left):
+                allowed={p.with_suffix('.obj') for p in allowed}
+            if not allowed<=left.keys() or left.keys()!=right.keys():
+                raise RuntimeError('S1 deliberate-object allow-list missing or object set differs')
+            changed={k for k in left if code(left[k],args.readobj)!=code(right[k],args.readobj)}
+            if changed!=allowed:raise RuntimeError('S1 changed-object set differs from exact allow-list: '+str(sorted(changed)))
+            print('S1 deliberate shipping code changes: '+', '.join(str(k) for k in sorted(changed)))
+            left={k:v for k,v in left.items() if k not in allowed}
+            right={k:v for k,v in right.items() if k not in allowed}
+        compare_objects(left,right,args.readobj,'AC-5(a) '+target,allow_changed=args.allow_changed_object if target=='arcdroid_libretro_rpc' else None)
     commands=json.loads((args.candidate/'compile_commands.json').read_text(encoding='utf-8'))
     flags=[]
     for target in ('arcdroid_libretro_rpc','arcdroid_rpcmeasure_libretro_rpc'):
@@ -174,7 +187,7 @@ def main():
         outer=layout(args.candidate,'arcdroid_rpcmeasure_libretro',args.readobj,Path(tmp),True)
         if outer!=a[:FAST_LAYOUT_COUNT]:raise RuntimeError('measurement frontend/RPC shared layout mismatch')
         print(f'AC-5(b) measurement frontend/RPC ArcRpcMemFast: {len(outer)} values identical')
-        print('AC-5: selected measurement hot objects match shipping and the pinned shipping base; endpoint hooks are absent from this core')
+        print('AC-5: selected measurement hot objects match shipping; endpoint hooks are absent from this core')
     if args.test_loops:compare_test_loops(args.base,args.candidate,args.objdump)
     else:print('R-e0-1 TEST_FAULTS loop proof not requested (use --test-loops); AC-5 alone does not prove it')
 

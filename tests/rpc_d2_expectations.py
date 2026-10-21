@@ -19,7 +19,7 @@ if sys.argv[1]=='--header':
         out.append(f'static const uint64_t rpc_expected_frontend_{m} = UINT64_C(0x{fnv(pcm):016x});')
     Path(sys.argv[2]).write_text('\n'.join(out)+'\n')
 else:
-    r=subprocess.run(sys.argv[1:5],capture_output=True,text=True)
+    r=subprocess.run([*sys.argv[1:5],*sys.argv[6:]],capture_output=True,text=True)
     if r.returncode:sys.stderr.write(r.stdout+r.stderr);raise SystemExit(r.returncode)
     wanted=Path(sys.argv[5]).read_text()
     if r.stdout!=wanted:

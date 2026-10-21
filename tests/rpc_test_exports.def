@@ -61,3 +61,4 @@ EXPORTS
   arc_libretro_test_boot_stamp
   arc_libretro_test_boot_start_stamp
   arc_libretro_test_boot_record_hit
+  arc_rpc_test_s1_force_off

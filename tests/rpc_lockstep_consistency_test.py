@@ -25,7 +25,9 @@ def main():
     p.add_argument('fixtures',type=Path);p.add_argument('--model',type=int)
     p.add_argument('--only',default='');p.add_argument('--audit',action='store_true')
     p.add_argument('--audit-fuzz',action='store_true',help='local full-audit coverage including fuzz; CI --audit remains directed-only')
-    p.add_argument('--cross-quota-only',action='store_true',help='rerun full-checkpoint quotas and oracle without unchanged strict density legs')
+    subsets=p.add_mutually_exclusive_group()
+    subsets.add_argument('--cross-quota-only',action='store_true',help='rerun full-checkpoint quotas and oracle without unchanged strict density legs')
+    subsets.add_argument('--density-only',action='store_true',help='run independent wire-repeatability/density legs after separate full quota verification')
     p.add_argument('--endpoint',type=int,default=200000)
     a=p.parse_args();started=time.monotonic()
     items=json.loads((a.fixtures/'manifest.json').read_text(encoding='utf-8'))['items']
@@ -77,21 +79,22 @@ def main():
         # event and non-optional page boundary, with only reviewed projections.
         # File readers keep bounded state; each complete stream is discarded
         # before the next item. No authored item or seed is omitted.
-        with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-quotas-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
-            left=Path(tmp)/'baseline.stream';right=Path(tmp)/'candidate.stream'
-            baseline,elapsed=run(item,a.lockstep_core,str(left),257,endpoint=endpoint)
-            maximum=max(maximum,elapsed);total_bytes+=left.stat().st_size
-            expected=c.stdout_projection(oracle.stdout.decode('utf-8'),'cross-quota',schema)
-            if c.stdout_projection(baseline.stdout.decode('utf-8'),'cross-quota',schema)!=expected:
-                raise RuntimeError((item['name'],'cross-quota baseline guest effect'))
-            for quota in (1,7,200):
-                candidate,elapsed=run(item,a.lockstep_core,str(right),256,endpoint=endpoint,quota=quota)
-                maximum=max(maximum,elapsed);total_bytes+=right.stat().st_size
-                if c.stdout_projection(candidate.stdout.decode('utf-8'),'cross-quota',schema)!=expected:
-                    raise RuntimeError((item['name'],'cross-quota guest effect',quota))
-                with left.open('rb') as l,right.open('rb') as r:result=c.compare(l,r,schema,sh,'cross-quota')
-                if not result['ok']:raise RuntimeError((item['name'],'full-checkpoint quota disagreement',quota,result))
-                quota_comparisons+=1;right.unlink()
+        if not a.density_only:
+            with tempfile.TemporaryDirectory(prefix='arcdroid-m2b-quotas-',dir='/private/tmp' if Path('/private/tmp').is_dir() else None) as tmp:
+                left=Path(tmp)/'baseline.stream';right=Path(tmp)/'candidate.stream'
+                baseline,elapsed=run(item,a.lockstep_core,str(left),257,endpoint=endpoint)
+                maximum=max(maximum,elapsed);total_bytes+=left.stat().st_size
+                expected=c.stdout_projection(oracle.stdout.decode('utf-8'),'cross-quota',schema)
+                if c.stdout_projection(baseline.stdout.decode('utf-8'),'cross-quota',schema)!=expected:
+                    raise RuntimeError((item['name'],'cross-quota baseline guest effect'))
+                for quota in (1,7,200):
+                    candidate,elapsed=run(item,a.lockstep_core,str(right),256,endpoint=endpoint,quota=quota)
+                    maximum=max(maximum,elapsed);total_bytes+=right.stat().st_size
+                    if c.stdout_projection(candidate.stdout.decode('utf-8'),'cross-quota',schema)!=expected:
+                        raise RuntimeError((item['name'],'cross-quota guest effect',quota))
+                    with left.open('rb') as l,right.open('rb') as r:result=c.compare(l,r,schema,sh,'cross-quota')
+                    if not result['ok']:raise RuntimeError((item['name'],'full-checkpoint quota disagreement',quota,result))
+                    quota_comparisons+=1;right.unlink()
         if a.cross_quota_only:
             print('PASS',item['name'],'endpoint='+str(endpoint),'full-checkpoint-quotas=1,7,200',flush=True)
             continue
@@ -112,7 +115,8 @@ def main():
         for flags in densities:
             result,elapsed=run(item,a.lockstep_core,'discard',flags,endpoint=endpoint);maximum=max(maximum,elapsed)
             if result.stdout!=oracle.stdout:raise RuntimeError((item['name'],'density guest effect',flags))
-        print('PASS',item['name'],'endpoint='+str(endpoint),'full-checkpoint-quotas=1,7,200','wire-sha256='+hashes[0].decode('utf-8'),
+        print('PASS',item['name'],'endpoint='+str(endpoint),
+            'independent-density-legs' if a.density_only else 'full-checkpoint-quotas=1,7,200','wire-sha256='+hashes[0].decode('utf-8'),
             'stdout-sha256='+hashlib.sha256(oracle.stdout).hexdigest(),flush=True)
     print(json.dumps(dict(items=len(items),endpoint=a.endpoint,maximum_process_seconds=maximum,
         stream_bytes=total_bytes,quota_comparisons=quota_comparisons,elapsed_seconds=time.monotonic()-started),sort_keys=True),flush=True)

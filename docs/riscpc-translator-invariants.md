@@ -143,9 +143,9 @@ All of these are [C].
 - **Capture deadline.** It clips `limit` (`rpc_session.c:407-408`), and the capture is evaluated at `now==deadline` (`rpc_session.c:466-471`).
 - **Backstop.** 1,666,667 instructions is a session fatal (`rpc_session.c:430`).
 
-**Continuation inside a batch** (`rpc_mem_timing.h:166-187`).
+**Continuation inside a batch** (`rpc_mem_timing.h:164-184`).
 - It returns false on idle or on a test stop.
-- With `pending||bus_busy`, it flushes integer mode and calls `arc_rpc_mem_batch_service` (`rpc_mem_timing.c:1097-1183`). That call can **advance `now_ns` and partially service work before returning false** (`rpc_mem_timing.c:1170-1182`). The demand-only shortcut either commits (`rpc_mem_timing.c:1145-1160`) or rolls back its ROM history (`rpc_mem_timing.c:1168`).
+- With `pending||bus_busy`, it delegates to `arc_rpc_mem_batch_service`, which flushes integer mode at entry (`rpc_mem_timing.c:1195`). The retained loop can **advance `now_ns` and partially service work before returning false** (`rpc_mem_timing.c:1309`); the demand-only shortcut commits at `rpc_mem_timing.c:1289-1300` or rolls back ROM history at `rpc_mem_timing.c:1303-1304`. S1 only advances to a due strictly below visible finish and both boundaries.
 - Otherwise it requires `cpu_due_ns < boundary`. `next_ns` is re-read on every call, so an MMIO-armed delay-0 deadline (`fdc.c:529`) stops the batch. [C]
 
 **Integer batch.** It is active only when all of these hold (`rpc_mem_timing.h:103-113`):
@@ -320,10 +320,13 @@ inventory/citation metadata; inventory has a separate independent policy pin.
 - Write-only state (§1.4), including `dirtybuffer` (Q-5).
 - Diagnostic post-fatal registers (Q-9).
 - Host-only live L1 lookup hints/key mirrors, gate and bind-derived geometry masks/shifts, hint-poison PRNG state,
-  and `finish_ns` (reserved for S1), exercise and new ranking counters, interval exercise
+  exercise counters including S1 `service_s1_taken` (counter ABI revision 4),
+  the S1 force-off switch, ranking counters, interval exercise
   snapshots and batch bookkeeping, and cross-check bookkeeping. These remain
   outside `m` and `arc_rpc_mem_fast` and reset at every G-13 timing bind/unbind
-  before its early return. Ranking reports carry `ranking_epoch` and a separate
+  before its early return. The diagnostic cross-check failure latch survives
+  these resets so a later binding cannot erase a failed comparison (R-s1-8).
+  Ranking reports carry `ranking_epoch` and a separate
   current-binding `ranking_attempts` denominator. Legacy P0i report fields keep
   their existing cumulative/epoch semantics.
 - The authored prefix-comparison diagnostic and its CPU/RAM/VRAM/scheduler
@@ -416,6 +419,19 @@ Any `updatemode` ends the block (E4).
 - **Clock switch.** An uncached SA read can switch the base clock (`rpc_mem_timing.c:635-642`).
 - **Ruling needed.** A filter needs its own ruling (constraint 3).
 
+**S1 production invariants (R-s1-9, corrected by M2).**
+!pending implies count==0: append sets pending before adding a command; both
+clear sites require count==0. cycle_active implies active_valid, !video_active
+and !restart: start_cycle is called only after packet selection and after
+video retirement, and clears restart. Outside run(), cycle_active implies
+bus_busy, recomputed at every run exit. The denominator is fixed at bind.
+S1 computes the exact visible finish on demand; it stores no finish memo.
+The TEST_FAULTS force-off switch is excluded and reset before bind/unbind's
+early return; raw snapshots remain unmasked. The required taken counter shares
+that class; counter ABI revision 4 appends it after L1's scalars and all four
+versioned copy APIs retain revision/size refusal before copying. The three
+excluded exercise arrays each contain 174 scalars/histogram bins.
+
 **G-8 Lazy bus catch-up: older work only.**
 - **Catch up older work to the issue time of k at P0(k),** before k is entered, whenever k may:
   - enqueue a request;
@@ -457,10 +473,10 @@ Any `updatemode` ends the block (E4).
   end is last completion; drained end also waits for final command/buffer
   retirement. Capture never flushes, translates or services the bus.
   Admission, completion, ordinary return and final-retirement captures are at
-  `rpc_mem_timing.c:244`,
-  `rpc_mem_timing.c:270`,
-  `rpc_mem_timing.c:284` and
-  `rpc_mem_timing.c:1029`.
+  `rpc_mem_timing.c:247`,
+  `rpc_mem_timing.c:273`,
+  `rpc_mem_timing.c:287` and
+  `rpc_mem_timing.c:1033`.
 - The fetch memo and demand-shortcut semantics are unchanged. Calibrations
   compare both modes' complete records; directed tests cover holds, wake,
   pending writes, quotas, fractions, shortcut commit/rollback, NULL entries and
@@ -501,7 +517,7 @@ Any `updatemode` ends the block (E4).
 | G-5 | Memo, cursors, `stats.hits` and `fetch_hits` individually equal; burst-ROM state; the SA D-fill memo clear | Calibrations (4,677, `tests/rpc-timing-expectations.md:79`) and `rpc_qa_mutations.py`. Intrusive and endpoint modes compare complete interval records, including separate fetch hits. Endpoint counters report integral/rational/S1 coverage, and CPU/plan prefix tests compare through the last functional instruction (G-12) |
 | G-6 | A unified data fill evicting the executing line | `cache-geometry` probes (`rpc-timing-expectations.md:14-46`; code in sets 1/2). `rpc_l1_test.c` directed G-6 sequence fills the executing set with data, evicts the code line, clears the memo and verifies the cyclic cursor |
 | G-7 | Filtered hits equal real hits: validity, backing and region, dirty halves, G7 castout, LDRT/STRT; SWP excluded | `rom-castout-*`, SA geometry probes, `rpc_cpu_test` m12 |
-| G-8 | Lazy and eager drain give identical per-word ticks; a timing-register write mid-drain; k's own requests costed after k's effects | `rpc_mem_timing_unit.c` (request-level holds and boundaries); buffer-boundary calibrations (`rpc-timing-expectations.md:81-91`); `rpc-d2-*`/`rpc-video-*` hashes. **No test** writes ROMCR/CLKCTL while draining, or in the instruction whose own fetch it reprices |
+| G-8 | Lazy and eager drain give identical per-word ticks; a timing-register write mid-drain; k's own requests costed after k's effects | `rpc_mem_timing_unit.c` (request-level holds and boundaries); buffer-boundary calibrations (`rpc-timing-expectations.md:81-91`); `rpc-d2-*`/`rpc-video-*` hashes. S1 directed batch tests cover writes before the next draining word; they do not establish instruction-own-fetch repricing coverage |
 | G-9 | Invalidation through aliases (`0x10↔0x12`, `0x11↔0x13`, VRAM) and through every store form; a store to PC+4; STM partial abort | `rpc_plan_matrix_rom.py:53-60` (SMC through `MOV pc`); `rpc_cpu_test.c:112` (functional mirror). **No test** for aliased, same-block or PC+4 SMC |
 | G-10/E11 | c7 changes timing only; exact exit | None directly |
 | G-11 | Phase-correct rational state across integer and non-integer modes and SA clock switches | SA clock-disable calibrations (`rpc-timing-expectations.md:92-101`) |

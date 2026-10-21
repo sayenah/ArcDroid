@@ -156,6 +156,9 @@ static Tag *lookup_reference(Cache *c, uint32_t va)
 ArcRpcExercise arc_rpc_exercise;
 unsigned arc_rpc_exercise_path;
 static struct { uint64_t start, integer, services; bool live, integral, batched; } exercise_batch;
+/* S1 host-only test control, excluded under section 2.2; reset on every bind. */
+static bool s1_forced_off;
+void arc_rpc_mem_s1_force_off(bool off) { s1_forced_off = off; }
 void arc_rpc_mem_exercise_begin(bool batched)
 {
     exercise_batch.start=arc_rpc_mem_fast.instructions;
@@ -525,7 +528,7 @@ void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
 #if defined(ARCDROID_RPC_CROSSCHECK)
     lookup_integrity(&m.instruction,0,512);
     lookup_integrity(&m.data,0,512);
-    arc_rpc_crosscheck_reset();
+    arc_rpc_crosscheck_binding();
 #endif
 #if defined(ARCDROID_TEST_FAULTS)
 #if defined(ARCDROID_RPC_PROFILE)
@@ -534,6 +537,7 @@ void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
     arc_rpc_mem_measure(0, 0, false);
     memset(&arc_rpc_exercise,0,sizeof(arc_rpc_exercise));arc_rpc_exercise_path=0;
     memset(&exercise_batch,0,sizeof(exercise_batch));
+    s1_forced_off = false;
 #endif
     if (!clock) return;
     if (model > 3 || !rate || rate > 100) fatal("Invalid RPC memory clock");
@@ -1006,7 +1010,7 @@ void arc_rpc_mem_run(uint64_t now_ns)
 {
     if (!arc_rpc_mem_fast.enabled) return;
     (void)ticks(now_ns);
-    commands(); /* enqueue can overlap an already active write packet */
+    if (m.count || arc_rpc_mem_fast.pending) commands(); /* S1 outer guard */
     for (;;) {
         if (m.video_active) {
             if (visible(m.finish) > now_ns) break;
@@ -1043,7 +1047,7 @@ void arc_rpc_mem_run(uint64_t now_ns)
             break;
         }
         if (m.active_valid) { start_cycle(); continue; }
-        commands();
+        if (m.count || arc_rpc_mem_fast.pending) commands(); /* S1 inner guard */
         if (m.bcount) { m.active = m.buffer[m.bhead]; m.active_kind = BUFFERED; }
         else if (m.count && m.command[m.head].kind == DEMAND) {
             m.active = m.command[m.head]; m.active_kind = DEMAND;
@@ -1091,11 +1095,110 @@ bool arc_rpc_mem_ready(bool idle)
     arc_rpc_mem_fast.issue_fraction = arc_rpc_mem_fast.due_fraction;
     return true;
 }
+/* R-s1-9: append sets pending before count; both clearing sites require an
+ * empty queue. start_cycle follows packet selection and video retirement and
+ * clears restart. run recomputes bus_busy before returning. Only bind writes
+ * denominator. These invariants justify the S1 write set below. */
+#if defined(ARCDROID_RPC_CROSSCHECK)
+static void s1_invariants(void)
+{
+    if (!arc_rpc_mem_fast.pending && m.count) fatal("RPC S1 invariant pending/count");
+    if (m.cycle_active && (!m.active_valid || m.video_active || m.restart ||
+                           !arc_rpc_mem_fast.bus_busy)) fatal("RPC S1 invariant active cycle");
+    if (arc_rpc_mem_fast.denominator != 28u * m.rate) fatal("RPC S1 invariant denominator");
+}
+/* Hash storage that must remain unchanged. Raw bytes are stricter than 2.2:
+ * even dead packet lanes and padding must remain untouched during this skip.
+ * memcpy word loads avoid alignment and aliasing assumptions. */
+static uint64_t s1_hash(const void *data, size_t size)
+{
+    const unsigned char *p = data;
+    uint64_t hash = UINT64_C(1469598103934665603);
+    while (size >= sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, p, sizeof(word));
+        hash = (hash ^ word) * UINT64_C(1099511628211);
+        p += sizeof(word); size -= sizeof(word);
+    }
+    while (size--) hash = (hash ^ *p++) * UINT64_C(1099511628211);
+    return hash;
+}
+typedef struct {
+    ArcRpcMemFast fast;
+    uint64_t now, memory;
+    ArcRpcScheduler scheduler;
+    uint64_t measurement;
+    bool result;
+} S1Check;
+static S1Check s1_reference(ArcRpcCpuBatch *batch, uint64_t boundary)
+{
+    ArcRpcMemFast saved = arc_rpc_mem_fast;
+    ArcRpcScheduler clock = *batch->clock;
+    uint64_t services = exercise_batch.services;
+    ArcRpcMeasureState measurement;
+    arc_rpc_mem_measure_state(&measurement);
+    uint64_t unchanged_measurement = s1_hash(&measurement, sizeof(measurement));
+    /* Only bypass profiling wrappers: the retained service operations are
+     * unchanged. No timer, stage, profile counter or exercise feed is touched. */
+#if defined(ARCDROID_RPC_PROFILE)
+#define S1_RUN arc_rpc_mem_run_profile_body
+#else
+#define S1_RUN arc_rpc_mem_run
+#endif
+    S1_RUN(batch->clock->now_ns);
+    bool result;
+    for (;;) {
+        if (arc_rpc_mem_ready(false)) { ++exercise_batch.services; result = true; break; }
+        uint64_t next = arc_rpc_mem_next(boundary, false);
+        if (next >= boundary) { result = false; break; }
+        batch->clock->now_ns = next;
+        S1_RUN(next);
+    }
+#undef S1_RUN
+    S1Check check = {0};
+    check.fast = arc_rpc_mem_fast; check.now = batch->clock->now_ns;
+    check.scheduler = *batch->clock; check.result = result;
+    check.memory = s1_hash(&m, sizeof(m));
+    arc_rpc_mem_measure_state(&measurement);
+    check.measurement = s1_hash(&measurement, sizeof(measurement));
+    arc_rpc_crosscheck_field("S1.reference measurement", &unchanged_measurement,
+                            &check.measurement, sizeof(check.measurement));
+    /* The predicate proves there are no other reference writes. Hashes below
+     * check that proof; do not restore a divergence and hide it. */
+    arc_rpc_mem_fast = saved; *batch->clock = clock;
+    exercise_batch.services = services;
+    return check;
+}
+static void s1_compare(const S1Check *reference, ArcRpcCpuBatch *batch, bool result)
+{
+#define S1_FIELD(field) arc_rpc_crosscheck_field("S1." #field, &reference->fast.field, &arc_rpc_mem_fast.field, sizeof(arc_rpc_mem_fast.field))
+    S1_FIELD(issue_ticks); S1_FIELD(issue_floor); S1_FIELD(issue_fraction);
+    ArcRpcMemFast a = reference->fast, b = arc_rpc_mem_fast;
+    a.issue_ticks = b.issue_ticks = 0; a.issue_floor = b.issue_floor = 0;
+    a.issue_fraction = b.issue_fraction = 0;
+    arc_rpc_crosscheck_field("S1.fast unchanged", &a, &b, sizeof(a));
+#undef S1_FIELD
+    uint64_t memory = s1_hash(&m, sizeof(m));
+    arc_rpc_crosscheck_field("S1.memory unchanged", &reference->memory, &memory, sizeof(memory));
+    arc_rpc_crosscheck_field("S1.now_ns", &reference->now, &batch->clock->now_ns, sizeof(reference->now));
+    arc_rpc_crosscheck_field("S1.scheduler", &reference->scheduler, batch->clock, sizeof(*batch->clock));
+    ArcRpcMeasureState measurement;
+    arc_rpc_mem_measure_state(&measurement);
+    uint64_t hash = s1_hash(&measurement, sizeof(measurement));
+    arc_rpc_crosscheck_field("S1.measurement", &reference->measurement, &hash, sizeof(hash));
+    arc_rpc_crosscheck_field("S1.return", &reference->result, &result, sizeof(result));
+}
+#endif
 #if defined(ARCDROID_RPC_PROFILE)
 #define arc_rpc_mem_batch_service arc_rpc_mem_batch_service_profile_body
 #endif
 bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
 {
+    /* G-11: materialise before classification and before every early return. */
+    if (arc_rpc_mem_fast.integer_batch) arc_rpc_mem_batch_flush(); /* S1 service-entry flush */
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    s1_invariants();
+#endif
     /* Execute the same service transitions locally while no device or
      * frontend boundary can intervene. Equality still returns to the driver,
      * which delivers every tied event before release, grant or CPU issue. */
@@ -1114,6 +1217,39 @@ bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
     else kind=ARC_RPC_COUNT_service_other;
     arc_rpc_exercise_add(kind,1);
 #endif
+    /* S1 uses the visible-ns ceiling, never a ticks comparison. The single
+     * production predicate is independent of the exercise classification. */
+    ArcRpcMemFast *fast = &arc_rpc_mem_fast;
+    bool s1 = !fast->pending && !m.video_active && m.cycle_active &&
+        batch->clock->now_ns < fast->cpu_due_ns &&
+        fast->cpu_due_ns < visible(m.finish) && fast->cpu_due_ns < boundary;
+#if defined(ARCDROID_TEST_FAULTS)
+    bool gate = measure_last && fast->instructions >= measure_last;
+    bool take_s1 = s1 && !gate && !s1_forced_off;
+    if ((kind == ARC_RPC_COUNT_service_s1 && !gate && !s1_forced_off) != take_s1)
+        fatal("RPC S1 predicate eligibility mismatch");
+#else
+    bool take_s1 = s1;
+#endif
+    if (take_s1) {
+#if defined(ARCDROID_RPC_CROSSCHECK)
+        uint64_t unchanged = s1_hash(&m, sizeof(m));
+        S1Check reference = s1_reference(batch, boundary);
+        arc_rpc_crosscheck_field("S1.reference memory", &unchanged, &reference.memory, sizeof(unchanged));
+#endif
+        batch->clock->now_ns = fast->cpu_due_ns;
+        fast->issue_ticks = fast->cpu_due_ticks;
+        fast->issue_floor = fast->due_floor;
+        fast->issue_fraction = fast->due_fraction;
+#if defined(ARCDROID_TEST_FAULTS)
+        ARC_RPC_COUNT(service_s1_taken,1);
+        ++exercise_batch.services; /* S1 service, same rational accounting */
+#endif
+#if defined(ARCDROID_RPC_CROSSCHECK)
+        s1_compare(&reference, batch, true);
+#endif
+        return true;
+    }
     if (batch->clock->now_ns >= boundary) return false;
     if (m.count && !m.bcount && !m.active_valid && !m.video_active && !m.queued_video &&
         m.cursor <= UINT64_MAX / 2 && m.bus_cursor <= UINT64_MAX / 2) {

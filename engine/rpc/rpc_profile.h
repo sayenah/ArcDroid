@@ -35,7 +35,7 @@ typedef struct {
     uint64_t sampled_ns[ARC_RPC_COST_COUNT], samples[ARC_RPC_COST_COUNT], clock_reads, abandoned_samples;
 } ArcRpcProfile;
 void arc_rpc_profile_configure(unsigned stride, uint64_t (*clock_ns)(void));
-bool arc_rpc_profile_snapshot_v3(ArcRpcProfile *out,unsigned revision,size_t size);
+bool arc_rpc_profile_snapshot_v4(ArcRpcProfile *out,unsigned revision,size_t size);
 /* Seven charged probe counts, then calibration elapsed ns and iterations. */
 void arc_rpc_profile_probe_snapshot(uint64_t out[ARC_RPC_COST_COUNT+2]);
 void arc_rpc_profile_rank_reset(void);

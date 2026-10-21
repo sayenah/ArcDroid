@@ -55,7 +55,7 @@ Nothing in this plan blocks Phase 1a or the portable foundation on the Founder. 
 3. A1;
 4. F1.
 
-D1 and D2 form a small independent slice. B3 and B2 go ahead only on evidence, and B4 is dropped unless it shows a benefit. The rational continuation table is vetted, not admitted. The foundation reuses L1's hint, S1's `finish_ns`, A1's access body and F1's shared hit-and-permit check. It trims nothing from 1a.
+D1 and D2 form a small independent slice. B3 is dropped from Phase 1a (D-199(2)); B2 goes ahead only on evidence, and B4 is dropped unless it shows a benefit. The rational continuation table is vetted, not admitted. The foundation reuses L1's hint, S1's exact visible-finish test, A1's access body and F1's shared hit-and-permit check. It trims nothing from 1a.
 
 **Gains, honestly framed.**
 
@@ -357,7 +357,7 @@ Every B slice must show that the default path gains no per-instruction cost (an 
   - **also at test rates 200 and 202 once C-2 lands. C-2 must precede B-Q.**
 - **Gain.** −3 to −5 ns [E]. Basis: the timing service is about 14.5 ns. The scratch count of about 70 host instructions per instruction on the hook path is [U].
 
-**B-3. Bus-busy window (fold B).** Requires 1a S1 merged.
+**B-3. Bus-busy window (fold B).** Requires 1a S1 merged and S1's exact visible-finish test; finish is valid only while a cycle or video is active.
 
 - **Scope.** With `m.count == 0`, `!pending`, `!video_active` and `rom_sequential == false`, request-free instructions whose due is below `W = min(next_ns, limit, visible(finish))` (strict) issue with no service call. The integer flush is reproduced at the first busy boundary.
 - **Exactness.** `run(now)` for `now < H` is a no-op under these guards (Astra 4, S1 verdict). Strict `<` is required because a queued video starts at finish and pushes `cpu_due`.

@@ -648,7 +648,15 @@ RETRO_API void arc_rpc_test_timing_measure(uint64_t first, uint64_t last, bool d
     (void)first;(void)last;(void)drained;arc_rpc_test_refuse("intrusive measurement");
 #endif
 }
-RETRO_API bool arc_rpc_test_exercise_v3(ArcRpcExercise *out,unsigned revision,size_t size)
+RETRO_API bool arc_rpc_test_s1_force_off(bool off)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_mem_s1_force_off(off); return true;
+#else
+    (void)off; return arc_rpc_test_refuse("S1 force-off");
+#endif
+}
+RETRO_API bool arc_rpc_test_exercise_v4(ArcRpcExercise *out,unsigned revision,size_t size)
 {
     if(revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -658,17 +666,17 @@ RETRO_API bool arc_rpc_test_exercise_v3(ArcRpcExercise *out,unsigned revision,si
     (void)out;return arc_rpc_test_refuse("exercise counters");
 #endif
 }
-RETRO_API bool arc_rpc_test_ranking_v3(ArcRpcExercise *out,uint64_t *attempts,unsigned revision,size_t size)
+RETRO_API bool arc_rpc_test_ranking_v4(ArcRpcExercise *out,uint64_t *attempts,unsigned revision,size_t size)
 {
     if(revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false;
 #if defined(ARCDROID_RPC_PROFILE)
     if(!out || !attempts)return false;
-    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));*out=p.ranking;*attempts=p.ranking_attempts;return true;
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v4(&p,ARC_RPC_COUNTER_ABI,sizeof(p));*out=p.ranking;*attempts=p.ranking_attempts;return true;
 #else
     (void)out;(void)attempts;return arc_rpc_test_refuse("ranking counters");
 #endif
 }
-RETRO_API bool arc_rpc_test_interval_exercise_v3(ArcRpcExercise *out,unsigned revision,size_t size)
+RETRO_API bool arc_rpc_test_interval_exercise_v4(ArcRpcExercise *out,unsigned revision,size_t size)
 {
     if(revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false;
 #if defined(ARCDROID_TEST_FAULTS)

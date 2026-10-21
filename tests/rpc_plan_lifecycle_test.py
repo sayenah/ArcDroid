@@ -9,9 +9,11 @@ from rpc_lockstep_golden import run as golden_run
 
 runner,core,directory,mode=sys.argv[1:5]
 directory=Path(directory).resolve()
+s1_options=sys.argv[5:]
+assert not s1_options or s1_options==["--s1-off"]
 def run(name,frames=2,extra=(),success=True,pacing='flat'):
     r=golden_run([runner,'--core',core,'--plan',str(directory/(name+'.arcplan')),
-        '--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra],capture_output=True,text=True)
+        '--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra,*s1_options],capture_output=True,text=True)
     assert (r.returncode==0)==success,r.stderr+r.stdout
     return r.stdout
 def ram(text):return [int(w,16) for w in re.findall(r'^ram=(.*)$',text,re.M)[-1].split(',')]

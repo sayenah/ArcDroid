@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-1a0-core-') as tmp:
         for option in ('--endpoint-instructions','--intrusive-instructions'):
             r=run(measurement,hot,(option,bad))
             if r.returncode!=2 or 'rpc_runner --core LIB --plan FILE' not in r.stderr:raise RuntimeError(('invalid window accepted',bad,r.returncode))
-    for args,facility in ((('--ranking',),'ranking counters'),(('--exercise',),'exercise counters'),(('--intrusive-instructions','1:2:0'),'intrusive measurement'),
+    for args,facility in ((('--s1-off',),'S1 force-off'),(('--ranking',),'ranking counters'),(('--exercise',),'exercise counters'),(('--intrusive-instructions','1:2:0'),'intrusive measurement'),
                           (('--endpoint-instructions','1:2:0'),'endpoint measurement'),(('--fail-alloc','1'),'allocation fault injection'),
                           (('--fault-at','0'),'entry fault injection')):
         r=run(measurement,hot,args)
@@ -48,4 +48,4 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-1a0-core-') as tmp:
         refused=hot.with_name('refused.arcplan');refused.write_text(hot.read_text()+f'{key}={value}\n')
         r=run(measurement,refused)
         if not r.returncode or facility not in r.stderr:raise RuntimeError(('plan refusal',key,r.returncode,r.stderr))
-print('measurement: hot + four synthetics stdout/counts equal plan; core_ns present; eight unsupported requests refused')
+print('measurement: hot + four synthetics stdout/counts equal plan; core_ns present; nine unsupported requests refused')
