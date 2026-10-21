@@ -74,7 +74,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
@@ -187,7 +187,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
@@ -224,7 +224,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON -DARCDROID_SANITIZERS=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-exports.sh build/ordinary-open/arcdroid_libretro.so
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/sanitize --platform ofd
@@ -400,7 +400,7 @@ jobs:
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$NUMBER_OF_PROCESSORS"
-          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-secondary-routes$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
+          ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'
           tools/check-windows.sh build/ordinary-open/arcdroid_libretro.dll
           tools/check-windows.sh build/ordinary-open/arcdroid_rpcroute_libretro.dll
           python3 tools/check-rpc-lock-object.py --build build/windows --platform windows

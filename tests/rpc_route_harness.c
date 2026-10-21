@@ -31,7 +31,7 @@ static bool discarded_failure,ask_chooser,chooser_seen,fault_core;
 static bool trace_logs;
 static unsigned selected_reads;
 static const char *primary_library_path;
-static unsigned registrations,secondary_refusals;
+static unsigned registrations,secondary_refusals,mode_notices;
 static bool ss1_case,no_module_path;
 static unsigned secondary_queries,primary_polls;
 static bool change_locator,system_unavailable;
@@ -145,8 +145,8 @@ static bool environment(unsigned command,void *data)
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
     case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:++registrations;disks=*(struct retro_disk_control_ext_callback *)data;return true;
     case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{if(legacy_interface)return false;struct retro_message_ext *m=data;
-        if(m->type==RETRO_MESSAGE_TYPE_STATUS){assert(m->target==RETRO_MESSAGE_TARGET_OSD);assert(m->priority==(*m->msg && m->level!=RETRO_LOG_ERROR?2u:3u));assert(!*m->msg?m->duration==1u:m->level==RETRO_LOG_ERROR?m->duration==~0u:(m->duration==2000u || m->duration==5000u));}++notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
-    case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;++notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
+        if(m->type==RETRO_MESSAGE_TYPE_STATUS){assert(m->target==RETRO_MESSAGE_TARGET_OSD);assert(m->priority==(*m->msg && m->level!=RETRO_LOG_ERROR?2u:3u));assert(!*m->msg?m->duration==1u:m->level==RETRO_LOG_ERROR?m->duration==~0u:(m->duration==2000u || m->duration==5000u));}++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
+    case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;++notices;if(strstr(m->msg,"Preemptive Frames is unavailable"))++mode_notices;snprintf(last_notice,sizeof(last_notice),"%s",m->msg);return true;}
     default:return false;
     }
 }
@@ -221,10 +221,11 @@ static void check_alias(const struct retro_game_info *game,void (*env)(retro_env
     secondary_refusals=0;
 }
 #define LOAD(v,n) do{void *p=symbol(n);assert(p);memcpy(&(v),&p,sizeof(v));}while(0)
+#include "arculator_runahead_model.inc"
 int main(int argc,char **argv)
 {
     if(argc==2 && !strcmp(argv[1],"--check-discarded-paths")){check_discarded_paths();return 0;}
-    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));trace_logs=argc==8;ss1_case=!strncmp(argv[5],"ss1-secondary",13);no_module_path=strstr(argv[5],"-no-path")!=NULL;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
+    assert(argc==7 || (argc==8 && !strcmp(argv[7],"--trace-log")));trace_logs=argc==8;ss1_case=!strncmp(argv[5],"ss1-secondary",13)||!strncmp(argv[5],"ss1-runahead:",13);no_module_path=strstr(argv[5],"-no-path")!=NULL;primary_library_path=argv[1];boot_unreadable=!strcmp(argv[5],"refuse:N-20");preflight_unavailable=!strcmp(argv[5],"refuse:N-19");system_unavailable=!strcmp(argv[5],"system-unavailable");change_locator=!strcmp(argv[5],"refuse:N-B firmware");vfs.open=audited_open;fault_core=!strcmp(argv[5],"chooser-cycles") || !strcmp(argv[5],"metadata-fault") || !strcmp(argv[5],"calendar") || !strncmp(argv[5],"matrix:",7);metadata_only=!strncmp(argv[5],"metadata",8);vfs.stat=audited_stat;raw_expected=!strcmp(argv[5],"failure-raw") || !strcmp(argv[5],"discarded");allow_arculator=!strcmp(argv[5],"discarded");system_directory=argv[2];assert(canonical(argv[3],save_directory));
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
 #else
@@ -247,6 +248,11 @@ int main(int argc,char **argv)
     if(!strcmp(argv[5],"primary-menu")){info(&system);env(probe_environment);env(ignored_environment);}
     info(&system);env(probe_environment);env(ignored_environment);info(&system);
     env(environment);init();struct retro_game_info game={.path=argv[4]};
+    if(!strncmp(argv[5],"ss1-runahead:",13)){
+        unsigned settings=0;assert(sscanf(argv[5]+13,"%u:%u",&settings,&model_poll_type)==2);
+        assert(settings<16 && model_poll_type<3);
+        model_session(&game,argv[6],unload,deinit,settings);return 0;
+    }
     if(metadata_only){
         printf("system|%s|%s|%s|%u|%u\n",system.library_name,system.library_version,system.valid_extensions,system.need_fullpath,system.block_extract);deinit();return 0;
     }

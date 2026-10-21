@@ -997,3 +997,85 @@ the complete ON/OFF test-set difference. The accepted first-frame limitation
 is recorded in the SS-1 release notes. Fable's Run M quiet-host confirmation
 closes the earlier timing gap (floppy maxima: save 1.26 ms, warm load 3.30 ms);
 Run N does not repeat an unchanged performance campaign.
+## Run O: RetroArch callback restoration and unsupported modes
+
+Run N's model restored the same poll pointer that was installed at content
+load. RetroArch 1.22.2 does something different: `runloop.c:4631–4644`
+installs `core_input_state_poll_maybe`, but `core_set_default_callbacks`
+(`:7702–7715`) puts `input_driver_poll` in `retro_ctx.poll_cb`.
+`runahead_core_run_use_last_input` (`runahead.c:1095–1118`) restores that
+second pointer after each speculative frame. SS-1 now normalizes that
+restoration to the original poll wrapper, only when a speculative frame has
+actually executed and the frontend switches away from its fake poll. This
+changes neither the speculative provenance latch nor the rule that only a
+successful state restore can release it. Repeated fake frames still execute
+with the fake callback, and failed rollback still quarantines the guest.
+
+This fixes two related failures. First, the restored real callback was
+mistaken for Preemptive Frames: the next run-ahead save failed, and
+`runahead_err` (`:1011–1018`) cleared `RUNAHEAD_AVAILABLE`. That is a stable
+run-ahead failure, but rewind's `state_manager_check_rewind`
+(`state_manager.c:765–788`) continues capturing every frame and ignores the
+failure, explaining the later warning flood. The provided CI log contains
+1,791 core warning lines and 1,791 matching environment OSD lines (3,582
+occurrences), rather than 3,582 independent mode initializations.
+
+Second, the restored `input_driver_poll` bypasses the poll-type wrapper.
+With early polling, `core_run` (`runloop.c:8034–8085`) already polls before
+entering the core; with late polling, `core_input_state_poll_late`
+(`:4586–4595`) polls on the first input query. Calling the direct poll too
+therefore polls twice in a real frame. `input/input_driver.c:6416–6427`
+clears network-command bits before polling its socket; a second poll can
+erase a just-received QUIT or CLOSE_CONTENT before the following runloop
+check. The 1.22.2 default is late polling (`config.def.h:1654`); the route
+configuration does not override it. This explains a live, frame-producing
+process that ignores the test's QUIT pair, sent 300 ms apart
+(`tools/test-retroarch-windows.ps1:94–99`); it is an input-command loss,
+not a blocked unload call.
+That diagnosis is inferred from the live log and the source paths. A
+disposable negative control that accepts the direct poll as real reproduces
+the lost command: with the earlier poll-count assertion disabled only in
+that disposable harness, the one-shot command-delivery assertion fails.
+Keeping the original wrapper gives exactly one real input/command poll per
+outer frame in all three polling modes, including after run-ahead fallback.
+
+The supported stable outcome is single-instance run-ahead. A requested
+secondary is refused before registration/preparation by R-1a; RetroArch
+`runahead_run` (`:1243–1255`) clears secondary availability and executes an
+ordinary frame, then uses the primary on its next call. Preemptive Frames
+is refused at its first save, before any speculative guest execution.
+`preempt_run` (`:1655–1681`) deinitializes its buffers and overrides on that
+false return. `preempt_init` is called at initialization or an explicit
+mode update (`retroarch.c:3266–3274`, `:8124`), not every frame. Its teardown
+re-enables run-ahead/secondary availability (`runahead.c:1390–1414`), so the
+same bounded secondary fallback applies again. No size-zero latch disables
+ordinary saves or rewind. The core's unsupported-mode notice is emitted
+once per content session and survives rewind and reset; explicit frontend
+mode toggles can additionally produce RetroArch's own mode/error messages.
+The runtime Preemptive Frames hotkey also disables `run_ahead_enabled`
+(`retroarch.c:3254`), so its failure resumes ordinary frames until run-ahead
+is enabled again. The matrix distinguishes that hotkey route from startup
+configuration files that set both booleans true.
+Thus a configuration settles within three outer calls in the mixed startup
+case (preempt refusal, secondary refusal, working primary run-ahead), and
+within two for secondary fallback or a failed preempt hotkey activation.
+With rewind enabled, the first preempt activation can also refuse one
+ordinary rewind capture before refusing preempt's save; subsequent captures
+use the restored real callbacks and succeed.
+
+`arculator-state-runahead-modes` runs the shipping library through `retro_*`
+in both gate configurations. Its authored model distinguishes the initial
+wrapper from the restoration pointer, captures rewind before execution,
+models secondary refusal and preempt error teardown/re-entry, counts every
+save/refusal/restore and mode notice, and injects one-shot command bits
+while each mode is active. It asserts one real poll per outer frame and
+bounded unload/deinit with no open VFS handles. The existing differential,
+field-drop, store/frontier, failed-rollback and refusal suites remain the
+guest-state/publication evidence. The only added static is a host-only
+notice latch; the state format and advertised bound are unchanged.
+
+Primary source: [RetroArch v1.22.2](https://github.com/libretro/RetroArch/tree/v1.22.2)
+(`runahead.c`, `runloop.c`, `retroarch.c`, `state_manager.c`, and
+`input/input_driver.c`). These are authored interface models; native Windows
+RetroArch confirmation runs in CI, and Android device evidence remains owed
+under D-217.

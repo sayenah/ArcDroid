@@ -13,6 +13,7 @@ static void arc_state_boundary_reset(void)
    arc_state_firmware_valid=false;
    arc_state_boundary_armed=arc_state_publication_noticed=false;
    arc_state_speculation=arc_state_rollback_failed=false;
+   arc_state_mode_noticed=false;
    arc_state_real_poll=arc_input_poll;
    memset(arc_state_committed_hd,0,sizeof(arc_state_committed_hd));
    memset(arc_state_committed_jfd,0,sizeof(arc_state_committed_jfd));
@@ -25,8 +26,8 @@ static void arc_state_boundary_save(void)
 {
    arc_state_note_committed();arc_state_boundary_armed=true;
 }
-/* RetroArch keeps the normal poll callback through its permanent state-input
- * logging hook. Fake frames and Preemptive Frames use retro_input_poll_null.
+/* Fake frames and Preemptive Frames use retro_input_poll_null. The callback
+ * setter normalizes run-ahead's restoration to the original poll-type wrapper.
  * Comparing state-input callbacks would misclassify the real logging wrapper. */
 static bool arc_state_boundary_finish(void)
 {

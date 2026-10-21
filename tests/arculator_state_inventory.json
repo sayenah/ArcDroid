@@ -2,7 +2,7 @@
   "license": "GPL-2.0-only",
   "version": 1,
   "grounding_commit": "0aa4c93eaec4",
-  "status": "SS-1 Run N integration: AY-1 original bytes, write mask, overlay and frontend session-year cache serialized; immutable addresses, constructor handoff and external test-clock/oracle host-only, individually reviewed.",
+  "status": "SS-1 Run O: original poll-wrapper restoration and host-only once-per-session unsupported-mode notice latch reviewed.",
   "cmake_source_commands": [
     "add_library ( arcdroid_sanitizer_compile INTERFACE )",
     "add_library ( arcdroid_sanitizer_link INTERFACE )",
@@ -23482,6 +23482,12 @@
       },
       {
         "kind": "declaration",
+        "declaration": "static bool arc_state_mode_noticed ;",
+        "classification": "host-only",
+        "reason": "Run O once-per-content-session unsupported-mode notice latch; host frontend negotiation only, persists across rewind/reset and clears on session release; no guest state or publication authority."
+      },
+      {
+        "kind": "declaration",
         "declaration": "static uint64_t arc_state_committed_hd [ 2 ] , arc_state_committed_jfd [ ARC_PLAYLIST_MAX_ENTRIES ] ;",
         "classification": "serialized",
         "reason": "Conservative storage census, including inactive platform/test arms; named objects and reachable_storage provide member-specific derived/host exceptions."
@@ -37603,6 +37609,13 @@
       "type": "uint64_t",
       "classification": "host-only",
       "reason": "R-AY1 test-only RPC load-epoch oracle; diagnostic input/output for the RPC route, never consumed by an admitted Archimedes execution or SS-1 restore."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_state_mode_noticed",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "Run O once-per-content-session unsupported-mode notice latch; host frontend negotiation only, persists across rewind/reset and clears on session release; no guest state or publication authority."
     }
   ],
   "reachable_storage": [

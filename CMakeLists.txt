@@ -3670,6 +3670,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_secondary_test.py"
     $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}")
   set_tests_properties(arculator-state-secondary-routes PROPERTIES TIMEOUT 360)
+  add_test(NAME arculator-state-runahead-modes COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_secondary_test.py"
+    $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" --runahead)
+  set_tests_properties(arculator-state-runahead-modes PROPERTIES TIMEOUT 1200)
   add_test(NAME rpc-production-host-frontend COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" pending)

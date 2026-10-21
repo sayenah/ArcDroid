@@ -425,6 +425,7 @@ static bool arc_state_firmware_valid;
 static retro_input_poll_t arc_state_real_poll;
 static bool arc_state_boundary_armed;
 static bool arc_state_speculation,arc_state_rollback_failed;
+static bool arc_state_mode_noticed;
 static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES];
 
 #if defined(ARCDROID_TEST_FAULTS)
@@ -6808,6 +6809,15 @@ RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t callback)
 RETRO_API void retro_set_input_poll(retro_input_poll_t callback)
 {
    if(arc_secondary_instance || arc_rpc_alias_lifecycle)return;
+   /* RetroArch 1.22.2 runahead.c restores retro_ctx.poll_cb, which is
+    * input_driver_poll, rather than the initially installed poll-type wrapper.
+    * Keep that wrapper at the end of an actually executed speculative frame:
+    * it is the real boundary AND avoids a second command poll in early/late
+    * polling modes (a second poll clears a just-received QUIT). This does not
+    * finalize speculation: only a successful restore may do that. */
+   if(arc_kind==ARC_SESSION_KIND_ARCULATOR && arc_state_speculation &&
+      arc_input_poll!=arc_state_real_poll && callback!=arc_input_poll)
+      callback=arc_state_real_poll;
    arc_input_poll = callback;
    /* RetroArch installs primary callbacks AFTER loading content. Capture that
     * first poll without replacing the identity on later speculative swaps. */
@@ -9360,7 +9370,13 @@ RETRO_API bool retro_serialize(void *data,size_t size)
 {
    if(!arc_snapshot_available()||arc_state_rollback_failed||!data||size<40u)return false;
    if(arc_input_poll!=arc_state_real_poll) {
-      arc_message("Preemptive Frames is unavailable; use single-instance run-ahead.",RETRO_LOG_WARN);return false;
+      /* preempt_run's first failed save deinitializes its buffers/overrides;
+       * it is not retried until an explicit mode update. Rewind remains live. */
+      if(!arc_state_mode_noticed) {
+         arc_state_mode_noticed=true;
+         arc_message("Preemptive Frames is unavailable; use single-instance run-ahead.",RETRO_LOG_WARN);
+      }
+      return false;
    }
    /* Restored callbacks do not make the still-speculative guest/queue a
     * real snapshot. Only rollback can release its provenance latch. */

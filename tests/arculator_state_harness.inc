@@ -427,7 +427,7 @@ if(ss1_mode) {
             retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_preempt_input);
             unsigned notices=total_osd_calls;uint64_t native=ss1_native_mutations;
             assert(retro_serialize_size()==bound&&!retro_serialize(buffer,bound));
-            assert(total_osd_calls>notices&&strstr(last_message,"Preemptive Frames"));
+            assert(total_osd_calls==notices+(transition==0u)&&strstr(last_message,"Preemptive Frames"));
             assert(!pending()&&ss1_native_mutations==native);
             /* preempt_deinit restores original callbacks and re-enables
              * run-ahead/secondary. No zero-size latch or frozen primary. */
