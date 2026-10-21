@@ -49,6 +49,7 @@ typedef struct {
 bool arc_rpc_test_prefix_arm(uint64_t last);
 bool arc_rpc_test_prefix_snapshot(ArcRpcTestPrefix *out);
 void arc_rpc_mem_measure(uint64_t first, uint64_t last, bool drained);
+void arc_rpc_mem_s1_force_off(bool off);
 void arc_rpc_mem_interval(ArcRpcMemInterval *out);
 bool arc_rpc_mem_exercise_interval(ArcRpcExercise *out); /* Endpoint windows only. */
 bool arc_rpc_mem_endpoint(uint64_t first, uint64_t last, bool drained);
@@ -169,7 +170,6 @@ static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
     if (m->test_stop) return false;
 #endif
     if (m->pending || m->bus_busy) {
-        if (m->integer_batch) arc_rpc_mem_batch_flush();
         return arc_rpc_mem_batch_service(batch);
     }
     uint64_t due = m->cpu_due_ns;

@@ -48,9 +48,10 @@ void arc_rpc_session_test_input_ready(void);
 #include "libretro.h"
 #include "rpc_mem_timing.h"
 RETRO_API void arc_rpc_test_timing_measure(uint64_t first, uint64_t last, bool drained);
-RETRO_API bool arc_rpc_test_exercise_v3(ArcRpcExercise *out,unsigned revision,size_t size);
-RETRO_API bool arc_rpc_test_ranking_v3(ArcRpcExercise *out, uint64_t *attempts, unsigned revision, size_t size);
-RETRO_API bool arc_rpc_test_interval_exercise_v3(ArcRpcExercise *out,unsigned revision,size_t size);
+RETRO_API bool arc_rpc_test_s1_force_off(bool off);
+RETRO_API bool arc_rpc_test_exercise_v4(ArcRpcExercise *out,unsigned revision,size_t size);
+RETRO_API bool arc_rpc_test_ranking_v4(ArcRpcExercise *out, uint64_t *attempts, unsigned revision, size_t size);
+RETRO_API bool arc_rpc_test_interval_exercise_v4(ArcRpcExercise *out,unsigned revision,size_t size);
 RETRO_API bool arc_rpc_test_timing_endpoint(uint64_t first, uint64_t last, bool drained);
 RETRO_API void arc_rpc_test_timing_interval(ArcRpcMemInterval *out);
 #include "rpc_video.h"

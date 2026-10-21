@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
                 if target!='rpc_cpu_test':link.append(str(cross))
                 run(link)
                 replacements[str((build/original_binary).resolve())]=str(binary)
-            totals=[0]*173;comparisons=0
+            totals=[0]*174;comparisons=0
             for test in selected:
                 cmd=[replacements.get(str((build/x).resolve()),x) for x in test['command']]
                 if test['name'].startswith('rpc-memory-timing-'):print(variant+' '+test['name']+': begin',flush=True)
@@ -101,9 +101,9 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
                     values=re.search(r'^calibration counters model=\S+ (.+)$',r.stderr,re.M)
                     if not values:raise RuntimeError('missing calibration counters')
                     row=list(map(int,values[1].split()))
-                    if len(row)!=173:raise RuntimeError(('counter ABI drift',len(row)))
+                    if len(row)!=174:raise RuntimeError(('counter ABI drift',len(row)))
                     totals=[x+y for x,y in zip(totals,row)]
-                    match=re.search(r'L1 crosscheck comparisons=(\d+) mismatches=0',r.stderr)
+                    match=re.search(r'L1(?:/S1)? crosscheck comparisons=(\d+) mismatches=0',r.stderr)
                     if not match:raise RuntimeError('missing per-interval cross-check evidence')
                     comparisons+=int(match[1]);print(f'{variant} {test["name"]} counters '+values[1],flush=True)
                 print(variant+' '+test['name']+': exact',flush=True)

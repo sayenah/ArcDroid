@@ -37,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix='arc-profile-') as temp:
         require(projection(r.stdout)==projection(baseline.stdout),'profile changed guest projection')
         j=json.loads(out.read_text());p=j['records'][-1]
         require(j['schema']==2 and j['sample_stride']==stride and j['recent_attempts']==1000000,'schema header')
+        require('service_s1_taken' in p['ranking'],'S1 scalar missing from name-based profile schema')
         require(len(j['records'])==3 and p['kind']=='exit','interval and exit')
         require(p['attempts']==8 and p['fetched']==8 and p['condition_passed']==8,('attempts',p))
         expected=dict(alu=1,multiply=0,branch=1,load=2,store=1,ldm=0,stm=0,swap=0,half_signed=0,status=1,coprocessor=2,swi=0,other=0)

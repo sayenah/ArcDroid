@@ -9,6 +9,7 @@
 #error RPC cross-check requires hot-path test hooks
 #endif
 void arc_rpc_crosscheck_reset(void);
+void arc_rpc_crosscheck_binding(void);
 const char *arc_rpc_crosscheck_status(uint64_t *calls,uint64_t *failed);
 /* Compare a named normalised canonical field. Callers own isolated execution,
  * pointer identities and live-field selection under invariants section 2.2. */

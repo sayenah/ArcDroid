@@ -15,8 +15,10 @@ from rpc_lockstep_golden import run as golden_run
 
 runner,core,shipping,directory,mode=sys.argv[1:6]
 directory=Path(directory).resolve()
+s1_options=sys.argv[6:]
+assert not s1_options or s1_options==["--s1-off"]
 def run(name,frames=2,pacing='flat',extra=(),library=core,success=True):
-    command=[runner,'--core',library,'--plan',str(directory/(name+'.arcplan')),'--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra]
+    command=[runner,'--core',library,'--plan',str(directory/(name+'.arcplan')),'--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra,*s1_options]
     result=golden_run(command,capture_output=True)
     assert b'\r' not in result.stdout,'canonical stdout must contain LF bytes on every platform'
     result.stdout=result.stdout.decode('utf-8');result.stderr=result.stderr.decode('utf-8')

@@ -27,6 +27,8 @@ static void reference_check(void)
     }
 }
 static bool (*admit_frontend)(void);
+static bool s1_off;
+static bool (*s1_force_off)(bool);
 static bool (*start_rpc)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static bool (*factory_rpc)(ArcRpcModel,const uint8_t *,size_t,uint64_t,char *,size_t);
 static bool (*advance_raw)(uint64_t);
@@ -87,6 +89,7 @@ static void load_words(const uint32_t *words,size_t count)
 static void start(unsigned model,const uint32_t *words,size_t count)
 {
     load_words(words,count);assert(start_rpc((ArcRpcModel)model,rom,sizeof(rom),seed,0,error,sizeof(error)));
+    if(s1_off)assert(s1_force_off(true));
     assert(admit_frontend());
     arc_input_reset(&input);logs=0;api->set_log_callback(log_message,NULL);
     uint8_t actual[256];cmos_rpc(actual);assert(!memcmp(actual,seed,256));
@@ -215,7 +218,7 @@ static void pressure(unsigned model)
     assert(!api->reset(error,sizeof(error)));api->stop();api->stop();assert(!counts().queued);
     /* Reset purges without erasing accounting, and can recover a healthy session. */
     start(model,GUEST(audio,model),SIZE(audio,model));assert(advance_rpc(1000000));
-    assert(counts().queued==48);assert(api->reset(error,sizeof(error)));assert(!counts().queued&&counts().discarded==48);
+    assert(counts().queued==48);assert(api->reset(error,sizeof(error)));if(s1_off)assert(s1_force_off(true));assert(!counts().queued&&counts().discarded==48);
     assert(advance_rpc(1000000));api->stop();assert(!counts().queued&&counts().discarded==96);
     printf("fault silence=800 frozen=1 purge=1 reset=1 stop=1\n");
     deinit_retro();
@@ -243,7 +246,7 @@ static void keyboard(unsigned model,bool param)
     assert(ram(0)==n&&before==n-2);bytes_at(256,expected,n);
     /* Held levels and repeat state retire on engine reset, without seed changes. */
     arc_input_source_key(&input,ARC_INPUT_SOURCE_KEYBOARD,RETROK_a,true,true);frames(2);
-    assert(api->reset(error,sizeof(error)));frame();assert(!input.fifo_count&&!input.effective_keys[RETROK_a]);
+    assert(api->reset(error,sizeof(error)));if(s1_off)assert(s1_force_off(true));frame();assert(!input.fifo_count&&!input.effective_keys[RETROK_a]);
     frames(model>=2?36:2);unsigned base=param?2:0;assert(ram(0)==base);uint8_t cmos[256];cmos_rpc(cmos);assert(!memcmp(cmos,seed,256));
     printf(param?"typematic param=00 make=1c repeat=1c,1c,1c,1c,1c,1c,1c,1c break=f0,1c\n":"keyboard make=1c repeat=1c,1c break=f0,1c shared=held reset=released\n");
     api->stop();
@@ -297,7 +300,7 @@ static void pad_mouse(unsigned model)
         model==3?"fa,08,0c,07,09,00,00,08,00,00":"12,7,30,70");
     keyboard_down=true;for(unsigned i=0;i<2;++i)run_retro();
     assert(ram(0)==1&&ram(256)==0x1c);
-    reset_retro();keyboard_down=false;for(unsigned i=0;i<3;++i)run_retro();
+    reset_retro();if(s1_off)assert(s1_force_off(true));keyboard_down=false;for(unsigned i=0;i<3;++i)run_retro();
     assert(!api->faulted(NULL)&&ram(0)==0);
     deinit_retro();
 }
@@ -306,6 +309,7 @@ static void factory(unsigned model)
     const uint32_t *words=model==2?rpc_d2_factory_2:rpc_d2_factory_3;
     size_t n=model==2?sizeof(rpc_d2_factory_2)/4:sizeof(rpc_d2_factory_3)/4;
     load_words(words,n);assert(factory_rpc((ArcRpcModel)model,rom,sizeof(rom),0,error,sizeof(error)));
+    if(s1_off)assert(s1_force_off(true));
     ArcRpcCapture c;capture_rpc(&c);assert(c.state==ARC_RPC_CAPTURE_RUNNING&&c.delete_held&&!c.elapsed_ns&&!c.writes);
     until(UINT64_C(11999999999));capture_rpc(&c);assert(c.delete_held&&c.writes==256);
     assert(advance_rpc(1));capture_rpc(&c);assert(!c.delete_held&&c.elapsed_ns==UINT64_C(12000000000));
@@ -316,10 +320,11 @@ static void factory(unsigned model)
     uint64_t frozen=snapshot().executed;assert(advance_rpc(1000000));assert(snapshot().executed==frozen&&snapshot().now_ns==UINT64_C(30000000000));
     printf("factory model=%u time=30000000000 delete=0 writes=256 mask=",model);for(unsigned i=0;i<32;++i)printf("%02x",c.written[i]);
     printf("\nbytes=");for(unsigned i=0;i<256;++i)printf("%02x",c.bytes[i]);puts("");
-    assert(api->reset(error,sizeof(error)));uint8_t retained[256];cmos_rpc(retained);assert(!memcmp(retained,c.bytes,256));assert(advance_rpc(1000000));assert(snapshot().executed>0);
+    assert(api->reset(error,sizeof(error)));if(s1_off)assert(s1_force_off(true));uint8_t retained[256];cmos_rpc(retained);assert(!memcmp(retained,c.bytes,256));assert(advance_rpc(1000000));assert(snapshot().executed>0);
     capture_rpc(&c);assert(c.state==ARC_RPC_CAPTURE_CANCELLED&&!c.delete_held);api->stop();
     words=model==2?rpc_d2_empty_2:rpc_d2_empty_3;n=model==2?sizeof(rpc_d2_empty_2)/4:sizeof(rpc_d2_empty_3)/4;
     load_words(words,n);assert(factory_rpc((ArcRpcModel)model,rom,sizeof(rom),0,error,sizeof(error)));
+    if(s1_off)assert(s1_force_off(true));
     until(UINT64_C(29999999999));assert(!advance_rpc(1));capture_rpc(&c);
     assert(c.state==ARC_RPC_CAPTURE_FAILED&&!c.writes&&!counts().queued&&api->faulted(NULL));
     assert(strstr(error,"no guest writes")==NULL);const char *fault;assert(api->faulted(&fault)&&strstr(fault,"no guest writes"));
@@ -327,6 +332,7 @@ static void factory(unsigned model)
 }
 int main(int argc,char **argv)
 {
+    if(argc==5 && !strcmp(argv[4],"--s1-off")){s1_off=true;--argc;}
     assert(argc==4);unsigned model=(unsigned)strtoul(argv[3],NULL,10);assert(model<4);
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
@@ -338,6 +344,7 @@ int main(int argc,char **argv)
     if(reference)memcpy(&reference_status,&reference,sizeof(reference_status));
 
     rpc_golden_begin(symbol,model);
+    if(s1_off)LOAD(s1_force_off,"arc_rpc_test_s1_force_off");
     LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(factory_rpc,"arc_rpc_test_factory_start");LOAD(advance_raw,"arc_rpc_test_advance");
     LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_rpc,"arc_rpc_test_read_ram");LOAD(counts_rpc,"arc_rpc_test_audio_counts");
     LOAD(peek_rpc,"arc_rpc_test_audio_peek");LOAD(commit_rpc,"arc_rpc_test_audio_commit");LOAD(capture_rpc,"arc_rpc_test_capture_status");

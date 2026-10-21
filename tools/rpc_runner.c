@@ -261,7 +261,7 @@ int main(int argc, char **argv)
     bool profile_options=false;
 #endif
     bool reject = false, print_cmos = false, print_exercise=false, print_ranking=false, endpoint_request=false;
-    uint64_t prefix_last=0;bool prefix_single=false;
+    uint64_t prefix_last=0;bool prefix_single=false;bool s1_off=false;
     const char *lockstep_path=NULL;
     ArcRpcLockstepConfig lockstep={.version=1,.size=sizeof(ArcRpcLockstepConfig),.seed=1,
         .detail_last=UINT64_MAX,.stop_after=UINT64_MAX};
@@ -277,6 +277,7 @@ int main(int argc, char **argv)
         if (!strcmp(key,"--reject")) { reject = true; continue; }
         if (!strcmp(key,"--single-step-prefix")) { prefix_single=true;continue; }
         if (!strcmp(key,"--ranking")) { print_ranking=true;continue; }
+        if (!strcmp(key,"--s1-off")) { s1_off=true;continue; }
         if (!strcmp(key,"--exercise")) { print_exercise=true;continue; }
         if (!strcmp(key,"--cmos")) { print_cmos = true; continue; }
         if (!strcmp(key,"--jfd-policy-at") || !strcmp(key,"--disk-writes-at")){
@@ -493,9 +494,12 @@ int main(int argc, char **argv)
             if(!arm(measure_first,measure_last,measure_drained)){fprintf(stderr,"Core refuses endpoint measurement\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
         else {void (*arm)(uint64_t,uint64_t,bool);LOAD(arm,"arc_rpc_test_timing_measure");arm(measure_first,measure_last,measure_drained);}
     }
-    if(print_exercise){bool (*get)(ArcRpcExercise *,unsigned,size_t);LOAD(get,"arc_rpc_test_exercise_v3");ArcRpcExercise e;
+    bool (*s1_force_off)(bool)=NULL;
+    if(s1_off){LOAD(s1_force_off,"arc_rpc_test_s1_force_off");
+        if(!s1_force_off(true)){fprintf(stderr,"Core refuses S1 force-off\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
+    if(print_exercise){bool (*get)(ArcRpcExercise *,unsigned,size_t);LOAD(get,"arc_rpc_test_exercise_v4");ArcRpcExercise e;
         if(!get(&e,ARC_RPC_COUNTER_ABI,sizeof(e))){fprintf(stderr,"Core refuses exercise counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
-    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *,unsigned,size_t);LOAD(get,"arc_rpc_test_ranking_v3");ArcRpcExercise e;uint64_t attempts;
+    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *,unsigned,size_t);LOAD(get,"arc_rpc_test_ranking_v4");ArcRpcExercise e;uint64_t attempts;
         if(!get(&e,&attempts,ARC_RPC_COUNTER_ABI,sizeof(e))){fprintf(stderr,"Core refuses ranking counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
     if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());unload();deinit();vfs_assert_no_open_handles();return 2;}
     /* Pending black/silent frames are tested separately; requested goldens use
@@ -524,7 +528,7 @@ int main(int argc, char **argv)
     void (*profile_probes)(uint64_t *)=NULL;
     if(profile_path){
         void (*configure)(unsigned,uint64_t (*)(void))=NULL;
-        void *config_symbol=symbol("arc_rpc_profile_configure"),*snapshot_symbol=symbol("arc_rpc_profile_snapshot_v3");
+        void *config_symbol=symbol("arc_rpc_profile_configure"),*snapshot_symbol=symbol("arc_rpc_profile_snapshot_v4");
         if(!config_symbol || !snapshot_symbol){fprintf(stderr,"Core lacks RPC profiling\n");free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();vfs_assert_no_open_handles();return 2;}
         memcpy(&configure,&config_symbol,sizeof(configure));memcpy(&profile_snapshot,&snapshot_symbol,sizeof(profile_snapshot));
         void *probe_symbol=symbol("arc_rpc_profile_probe_snapshot");
@@ -545,8 +549,12 @@ int main(int argc, char **argv)
             if(option_events[i].policy)jfd_policy=option_events[i].value;else disk_writes=option_events[i].value;
             variable_updated=true;
         }
-        if (f == reset_at) reset();
-        if (f == preparation_reset_at) preparation_restart();
+        if (f == reset_at) {
+            reset();
+            if(s1_force_off && !s1_force_off(true)){fprintf(stderr,"Core refuses S1 force-off after reset\n");return 2;}
+        }
+        bool preparation_restarted=false;
+        if (f == preparation_reset_at) {preparation_restart();preparation_restarted=true;}
         if(reset_stage && f==reset_stage_frame){
             /* Test-only instruction-boundary reset. Existing engine advance
              * respects this virtual deadline; no CPU/observer hook or guest
@@ -559,11 +567,13 @@ int main(int argc, char **argv)
                     (!strcmp(reset_stage,"dispatch") && a.delivery==ARC_RPC_DELIVERY_DISPATCH && !a.start_returned) ||
                     (!strcmp(reset_stage,"handoff") && a.start_returned);
                 if(hit){fprintf(stderr,"preparation reset at stage=%s delivery=%u outcome=%u\n",reset_stage,a.delivery,a.outcome);
-                    preparation_restart();break;}
+                    preparation_restart();preparation_restarted=true;break;}
                 if(!a.live || a.delivery==ARC_RPC_DELIVERY_INTERRUPTED || !advance(100))break;
             }
             if(!hit){fprintf(stderr,"Requested preparation reset stage was not reached\n");result=1;break;}
         }
+        if(preparation_restarted && s1_force_off && !s1_force_off(true)){
+            fprintf(stderr,"Core refuses S1 force-off after preparation restart\n");return 2;}
         if (f == fault_at) fault_next();
         if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());result=2;break;}
         uint64_t frontend_start = arc_test_clock_ns();
@@ -708,7 +718,7 @@ int main(int argc, char **argv)
     void (*observation_status)(ArcRpcTraceStatus *)=NULL;
     void *observation_symbol=symbol("arc_engine_test_observation_status");
     if(observation_symbol && (core_test_caps&ARC_RPC_TEST_TRACE)){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));observation_status(&observation);}
-    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *,unsigned,size_t);LOAD(get,"arc_rpc_test_ranking_v3");ArcRpcExercise e;uint64_t attempts;
+    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *,unsigned,size_t);LOAD(get,"arc_rpc_test_ranking_v4");ArcRpcExercise e;uint64_t attempts;
         if(!get(&e,&attempts,ARC_RPC_COUNTER_ABI,sizeof(e)))result=2;
         else {fprintf(stderr,"ranking attempts=%" PRIu64 "\n",attempts);
 #define PRINT_RANKING(name) fprintf(stderr,"ranking " #name "=%" PRIu64 "\n",e.values[ARC_RPC_COUNT_##name]);
@@ -720,7 +730,7 @@ int main(int argc, char **argv)
         if(!get(&p)){fprintf(stderr,"Prefix ordinal was not reached\n");result=1;}
         else fprintf(stderr,"prefix %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n",p.instructions,p.issue_ticks,p.now_ns,p.cpu,p.memory,p.scheduler);
     }
-    if(print_exercise){bool (*get)(ArcRpcExercise *,unsigned,size_t);LOAD(get,"arc_rpc_test_exercise_v3");ArcRpcExercise e;
+    if(print_exercise){bool (*get)(ArcRpcExercise *,unsigned,size_t);LOAD(get,"arc_rpc_test_exercise_v4");ArcRpcExercise e;
         if(!get(&e,ARC_RPC_COUNTER_ABI,sizeof(e)))result=2;
         else {
 #define PRINT_EXERCISE(name) fprintf(stderr,"exercise " #name "=%" PRIu64 "\n",e.values[ARC_RPC_COUNT_##name]);
@@ -754,6 +764,6 @@ usage:
 #if defined(ARCDROID_RPC_PROFILE)
     fputs("Profile build: --profile FILE [--profile-interval FRAMES] [--profile-sample-stride 0..1048576]\n",stderr);
 #endif
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--preparation-reset-at N | --preparation-reset-stage prepared|consumed|dispatch|handoff --reset-stage-frame N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--exercise] [--ranking] [--endpoint-instructions FIRST:LAST:DRAIN | --intrusive-instructions FIRST:LAST:DRAIN] [--prefix-instructions LAST [--single-step-prefix]] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--preparation-reset-at N | --preparation-reset-stage prepared|consumed|dispatch|handoff --reset-stage-frame N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--exercise] [--ranking] [--s1-off] [--endpoint-instructions FIRST:LAST:DRAIN | --intrusive-instructions FIRST:LAST:DRAIN] [--prefix-instructions LAST [--single-step-prefix]] [--reject]\n",stderr);
     return 2;
 }

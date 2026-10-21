@@ -25,7 +25,7 @@ int main(int argc,char **argv)
     assert(library);
     bool (*exercise)(ArcRpcExercise *,unsigned,size_t),(*interval)(ArcRpcExercise *,unsigned,size_t);
     bool (*ranking)(ArcRpcExercise *,uint64_t *,unsigned,size_t);
-    LOAD(exercise,"arc_rpc_test_exercise_v3");LOAD(interval,"arc_rpc_test_interval_exercise_v3");LOAD(ranking,"arc_rpc_test_ranking_v3");
+    LOAD(exercise,"arc_rpc_test_exercise_v4");LOAD(interval,"arc_rpc_test_interval_exercise_v4");LOAD(ranking,"arc_rpc_test_ranking_v4");
     bool (*start)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
     bool (*advance)(uint64_t),(*endpoint)(uint64_t,uint64_t,bool);
     void (*deinit)(void);
@@ -49,10 +49,10 @@ int main(int argc,char **argv)
         assert(!interval(&e,revision,size) && !memcmp(&e,&before,sizeof(e)));
         assert(!ranking(&e,&attempts,revision,size) && !memcmp(&e,&before,sizeof(e)) && attempts==0xabc);
     }
-    void *p=SYM("arc_rpc_profile_snapshot_v3");
+    void *p=SYM("arc_rpc_profile_snapshot_v4");
     if(p){bool (*snapshot)(ArcRpcProfile *,unsigned,size_t);memcpy(&snapshot,&p,sizeof(snapshot));
         ArcRpcProfile out,saved;memset(&out,0x5a,sizeof(out));saved=out;
-        assert(!snapshot(&out,0,sizeof(out)) && !memcmp(&out,&saved,sizeof(out)));
+        assert(!snapshot(&out,ARC_RPC_COUNTER_ABI-1,sizeof(out)) && !memcmp(&out,&saved,sizeof(out)));
         assert(!snapshot(&out,ARC_RPC_COUNTER_ABI,sizeof(out)-8) && !memcmp(&out,&saved,sizeof(out)));
         assert(!snapshot(&out,ARC_RPC_COUNTER_ABI,sizeof(out)+8) && !memcmp(&out,&saved,sizeof(out)));
         assert(snapshot(&out,ARC_RPC_COUNTER_ABI,sizeof(out)));

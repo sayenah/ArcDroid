@@ -9,9 +9,11 @@ from rpc_lockstep_golden import run as golden_run
 
 runner,core,directory,mode=sys.argv[1:5]
 directory=Path(directory).resolve()
+s1_options=sys.argv[5:]
+assert not s1_options or s1_options==["--s1-off"]
 def run(name,frames=2,extra=(),success=True,pacing='flat'):
     r=golden_run([runner,'--core',core,'--plan',str(directory/(name+'.arcplan')),
-        '--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra],capture_output=True,text=True)
+        '--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra,*s1_options],capture_output=True,text=True)
     assert (r.returncode==0)==success,r.stderr+r.stdout
     return r.stdout
 def ram(text):return [int(w,16) for w in re.findall(r'^ram=(.*)$',text,re.M)[-1].split(',')]
@@ -68,9 +70,12 @@ elif mode=='factory':
             # must keep them. Plan parsing/capture never persists internally.
             plan=Path(temp)/'reload.arcplan'
             plan.write_text(f'version=1\nmodel={"sa110" if m==2 else "arm7500"}\nfirmware={directory / f"input-{m}.rom"}\ncmos=seed\nseed={seed}\nrtc_epoch=0\n')
-            r=subprocess.run([runner,'--core',core,'--plan',str(plan),'--frames','3','--reset-at','1','--cmos'],capture_output=True,text=True)
+            r=subprocess.run([runner,'--core',core,'--plan',str(plan),'--frames','3','--reset-at','1','--cmos',*s1_options],capture_output=True,text=True)
             assert r.returncode==0,r.stderr
             assert re.findall(r'^cmos=(.*)$',r.stdout,re.M)==[seed.read_bytes().hex()]*3
             run(f'empty-factory-{m}',frames=1900,success=False)
     print('plans: explicit runner seed export, exact bytes/mask, no-write terminal containment passed')
+elif mode=='s1-restart':
+    from rpc_s1_stream_test import compare
+    compare(runner,core,'stream-arm710',('--preparation-reset-at','0'))
 else:raise AssertionError(mode)

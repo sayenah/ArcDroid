@@ -3,6 +3,9 @@
  * Expectations below are equations from riscpc-timing.md, never core output.
  * Covers initial states deliberately inaccessible as production RAM options. */
 #include "rpc_mem_timing.h"
+#if defined(ARCDROID_RPC_CROSSCHECK)
+#include "rpc_crosscheck.h"
+#endif
 #include "iomd.h"
 #include <assert.h>
 #include <stdarg.h>
@@ -407,5 +410,10 @@ int main(int argc,char **argv)
     scalar_and_map();io_phase();ordinary_rom_io_stores();width_and_clock();buffer_capacity_and_order();
     cache_eviction_and_maintenance();video_grants();batch_boundaries();high_time_arithmetic();
     puts("RPC timing service: independent bus, phase, FIFO, cache, clock/width and grant equations passed");
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    uint64_t calls=0,failed=0;
+    const char *field=arc_rpc_crosscheck_status(&calls,&failed);
+    if(field){fprintf(stderr,"RPC cross-check mismatch: %s\n",field);return 1;}
+#endif
     return 0;
 }

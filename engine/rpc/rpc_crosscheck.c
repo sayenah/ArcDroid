@@ -6,6 +6,9 @@ static uint64_t comparisons,mismatches;
 static char first_field[96];
 void arc_rpc_crosscheck_reset(void)
 { comparisons=mismatches=0;first_field[0]=0; }
+/* A test process can rebind thousands of times; preserve its failure latch. */
+void arc_rpc_crosscheck_binding(void)
+{ if (!mismatches) comparisons = 0; }
 bool arc_rpc_crosscheck_field(const char *name,const void *reference,const void *candidate,size_t size)
 {
     ++comparisons;

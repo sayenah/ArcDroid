@@ -28,6 +28,8 @@ static void reference_check(void)
     }
 }
 static bool (*admit_frontend)(void);
+static bool s1_off;
+static bool (*s1_force_off)(bool);
 static bool (*start_rpc)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static void (*status_rpc)(ArcRpcVideoStatus *);
 static void (*snapshot_rpc)(ArcRpcTestSnapshot *);
@@ -50,6 +52,7 @@ static void start(unsigned model,const struct RpcVideoGuest *guest)
         for(unsigned b=0;b<4;++b)rom[i*4+b]=(uint8_t)(w>>(b*8));
     }
     assert(start_rpc((ArcRpcModel)model,rom,sizeof(rom),seed,0,error,sizeof(error)));
+    if(s1_off)assert(s1_force_off(true));
     assert(admit_frontend());
     arc_input_reset(&input);logs=0;api->set_log_callback(log_message,NULL);
 }
@@ -356,6 +359,7 @@ static void fault_silence(unsigned model)
 }
 int main(int argc,char **argv)
 {
+    if(argc==5 && !strcmp(argv[4],"--s1-off")){s1_off=true;--argc;}
     assert(argc==4);unsigned model=(unsigned)atoi(argv[3]);assert(model<4);
 #ifdef _WIN32
     library=LoadLibraryA(argv[1]);
@@ -366,6 +370,7 @@ int main(int argc,char **argv)
     void *reference=symbol("arc_rpc_crosscheck_status");
     if(reference)memcpy(&reference_status,&reference,sizeof(reference_status));
     rpc_golden_begin(symbol,model);
+    if(s1_off)LOAD(s1_force_off,"arc_rpc_test_s1_force_off");
     LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();

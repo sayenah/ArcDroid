@@ -25,6 +25,8 @@ static bool (*endpoint)(uint64_t,uint64_t,bool);
 static void (*interval)(ArcRpcMemInterval *);
 static void (*rate)(unsigned);
 static void (*snapshot)(ArcRpcTestSnapshot *);
+static const char *(*crosscheck)(uint64_t *,uint64_t *);
+static bool (*s1_force_off)(bool);
 static void late_arming(void)
 {
     uint8_t *rom=calloc(1,2097152),seed[256]={0};char error[256];assert(rom);
@@ -59,18 +61,23 @@ int main(int argc,char **argv)
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
     assert(library);
+    void *check_symbol=symbol("arc_rpc_crosscheck_status");
+    if(check_symbol)memcpy(&crosscheck,&check_symbol,sizeof(crosscheck));
+    LOAD(s1_force_off,"arc_rpc_test_s1_force_off");
     LOAD(start,"arc_rpc_test_start"); LOAD(advance,"arc_rpc_test_advance");
     LOAD(measure,"arc_rpc_test_timing_measure"); LOAD(interval,"arc_rpc_test_timing_interval");
-    LOAD(endpoint,"arc_rpc_test_timing_endpoint");LOAD(exercise,"arc_rpc_test_interval_exercise_v3");
+    LOAD(endpoint,"arc_rpc_test_timing_endpoint");LOAD(exercise,"arc_rpc_test_interval_exercise_v4");
     LOAD(rate,"arc_rpc_session_test_rate"); LOAD(snapshot,"arc_rpc_test_snapshot");
-    if(argc==3 && !strcmp(argv[2],"--late-arm")){late_arming();return 0;}
+    if(argc==3 && !strcmp(argv[2],"--late-arm")){
+        late_arming();
+        if(crosscheck){uint64_t calls,failed;const char *field=crosscheck(&calls,&failed);
+            if(failed){fprintf(stderr,"crosscheck mismatch: %s\n",field);return 1;}}
+        return 0;
+    }
     uint8_t *rom=malloc(2097152); assert(rom); uint8_t seed[256]={0}; char error[256];
     unsigned tested=0;
-    uint64_t integer=0,rational=0,s1=0;
+    uint64_t integer=0,rational=0,s1=0,taken=0;
     uint64_t counter_totals[ARC_RPC_COUNT_TOTAL]={0},crosscheck_calls=0;
-    const char *(*crosscheck)(uint64_t *,uint64_t *)=NULL;
-    void *crosscheck_symbol=symbol("arc_rpc_crosscheck_status");
-    if(crosscheck_symbol)memcpy(&crosscheck,&crosscheck_symbol,sizeof(crosscheck));
     for(unsigned i=0;i<sizeof(rpc_timing_cases)/sizeof(rpc_timing_cases[0]);++i) {
         const RpcTimingCase *c=&rpc_timing_cases[i];
         if(argc>2 && c->model!=(unsigned)atoi(argv[2]))continue;
@@ -82,6 +89,7 @@ int main(int argc,char **argv)
         for (unsigned mode=0; mode<2; ++mode) {
         assert(start((ArcRpcModel)c->model,rom,2097152,seed,0,error,sizeof(error)));
         rate(c->rate);
+        if(argc>4 && !strcmp(argv[4],"--s1-off"))assert(s1_force_off(true));
         if (mode) assert(endpoint(c->first,c->last,c->drained!=0));
         else measure(c->first,c->last,c->drained!=0);
         ArcRpcMemInterval t={0}; unsigned calls=0;
@@ -107,6 +115,9 @@ int main(int argc,char **argv)
             for(unsigned j=0;j<ARC_RPC_COUNT_TOTAL;++j)counter_totals[j]+=e.values[j];
             for(unsigned path=0;path<3;++path){integer+=e.values[ARC_RPC_COUNT_integer_unobserved+path];rational+=e.values[ARC_RPC_COUNT_rational_unobserved+path];}
             s1+=e.values[ARC_RPC_COUNT_service_s1];
+            taken+=e.values[ARC_RPC_COUNT_service_s1_taken];
+            assert(e.values[ARC_RPC_COUNT_service_s1_taken]==
+                ((argc>4 && !strcmp(argv[4],"--s1-off"))?0:e.values[ARC_RPC_COUNT_service_s1]));
         }
         if(strstr(c->name,"partial-ldm-abort")||strstr(c->name,"partial-stm-abort")) {
             assert(t.end.words-t.start.words==2);
@@ -155,11 +166,13 @@ int main(int argc,char **argv)
         snapshot(&armed);assert(t.done && armed.executed==1);
         fprintf(stderr,"endpoint driver: one functional instruction exactly at the 10 ns limit, no extra issue\n");
     }
-    if(crosscheck)fprintf(stderr,"L1 crosscheck comparisons=%" PRIu64 " mismatches=0\n",crosscheck_calls);
+    if(crosscheck)fprintf(stderr,"L1/S1 crosscheck comparisons=%" PRIu64 " mismatches=0\n",crosscheck_calls);
     fprintf(stderr,"calibration counters model=%s",argc>2?argv[2]:"all");
     for(unsigned j=0;j<ARC_RPC_COUNT_TOTAL;++j)fprintf(stderr," %" PRIu64,counter_totals[j]);
     fputc('\n',stderr);
     free(rom); assert(tested);
+    if((argc<4 || !argv[3][0]) && !(argc>4 && !strcmp(argv[4],"--s1-off")))assert(taken>0);
+    fprintf(stderr,"S1 taken=%" PRIu64 " eligible=%" PRIu64 " model=%s\n",taken,s1,argc>2?argv[2]:"all");
     fprintf(stderr,"endpoint measured intervals: integer=%" PRIu64 " rational=%" PRIu64 " s1=%" PRIu64 "\n",integer,rational,s1);
     printf("rpc timing: %u authored workloads matched exact independent rational durations\n",tested);
     return 0;

@@ -54,7 +54,7 @@ int main(int argc,char **argv)
     void (*configure)(unsigned,uint64_t (*)(void));bool (*snapshot)(ArcRpcProfile *,unsigned,size_t);
     LOAD(set_env,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");
     LOAD(load,"retro_load_game");LOAD(unload,"retro_unload_game");LOAD(run,"retro_run");
-    LOAD(configure,"arc_rpc_profile_configure");LOAD(snapshot,"arc_rpc_profile_snapshot_v3");
+    LOAD(configure,"arc_rpc_profile_configure");LOAD(snapshot,"arc_rpc_profile_snapshot_v4");
     void (*set_video)(retro_video_refresh_t),(*set_audio)(retro_audio_sample_batch_t),(*set_poll)(retro_input_poll_t),(*set_input)(retro_input_state_t);
     LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");
     LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");

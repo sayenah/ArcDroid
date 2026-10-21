@@ -106,7 +106,7 @@ static void measurement_state(void)
 
 static uint64_t value(unsigned index) {
 #if defined(ARCDROID_RPC_PROFILE)
-    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v4(&p,ARC_RPC_COUNTER_ABI,sizeof(p));
     assert(p.ranking.values[index]==arc_rpc_exercise.values[index]);
 #endif
     return arc_rpc_exercise.values[index];
@@ -137,6 +137,12 @@ static void l1_counts(void)
     assert(value(ARC_RPC_COUNT_l1_mirror_search)==1);
     /* Recheck failures are unreachable with an exact mirror. This explicit
      * white-box corruption tests its diagnostic increment, never poison mode. */
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    uint64_t calls,failed;
+    /* The deliberate mirror corruption below is outside the production
+     * invariant. Require a clean latch before injecting its expected fault. */
+    assert(!arc_rpc_crosscheck_status(&calls,&failed) && !failed);
+#endif
     lookup_side(c)->keys[0]=0;lookup_side(c)->hints[hint_index(c,0)]=255;
     assert(!LOOKUP(c,0,false));
     assert(value(ARC_RPC_COUNT_l1_mirror_recheck_failed)==1);
@@ -146,6 +152,13 @@ static void l1_counts(void)
     assert(value(ARC_RPC_COUNT_l1_linear_fallback)==1);
     assert(value(ARC_RPC_COUNT_l1_hint_rejected)==3);
     assert(value(ARC_RPC_COUNT_l1_mirror_search)==2);
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    const char *field=arc_rpc_crosscheck_status(&calls,&failed);
+    assert(field && !strcmp(field,"lookup.cache_slot") && failed==1);
+    /* Consume only this asserted negative control. Real failures before or
+     * after it still fail the fixture and survive every timing rebind. */
+    arc_rpc_crosscheck_reset();
+#endif
 }
 static void maintenance_callsite(void)
 {
@@ -208,6 +221,7 @@ static void service_counts(void)
     for(unsigned kind=0;kind<6;++kind){
         init(2,100);clock_state.now_ns=10;arc_rpc_mem_fast.cpu_due_ns=20;
         m.cycle_active=kind==2 || kind==3;m.video_active=kind==1;
+        m.active_valid=m.cycle_active;
         m.finish=kind==2?56000:kind==1 || kind==3?280000:0;
         arc_rpc_mem_fast.pending=kind==0;arc_rpc_mem_fast.bus_busy=kind>=1 && kind<=4;
         ArcRpcCpuBatch batch={&clock_state,NULL,kind==3?1000:10};
@@ -224,12 +238,13 @@ static void service_counts(void)
     for(unsigned event=0;event<2;++event)for(unsigned k=0;k<6;++k){
         init(2,100);clock_state.now_ns=edges[k][0];
         arc_rpc_mem_fast.cpu_due_ns=edges[k][1];
-        m.cycle_active=true;m.finish=280000;arc_rpc_mem_fast.bus_busy=true;
+        m.cycle_active=true;m.active_valid=true;m.finish=280000;arc_rpc_mem_fast.bus_busy=true;
         clock_state.next_ns=event?edges[k][2]:1000;
         ArcRpcCpuBatch batch={&clock_state,NULL,event?1000:edges[k][2]};
         (void)arc_rpc_mem_batch_service(&batch);
         bool eligible=k==0 || k==5;
         assert(value(ARC_RPC_COUNT_service_s1)==eligible);
+        assert(value(ARC_RPC_COUNT_service_s1_taken)==eligible);
         assert(value(ARC_RPC_COUNT_service_busy)==!eligible);
     }
 }
@@ -239,15 +254,22 @@ static void excluded_counters(void)
     unsigned char before[sizeof(m)+sizeof(arc_rpc_mem_fast)],after[sizeof(before)];
     assert(arc_rpc_mem_observation_snapshot(before,sizeof(before))==sizeof(before));
     assert(arc_rpc_mem_l1_state(false));assert(!arc_rpc_mem_l1_state(true));
-    ARC_RPC_COUNT(service_s1,1);arc_rpc_mem_measure_state(&b);
+    arc_rpc_mem_s1_force_off(true);
+    ARC_RPC_COUNT(service_s1,1);ARC_RPC_COUNT(service_s1_taken,1);arc_rpc_mem_measure_state(&b);
     assert(arc_rpc_mem_measure_equal(&a,&b));
     assert(arc_rpc_mem_observation_snapshot(after,sizeof(after))==sizeof(after));
     assert(!memcmp(before,after,sizeof(before)));
     assert(arc_rpc_mem_endpoint(2,3,true));issue(false,false);
     arc_rpc_exercise_path=2;arc_rpc_mem_bind(NULL,0,0);
-    arc_rpc_mem_measure_state(&b);assert(arc_rpc_mem_measure_equal(&a,&b));assert(!arc_rpc_exercise_path);
+    arc_rpc_mem_measure_state(&b);assert(arc_rpc_mem_measure_equal(&a,&b));assert(!arc_rpc_exercise_path && !s1_forced_off);
     assert(arc_rpc_mem_l1_state(false));
     for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)assert(!value(i));
 }
 int main(void) { intervals();measurement_state();lookup_counts();l1_counts();maintenance_callsite();fill_counts();endpoint_shortcut();service_counts();excluded_counters();
+
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    uint64_t calls=0,failed=0;
+    const char *field=arc_rpc_crosscheck_status(&calls,&failed);
+    if(field){fprintf(stderr,"RPC cross-check mismatch: %s\n",field);return 1;}
+#endif
     puts("exercise counters: lookup outcomes/ways/probes, service classes/finish validity, fill regions, shortcut commit/rollback, exclusion/reset");return 0; }

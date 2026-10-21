@@ -89,7 +89,7 @@ RETRO_API void arc_rpc_profile_probe_snapshot(uint64_t out[ARC_RPC_COST_COUNT+2]
     out[ARC_RPC_COST_COUNT]=profile.calibration_ns;
     out[ARC_RPC_COST_COUNT+1]=profile.calibration_samples;
 }
-RETRO_API bool arc_rpc_profile_snapshot_v3(ArcRpcProfile *out,unsigned revision,size_t size)
+RETRO_API bool arc_rpc_profile_snapshot_v4(ArcRpcProfile *out,unsigned revision,size_t size)
 { if(!out || revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false; *out=profile.counts; return true; }
 static void close_block(void)
 {
