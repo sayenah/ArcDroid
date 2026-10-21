@@ -1018,3 +1018,8 @@ int fpaopcode(uint32_t opcode)
 	}
 	return 0;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/fpa_state.inc"
+#endif

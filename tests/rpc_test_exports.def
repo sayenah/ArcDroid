@@ -61,3 +61,8 @@ EXPORTS
   arc_libretro_test_boot_stamp
   arc_libretro_test_boot_start_stamp
   arc_libretro_test_boot_record_hit
+
+  ; SS-1 / AY-1 calendar state differential, non-installed test DLL only.
+  arc_sha256_hex
+  cmos_session_year
+  arc_engine_test_cpu_snapshot

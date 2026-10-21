@@ -127,7 +127,7 @@ static int64_t vseek(struct retro_vfs_file_handle *h, int64_t offset, int origin
       origin == RETRO_VFS_SEEK_POSITION_CURRENT ? (int64_t)h->at :
       origin == RETRO_VFS_SEEK_POSITION_END ? (int64_t)files[h->index].size : -1;
    if (base < 0 || offset < -base || base + offset < 0) return -1;
-   h->at = (size_t)(base + offset); return 0;
+   h->at = (size_t)(base + offset); return (int64_t)h->at;
 }
 static int64_t vread(struct retro_vfs_file_handle *h, void *data, uint64_t n)
 {
@@ -314,6 +314,41 @@ static void test_scope_reader_store(void)
    assert(scope.state==ARC_HD_ABSENT);
    arc_install_store_close(s);
    clear_files();
+}
+/* SS-1 grounding: manifest generation is an epoch, not a write frontier.
+ * A state gate must also bind the journal sequence. This uses only authored
+ * sectors and checks the actual committed journal and a cold read-only open. */
+static void test_ss1_committed_frontier(void)
+{
+   const char *id = "1234567890abcdef1234567890abcdef12345678";
+   clear_files();
+   ArcInstallStore *s = open_store(id, true, true, ARC_INSTALL_STORE_READY);
+   uint64_t generation = arc_install_store_generation(s);
+   uint8_t before[512], changed[512], after[512];
+   assert(arc_install_store_read(s, 100u, 1u, before));
+   memcpy(changed, before, sizeof(changed));
+   changed[17] ^= 0x5au;
+   File *journal = file_named("journal.g0");
+   assert(journal);
+   size_t at = journal->size;
+   assert(arc_install_store_write(s, 100u, 1u, changed));
+   assert(arc_install_store_generation(s) == generation);
+   assert(journal->size == at + 80u + sizeof(changed) + 16u);
+   assert(!memcmp(journal->bytes + at, "AIJR", 4u));
+   assert(journal->bytes[at + 56u] == 1u); /* First committed sequence. */
+   assert(!memcmp(journal->bytes + at + 80u, changed, sizeof(changed)));
+   assert(!memcmp(journal->bytes + journal->size - 4u, "AICM", 4u));
+   arc_install_store_close(s);
+   unsigned committed_mutations = mutations;
+   s = open_store(id, false, false, ARC_INSTALL_STORE_READY);
+   assert(arc_install_store_generation(s) == generation);
+   assert(arc_install_store_read(s, 100u, 1u, after));
+   assert(!memcmp(after, changed, sizeof(after)));
+   assert(memcmp(after, before, sizeof(after)));
+   arc_install_store_close(s);
+   assert(mutations == committed_mutations);
+   clear_files();
+   puts("SS-1 frontier: write is durable before return; manifest generation unchanged; journal sequence advanced");
 }
 static void test_roundtrip(void)
 {
@@ -942,6 +977,7 @@ int main(int argc, char **argv)
    assert(argc == 1);
    arc_io_set_vfs(&vfs);
    test_roundtrip();
+   test_ss1_committed_frontier();
    test_scope_reader_store();
    test_damage();
    test_tail();

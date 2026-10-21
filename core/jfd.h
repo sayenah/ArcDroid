@@ -251,4 +251,7 @@ bool arc_jfd_parse_owned(uint8_t *decoded, size_t decoded_size,
                          ArcJfdImage *image, char *error, size_t error_size);
 void arc_jfd_free(ArcJfdImage *image);
 
+/* Immutable presentation payload; a named save-state relocation target. */
+const uint8_t *arc_jfd_blank_sector(void);
+
 #endif

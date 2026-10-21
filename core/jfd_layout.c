@@ -262,3 +262,5 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
    view->write_eligible = creatable && overlay->writable;
    return true;
 }
+
+const uint8_t *arc_jfd_blank_sector(void) { return formatted_blank; }

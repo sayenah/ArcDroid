@@ -224,3 +224,8 @@ unsigned disc_poll_period_us(void)
 {
 	return (unsigned)(disc_poll_time / TIMER_USEC);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/disc_state.inc"
+#endif

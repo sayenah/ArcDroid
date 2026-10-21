@@ -25,6 +25,11 @@ struct ArcInstallStore {
    char base_leaf[64];
    char journal_leaf[64];
    uint8_t *image;
+#if defined(ARCDROID_SAVE_STATES)
+   uint8_t *snapshot_base;
+   char snapshot_base_hash[65];
+   uint8_t snapshot_dirty[(ARC_INSTALL_HD_SECTORS+7u)/8u];
+#endif
    uint64_t generation, sequence;
    size_t journal_length;
    unsigned selected_slot;
@@ -295,7 +300,7 @@ static bool load_base(ArcInstallStore *s, const Manifest *m)
    return s->image_loaded;
 }
 static bool replay(ArcInstallStore *s, const Manifest *m, bool writable,
-                   bool report_tail)
+                   bool report_tail, bool apply)
 {
    char path[4096];
    uint8_t header[JOURNAL_HEADER];
@@ -339,7 +344,7 @@ static bool replay(ArcInstallStore *s, const Manifest *m, bool writable,
       if (get64(trailer) != sequence + 1u ||
           get32(trailer + 8u) != arc_crc32(payload, payload_length) ||
           memcmp(trailer + 12u, "AICM", 4u)) { good = false; break; }
-      memcpy(s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
+      if (apply) memcpy(s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
              payload, payload_length);
       ++sequence;
       complete = at;
@@ -677,13 +682,13 @@ static ArcInstallStore *store_open(const char *save_dir,
       /* Validate the committed view before any host mutation, including the
        * probe. A damaged READY store must remain byte-for-byte untouched. */
       if (!load_base(s, chosen) ||
-          !replay(s, chosen, false, !writable)) goto damaged;
+          !replay(s, chosen, false, !writable, true)) goto damaged;
       if (writable && !write_probe(s)) {
          s->writable = false;
          writable = false;
          report(s, "store-mode=read-only reason=write-probe-failed");
       }
-      if (writable && !replay(s, chosen, true, true)) goto damaged;
+      if (writable && !replay(s, chosen, true, true, true)) goto damaged;
       writable = s->writable;
       if (requested_writable && !writable && s->incomplete_tail)
          report(s, "journal-incomplete-read-only");
@@ -758,7 +763,12 @@ bool arc_install_store_wrote(const ArcInstallStore *s)
 void arc_install_store_clear_wrote(ArcInstallStore *s)
 { if (s) s->wrote = false; }
 void arc_install_store_close(ArcInstallStore *s)
-{ if (s) { free(s->image); free(s); } }
+{ if (s) {
+#if defined(ARCDROID_SAVE_STATES)
+   free(s->snapshot_base);
+#endif
+   free(s->image); free(s);
+} }
 ArcInstallStoreState arc_install_store_state(const ArcInstallStore *s)
 { return s ? s->state : ARC_INSTALL_STORE_DAMAGED; }
 const uint8_t *arc_install_store_image(const ArcInstallStore *s)
@@ -843,6 +853,13 @@ bool arc_install_store_write(void *opaque, uint32_t lba, uint32_t count,
    } else return false;
    memcpy(s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
           data, payload_length);
+#if defined(ARCDROID_SAVE_STATES)
+   if(s->snapshot_base)for(size_t i=lba;i<(size_t)lba+count;++i) {
+      uint8_t bit=(uint8_t)(1u<<(i%8u));
+      if(memcmp(s->image+i*512u,s->snapshot_base+i*512u,512u))s->snapshot_dirty[i/8u]|=bit;
+      else s->snapshot_dirty[i/8u]&=(uint8_t)~bit;
+   }
+#endif
    s->wrote = true;
    return true;
 failed:
@@ -876,3 +893,65 @@ static bool store_publish(ArcInstallStore *s,
    report(s, "store-publication=committed generation=0");
    return true;
 }
+
+uint64_t arc_install_store_sequence(const ArcInstallStore *s)
+{ return s?s->sequence:0u; }
+#if defined(ARCDROID_SAVE_STATES)
+#include "arc_state.h"
+#include "arc_state_io.h"
+bool arc_install_store_frontier(const ArcInstallStore *store,uint64_t result[2])
+{
+   result[0]=result[1]=0;
+   if(!store)return true;
+   if(store->failed)return false;
+   ArcInstallStore probe=*store;probe.log=NULL;probe.log_opaque=NULL;
+   Listing listing={0};
+   if(!arc_io_list_directory(probe.directory,list_visit,&listing)||listing.unknown)return false;
+   Manifest m[2]={{0}};
+   for(unsigned i=0;i<2u;++i)if(listing.ready[i]&&!read_manifest(&probe,i,&m[i]))return false;
+   if(!listing.ready[0]&&!listing.ready[1])return store->state==ARC_INSTALL_STORE_NEW;
+   if(listing.ready[0]&&listing.ready[1]&&m[0].generation==m[1].generation)return false;
+   unsigned newest=listing.ready[1]&&(!listing.ready[0]||m[1].generation>m[0].generation)?1u:0u;
+   if(!replay(&probe,&m[newest],false,false,false)||probe.incomplete_tail)return false;
+   result[0]=m[newest].generation;result[1]=probe.sequence;return true;
+}
+static bool snapshot_native_base(ArcInstallStore *s)
+{
+   Manifest m[2]={{0}};bool good[2]={read_manifest(s,0,&m[0]),read_manifest(s,1,&m[1])};
+   if(!good[0]&&!good[1])return false;
+   unsigned newest=good[1]&&(!good[0]||m[1].generation>m[0].generation)?1u:0u;
+   if(s->snapshot_base&&!strcmp(s->snapshot_base_hash,m[newest].base_hash))return true;
+   uint8_t *base=malloc(ARC_INSTALL_HD_BYTES);char path[4096],hash[65];
+   bool okay=base&&full_path(s,m[newest].base_leaf,path)&&read_exact(path,base,ARC_INSTALL_HD_BYTES);
+   if(okay){arc_sha256_hex(base,ARC_INSTALL_HD_BYTES,hash);okay=!strcmp(hash,m[newest].base_hash);}
+   if(!okay){free(base);return false;}
+   free(s->snapshot_base);s->snapshot_base=base;strcpy(s->snapshot_base_hash,hash);
+   memset(s->snapshot_dirty,0,sizeof(s->snapshot_dirty));
+   for(size_t i=0;i<ARC_INSTALL_HD_SECTORS;++i)
+      if(memcmp(s->image+i*512u,base+i*512u,512u))s->snapshot_dirty[i/8u]|=(uint8_t)(1u<<(i%8u));
+   return true;
+}
+void arc_install_store_snapshot(ArcState *state,ArcInstallStore *s)
+{
+   uint64_t frontier[]={s?s->generation:0u,s?s->sequence:0u};
+   (void)frontier;
+   if(!s)return;
+   arc_state_region(state,"hd.store",s,sizeof(*s));
+   if(!arc_state_pass(state)&&s->image_loaded) {
+      bool speculative=arc_state_io_speculative();arc_state_io_speculate(false);
+      bool available=snapshot_native_base(s);arc_state_io_speculate(speculative);
+      if(!available){arc_state_fail(state,"HD immutable base");return;}
+      arc_state_expect(state,"hd.image.base",s->snapshot_base_hash,sizeof(s->snapshot_base_hash));
+      arc_state_delta_stage_indexed(state,"hd.image",s->image,s->snapshot_base,ARC_INSTALL_HD_BYTES,s->snapshot_dirty);
+   }
+   if(s->image_loaded)arc_state_expect(state,"hd.image.base",s->snapshot_base_hash,sizeof(s->snapshot_base_hash));
+   if(!arc_state_pass(state))return;
+   arc_state_object(state,"hd.store");
+#define ARC_HD_STATE(field) arc_state_value(state,&s->field,sizeof(s->field))
+   ARC_HD_STATE(generation);ARC_HD_STATE(sequence);ARC_HD_STATE(journal_length);
+   ARC_HD_STATE(selected_slot);ARC_HD_STATE(state);ARC_HD_STATE(writable);
+   ARC_HD_STATE(failed);ARC_HD_STATE(incomplete_tail);ARC_HD_STATE(image_loaded);
+   ARC_HD_STATE(created);ARC_HD_STATE(wrote);
+#undef ARC_HD_STATE
+}
+#endif

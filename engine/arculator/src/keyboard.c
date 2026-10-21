@@ -610,3 +610,8 @@ void resetmouse()
 	mr=0x4FF;
 	mb=0x3FF;
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/keyboard_state.inc"
+#endif

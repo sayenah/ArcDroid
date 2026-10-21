@@ -96,4 +96,15 @@ void arc_io_set_write_observer(void (*observer)(const char *path));
 bool arc_io_flush_file(ArcIoFile *file);
 bool arc_io_truncate_file(ArcIoFile *file, int64_t length);
 
+#if defined(ARCDROID_SAVE_STATES)
+#include "arcdroid_core.h"
+struct ArcState;
+void arc_io_state_binding(unsigned index, const char *path, bool writable);
+void arc_io_state_base_path(unsigned index,const char *path);
+const void *arc_io_state_base(unsigned index,size_t *bytes,ArcDigest *digest);
+void arc_io_state_clear(void);
+void arc_io_state_path(struct ArcState *state, const char *name, char *path, size_t capacity);
+void arc_io_state_file(struct ArcState *state, const char *name, ArcIoFile *file);
+#endif
+
 #endif

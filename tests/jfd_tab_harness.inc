@@ -157,8 +157,10 @@
             expected = 0x006a0000u;
          }
          bool fault_case = strstr(argv[10], "fault") != NULL;
-         if (!strcmp(argv[10], "write-fault")) fault_write_substring = ".tmp";
-         if (!strcmp(argv[10], "readback-fault")) fault_read_substring = ".tmp";
+         /* Inject the JFD publication failure, not an unrelated CMOS frontier
+          * checkpoint which may also use a temporary file in this frame. */
+         if (!strcmp(argv[10], "write-fault")) fault_write_substring = "/arcdroid/jfd/";
+         if (!strcmp(argv[10], "readback-fault")) fault_read_substring = "/arcdroid/jfd/";
          if (!strcmp(argv[10], "rename-fault")) fault_rename_substring = "/arcdroid/jfd/";
          phase = PHASE_RUN;
          unsigned steady = 0u;

@@ -115,6 +115,7 @@ target_compile_options(arcdroid_core PRIVATE
 set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_ARCULATOR_SOURCES
+  engine/arculator_state.c
   engine/arculator_backend.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
@@ -171,6 +172,8 @@ set(ARCDROID_RPC_SOURCES
 )
 
 set(ARCDROID_LIBRETRO_SOURCES
+  libretro/arc_state.c
+  libretro/arc_state_io.c
   engine/arcdroid_engine.c
   engine/arc_boot_watch.c
   engine/arc_launch_outcome.c
@@ -215,6 +218,22 @@ set(ARCDROID_SYMBOL_CHECK_FLAGS)
 if(ARCDROID_SANITIZERS)
   list(APPEND ARCDROID_SYMBOL_CHECK_FLAGS --sanitized)
 endif()
+
+# Same-build states also distinguish local source edits with the same G-3
+# commit-dirty label. Reconfigure when any state-relevant source changes.
+file(GLOB_RECURSE ARCDROID_STATE_IDENTITY_FILES CONFIGURE_DEPENDS
+  core/*.c core/*.h engine/*.c engine/*.h engine/state-generated/*.inc
+  libretro/*.c libretro/*.h libretro/*.inc platform/*.c platform/*.h
+  third_party/zlib/*.c third_party/zlib/*.h)
+list(APPEND ARCDROID_STATE_IDENTITY_FILES "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ARCDROID_STATE_IDENTITY_FILES})
+set(ARCDROID_STATE_PLATFORM "${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}/${CMAKE_C_COMPILER_ID}/${CMAKE_C_COMPILER_VERSION}")
+set(arcdroid_state_identity "${CMAKE_C_FLAGS}|${CMAKE_C_FLAGS_DEBUG}|${CMAKE_C_FLAGS_RELEASE}|${CMAKE_C_FLAGS_RELWITHDEBINFO}|${CMAKE_C_FLAGS_MINSIZEREL}|${CMAKE_C_COMPILER_TARGET}|${ANDROID_ABI}|${ANDROID_PLATFORM}")
+foreach(state_source IN LISTS ARCDROID_STATE_IDENTITY_FILES)
+  file(SHA256 "${state_source}" state_hash)
+  string(APPEND arcdroid_state_identity "${state_hash}")
+endforeach()
+string(SHA256 ARCDROID_STATE_SCHEMA "${arcdroid_state_identity}")
 
 function(arcdroid_add_libretro target shipping)
   set(core_target arcdroid_core)
@@ -291,7 +310,7 @@ function(arcdroid_add_libretro target shipping)
   endif()
   target_compile_definitions(${target} PRIVATE
     ARCDROID_VERSION="${PROJECT_VERSION}"
-    RELEASE_BUILD=1)
+    ARCDROID_SAVE_STATES=1 ARCDROID_STATE_SCHEMA="${ARCDROID_STATE_SCHEMA}" ARCDROID_STATE_PLATFORM="${ARCDROID_STATE_PLATFORM}" RELEASE_BUILD=1)
   target_compile_options(${target} PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fno-strict-aliasing>)
   set_target_properties(${target} PROPERTIES PREFIX "")
@@ -341,7 +360,7 @@ function(arcdroid_add_libretro target shipping)
         "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T"
         "-Wl,-z,defs")
     endif()
-    target_link_libraries(${target} PRIVATE m)
+    target_link_libraries(${target} PRIVATE m ${CMAKE_DL_LIBS})
   endif()
 endfunction()
 
@@ -585,6 +604,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-arculator-import.py")
   add_test(NAME arculator-import-guard-self-test COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_import_guard_test.py")
+  add_test(NAME arculator-state-inventory COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-arculator-state-inventory.py")
+  add_test(NAME arculator-state-inventory-mutants COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_inventory_test.py")
+  set_tests_properties(arculator-state-inventory arculator-state-inventory-mutants
+    PROPERTIES TIMEOUT 30)
   add_test(NAME public-text-guard COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-public-text.py")
   add_test(NAME public-text-guard-self-test COMMAND "${Python3_EXECUTABLE}" -B
@@ -894,6 +919,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME native-hard-disc-store COMMAND install_store_test)
+  add_executable(arculator_state_io_test tests/arculator_state_io_test.c
+    libretro/arc_io.c libretro/arc_state.c libretro/arc_state_io.c libretro/install_store.c)
+  target_include_directories(arculator_state_io_test PRIVATE core libretro libretro/include)
+  target_compile_definitions(arculator_state_io_test PRIVATE ARCDROID_SAVE_STATES=1)
+  target_link_libraries(arculator_state_io_test PRIVATE arcdroid_core)
+  target_compile_options(arculator_state_io_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arculator_state_io_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME arculator-state-io COMMAND arculator_state_io_test)
+  set_tests_properties(arculator-state-io PROPERTIES TIMEOUT 30)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   if(NOT WIN32)
     add_test(NAME launch-outcome-rom
@@ -1002,6 +1038,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_FILE:calendar_launch_test> $<TARGET_FILE:arcdroid_libretro_test>
     "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   set_tests_properties(cmos-calendar-launch PROPERTIES TIMEOUT 180)
+  add_test(NAME arculator-state-calendar COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_calendar.py"
+    $<TARGET_FILE:calendar_launch_test> $<TARGET_FILE:arcdroid_libretro_test>
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  set_tests_properties(arculator-state-calendar PROPERTIES TIMEOUT 900 LABELS slow)
 
   add_test(NAME rpc-calendar-mutants COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/calendar_mutants.py"
@@ -1999,6 +2040,23 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_reset_test.py"
       $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf")
+    foreach(state_check IN ITEMS matrix mutants features publication)
+      add_test(NAME arculator-state-${state_check}
+        COMMAND "${Python3_EXECUTABLE}" -B
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_${state_check}.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ss1-${state_check}-ctest")
+      set_tests_properties(arculator-state-${state_check} PROPERTIES TIMEOUT 1800
+        LABELS "savestate" ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endforeach()
+    foreach(state_mode IN ITEMS video rewind-buffer)
+      add_test(NAME arculator-state-${state_mode}
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_features.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ss1-${state_mode}" --only-mode ${state_mode})
+      set_tests_properties(arculator-state-${state_mode} PROPERTIES TIMEOUT 1800
+        LABELS "savestate;slow" ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+    endforeach()
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
@@ -2571,7 +2629,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     ${ARCDROID_EXHAUSTION_SOURCES}
     $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
   target_include_directories(rpc_session_exhaustion_test PRIVATE engine core libretro platform libretro/include third_party/zlib)
-  target_compile_definitions(rpc_session_exhaustion_test PRIVATE RELEASE_BUILD=1)
+  target_compile_definitions(rpc_session_exhaustion_test PRIVATE RELEASE_BUILD=1 ARCDROID_SAVE_STATES=1 ARCDROID_STATE_SCHEMA="${ARCDROID_STATE_SCHEMA}" ARCDROID_STATE_PLATFORM="${ARCDROID_STATE_PLATFORM}")
   target_compile_options(rpc_session_exhaustion_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
   target_link_libraries(rpc_session_exhaustion_test PRIVATE arcdroid_core)
   if(UNIX)
@@ -2952,10 +3010,6 @@ if(BUILD_TESTING OR ARCDROID_ANDROID_TEST_CORE)
 endif()
 
 if(BUILD_TESTING)
-  get_property(arc_core_info_files GLOBAL PROPERTY ARCDROID_CORE_INFO_FILES)
-  add_test(NAME rpc-core-info COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_info_test.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
   get_property(arc_tests DIRECTORY PROPERTY TESTS)
   set_property(TEST ${arc_tests} APPEND PROPERTY ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()
@@ -3017,7 +3071,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
   target_include_directories(rpc_orchestration_test PRIVATE core engine platform libretro
     libretro/include third_party/zlib tests)
-  target_compile_definitions(rpc_orchestration_test PRIVATE RELEASE_BUILD=1)
+  target_compile_definitions(rpc_orchestration_test PRIVATE RELEASE_BUILD=1 ARCDROID_SAVE_STATES=1 ARCDROID_STATE_SCHEMA="${ARCDROID_STATE_SCHEMA}" ARCDROID_STATE_PLATFORM="${ARCDROID_STATE_PLATFORM}")
   target_compile_options(rpc_orchestration_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
   target_link_libraries(rpc_orchestration_test PRIVATE arcdroid_core)
   if(UNIX)
@@ -3603,6 +3657,23 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_host_frontend_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
+  add_executable(rpc_route_harness tests/rpc_route_harness.c)
+  target_include_directories(rpc_route_harness PRIVATE libretro/include)
+  target_compile_options(rpc_route_harness PRIVATE -UNDEBUG)
+  target_link_libraries(rpc_route_harness PRIVATE ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_route_harness rpc_host_frontend_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_route_harness PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  # R-SS3g runs the shipping library, in either configured gate state.
+  add_test(NAME arculator-state-secondary-routes COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_secondary_test.py"
+    $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}")
+  set_tests_properties(arculator-state-secondary-routes PROPERTIES TIMEOUT 360)
+  add_test(NAME arculator-state-runahead-modes COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_secondary_test.py"
+    $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" --runahead)
+  set_tests_properties(arculator-state-runahead-modes PROPERTIES TIMEOUT 1200)
   add_test(NAME rpc-production-host-frontend COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_frontend_test.py" $<TARGET_FILE:rpc_host_frontend_test>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" pending)
@@ -3644,7 +3715,7 @@ if((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR ARCDROID_ANDROID_T
   add_executable(rpc_host_process tests/rpc_host_process.c ${rpc_host_process_sources}
     $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
   target_include_directories(rpc_host_process PRIVATE core engine platform libretro libretro/include third_party/zlib tests)
-  target_compile_definitions(rpc_host_process PRIVATE RELEASE_BUILD=1)
+  target_compile_definitions(rpc_host_process PRIVATE RELEASE_BUILD=1 ARCDROID_SAVE_STATES=1 ARCDROID_STATE_SCHEMA="${ARCDROID_STATE_SCHEMA}" ARCDROID_STATE_PLATFORM="${ARCDROID_STATE_PLATFORM}")
   target_compile_options(rpc_host_process PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
   target_link_libraries(rpc_host_process PRIVATE arcdroid_core)
   if(UNIX)
@@ -3725,6 +3796,9 @@ if(BUILD_TESTING)
   get_property(arcdroid_ci_tests DIRECTORY PROPERTY TESTS)
   foreach(test IN LISTS arcdroid_ci_tests)
     if(test MATCHES "(mutants|mutations|faults)" OR
+        # SS-1 differential and expanded frontend protocol matrices exceed
+        # two minutes under sanitizers (Run H features: 177 s on Mac).
+        test MATCHES "^arculator-state-(matrix|features)$" OR
         test STREQUAL "rpc-lockstep-sensitivity-variants" OR
         test STREQUAL "rpc-profile-lockstep-coverage" OR
         # R3d-3 sanitizer maxima: guest 268.61 s, state matrix 305.34 s.
@@ -3774,11 +3848,6 @@ if(ARCDROID_RPC_AUTHORED_ROUTE)
   add_dependencies(arcdroid_rpcroute_fault_libretro arcdroid_rpcroute_libretro)
   arcdroid_configure_core_info(tests/arcdroid_rpcroute_libretro.info arcdroid_rpcroute_libretro.info)
   if(NOT CMAKE_CROSSCOMPILING OR WIN32)
-    add_executable(rpc_route_harness tests/rpc_route_harness.c)
-    target_include_directories(rpc_route_harness PRIVATE libretro/include)
-    target_compile_options(rpc_route_harness PRIVATE -UNDEBUG)
-    target_link_libraries(rpc_route_harness PRIVATE ${CMAKE_DL_LIBS})
-    add_dependencies(rpc_route_harness rpc_host_frontend_test)
     if(ARCDROID_SANITIZERS)
       target_link_libraries(arcdroid_core_route PRIVATE arcdroid_sanitizer_compile)
       target_link_libraries(arcdroid_core_route_fault PRIVATE arcdroid_sanitizer_compile)
@@ -3797,7 +3866,6 @@ if(ARCDROID_RPC_AUTHORED_ROUTE)
         target_compile_options(arcdroid_rpcroute_fault_libretro_arculator PRIVATE -fsanitize-address-use-odr-indicator)
         target_compile_options(arcdroid_rpcroute_fault_libretro_rpc PRIVATE -fsanitize-address-use-odr-indicator)
       endif()
-      target_link_libraries(rpc_route_harness PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
     endif()
     add_test(NAME rpc-route-authored COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_test.py"
       $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_rpcroute_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}" "$<BOOL:${ARCDROID_RPC_ORDINARY_LOAD}>" $<TARGET_FILE:arcdroid_rpcroute_fault_libretro>)
@@ -3898,3 +3966,13 @@ foreach(target IN LISTS rpc_artifact_targets)
   endif()
 endforeach()
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/rpc-artifact-targets.json" CONTENT "{\"targets\":[${rpc_artifact_rows}]}\n")
+
+# Collect metadata after every optional target has registered its source/output
+# pair; the guard must census the authored ordinary-route .info as well.
+if(BUILD_TESTING)
+  get_property(arc_core_info_files GLOBAL PROPERTY ARCDROID_CORE_INFO_FILES)
+  add_test(NAME rpc-core-info COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_info_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
+  set_tests_properties(rpc-core-info PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+endif()

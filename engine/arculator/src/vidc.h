@@ -57,5 +57,7 @@ typedef RGB PALETTE[256];
 #define makecol32(r, g, b)  ((b) | ((g) << 8) | ((r) << 16))
 
 void clear(BITMAP *b);
+/* D-215: load-only scanout changes pixels, never emulation state. */
+void arc_vidc_rebuild_picture(uint32_t *output,unsigned width,unsigned height,size_t pitch);
 
 #endif /* _VIDC_H_ */

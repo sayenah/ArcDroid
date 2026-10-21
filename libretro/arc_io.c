@@ -80,13 +80,25 @@ static void (*arc_io_write_observer)(const char *path);
 void arc_io_set_write_observer(void (*observer)(const char *path))
 { arc_io_write_observer = observer; }
 
+#if defined(ARCDROID_SAVE_STATES)
+typedef struct ArcIoStateCache ArcIoStateCache;
+static bool arc_io_state_cache_open(ArcIoFile *file);
+static void arc_io_state_cache_close(ArcIoFile *file);
+static void arc_io_state_cache_write(ArcIoFile *file,int64_t at,const void *data,size_t bytes);
+#endif
 struct ArcIoFile {
    struct retro_vfs_file_handle *handle;
    bool writable;
+   bool owns_memory;
    char *path;
    const uint8_t *memory;
    size_t memory_size;
    size_t memory_at;
+#if defined(ARCDROID_SAVE_STATES)
+   int64_t state_at;
+   ArcIoStateCache *state_cache;
+   ArcIoFile *state_next;
+#endif
 };
 #if defined(ARCDROID_RPC_LOCKSTEP)
 void arc_io_lockstep_file(const ArcIoFile *file,ArcIoLockstepFile *out)
@@ -498,6 +510,9 @@ static ArcIoFile *arc_io_file_open(const char *path, bool writable, bool create,
       if (writable || !arc_memory[memory_slot].data) return NULL;
       ArcIoFile *file = calloc(1u, sizeof(*file));
       if (!file) return NULL;
+      file->path=malloc(strlen(path)+1u);
+      if(!file->path){free(file);return NULL;}
+      strcpy(file->path,path);
       file->memory = arc_memory[memory_slot].data;
       file->memory_size = arc_memory[memory_slot].size;
       return file;
@@ -519,7 +534,6 @@ static ArcIoFile *arc_io_file_open(const char *path, bool writable, bool create,
    memset(file, 0, sizeof(*file));
    file->handle = handle;
    file->writable = writable;
-   if (writable)
    {
       file->path = malloc(strlen(path) + 1u);
       if (!file->path)
@@ -531,7 +545,13 @@ static ArcIoFile *arc_io_file_open(const char *path, bool writable, bool create,
 
 bool arc_io_flush_available(void) { return arc_io_vfs && arc_io_vfs->flush; }
 ArcIoFile *arc_io_open_file(const char *path, bool writable)
-{ return arc_io_file_open(path, writable, false, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS, NULL); }
+{
+   ArcIoFile *file=arc_io_file_open(path,writable,false,RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS,NULL);
+#if defined(ARCDROID_SAVE_STATES)
+   if(file&&!arc_io_state_cache_open(file)){arc_io_close_file(file);return NULL;}
+#endif
+   return file;
+}
 ArcIoFile *arc_io_create_file(const char *path)
 { return arc_io_file_open(path, true, true, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS, NULL); }
 ArcIoFile *arc_io_create_file_counted(const char *path, uint64_t *operations)
@@ -540,10 +560,14 @@ ArcIoFile *arc_io_create_file_counted(const char *path, uint64_t *operations)
 bool arc_io_close_file(ArcIoFile *file)
 {
    if (!file) return false;
-   if (file->memory) { free(file); return true; }
+#if defined(ARCDROID_SAVE_STATES)
+   arc_io_state_cache_close(file);
+#endif
+   if (file->memory && !file->handle) { if(file->owns_memory)free((void*)file->memory);free(file->path);free(file); return true; }
    int result = -1;
    if (arc_io_vfs && arc_io_vfs->close && file->handle)
       result = arc_io_vfs->close(file->handle);
+   if(file->owns_memory)free((void*)file->memory);
    free(file->path);
    free(file);
    return result == 0;
@@ -573,8 +597,16 @@ int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
       if (base < 0 || offset < -base || offset > (int64_t)file->memory_size - base) return -1;
       file->memory_at = (size_t)(base + offset); return (int64_t)file->memory_at;
    }
-   return file && arc_io_vfs && arc_io_vfs->seek ?
-      arc_io_vfs->seek(file->handle, offset, origin) : -1;
+   if(!file||!arc_io_vfs||!arc_io_vfs->seek)return -1;
+   int64_t result=arc_io_vfs->seek(file->handle,offset,origin);
+#if defined(ARCDROID_SAVE_STATES)
+   if(result>=0){
+      int64_t base=origin==RETRO_VFS_SEEK_POSITION_START?0:
+         origin==RETRO_VFS_SEEK_POSITION_CURRENT?file->state_at:arc_io_file_length(file);
+      file->state_at=base+offset;
+   }
+#endif
+   return result;
 }
 
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
@@ -586,14 +618,28 @@ size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
    }
    if (!file || !data || !arc_io_vfs || !arc_io_vfs->read) return 0u;
    int64_t count = arc_io_vfs->read(file->handle, data, size);
+#if defined(ARCDROID_SAVE_STATES)
+   if(count>0)file->state_at+=count;
+#endif
    return count < 0 ? 0u : (size_t)count;
 }
 
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 {
-   if (!file || !data || file->memory || !file->writable ||
+   if (!file || !data || (file->memory && !file->handle) || !file->writable ||
        !arc_io_vfs || !arc_io_vfs->write) return 0u;
+   if(file->memory) {
+      if(size>file->memory_size-file->memory_at)return 0u;
+      if(!arc_io_vfs->seek||arc_io_vfs->seek(file->handle,(int64_t)file->memory_at,RETRO_VFS_SEEK_POSITION_START)!=(int64_t)file->memory_at)return 0u;
+   }
+#if defined(ARCDROID_SAVE_STATES)
+   int64_t state_at=file->memory?(int64_t)file->memory_at:file->state_at;
+#endif
    int64_t count = arc_io_vfs->write(file->handle, data, size);
+#if defined(ARCDROID_SAVE_STATES)
+   if(count>0){arc_io_state_cache_write(file,state_at,data,(size_t)count);file->state_at=state_at+count;}
+#endif
+   if(count>0&&file->memory) {memcpy((uint8_t*)file->memory+file->memory_at,data,(size_t)count);file->memory_at+=(size_t)count;}
    if (count > 0 && arc_io_write_observer) arc_io_write_observer(file->path);
    return count < 0 ? 0u : (size_t)count;
 }
@@ -601,7 +647,7 @@ size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 bool arc_io_flush_file(ArcIoFile *file)
 {
    if (!file) return false;
-   if (file->memory) return true;
+   if (file->memory && !file->handle) return true;
    if (!file->writable) return true;
    return arc_io_vfs && (!arc_io_vfs->flush ||
                          arc_io_vfs->flush(file->handle) == 0);
@@ -621,3 +667,166 @@ ArcIoFile *arc_io_open_stream(const char *path, bool writable)
 { return arc_io_file_open(path, writable, false, RETRO_VFS_FILE_ACCESS_HINT_NONE, NULL); }
 ArcIoFile *arc_io_open_stream_counted(const char *path, bool writable, uint64_t *operations)
 { return arc_io_file_open(path, writable, false, RETRO_VFS_FILE_ACCESS_HINT_NONE, operations); }
+
+#if defined(ARCDROID_SAVE_STATES)
+#include "arc_state.h"
+#include "arc_state_io.h"
+#define ARC_STATE_FILE_BINDINGS 68u
+static struct { char path[4096]; bool writable; } arc_io_state_paths[ARC_STATE_FILE_BINDINGS];
+typedef struct {char path[4096];void *data;size_t bytes;ArcDigest digest;} ArcIoStateBase;
+static ArcIoStateBase arc_io_state_bases[ARC_STATE_FILE_BINDINGS];
+void arc_io_state_clear(void)
+{
+   for(unsigned i=0;i<ARC_STATE_FILE_BINDINGS;++i)free(arc_io_state_bases[i].data);
+   memset(arc_io_state_bases,0,sizeof(arc_io_state_bases));
+   memset(arc_io_state_paths,0,sizeof(arc_io_state_paths));
+}
+void arc_io_state_base_path(unsigned index,const char *path)
+{
+   if(index>=ARC_STATE_FILE_BINDINGS||!path)return;
+   ArcIoStateBase *b=&arc_io_state_bases[index];if(!strcmp(b->path,path))return;
+   free(b->data);memset(b,0,sizeof(*b));snprintf(b->path,sizeof(b->path),"%s",path);
+}
+const void *arc_io_state_base(unsigned index,size_t *bytes,ArcDigest *digest)
+{
+   if(index>=ARC_STATE_FILE_BINDINGS)return NULL;
+   ArcIoStateBase *b=&arc_io_state_bases[index];
+   if(!b->data) {
+      int slot=arc_io_memory_slot(arc_io_state_paths[index].path);
+      if(slot>=0) {
+         b->bytes=arc_memory[slot].size;b->data=malloc(b->bytes?b->bytes:1u);
+         if(b->data)memcpy(b->data,arc_memory[slot].data,b->bytes);
+      } else if(!b->path[0]||!arc_io_read_all(b->path,&b->data,&b->bytes))return NULL;
+      if(!b->data)return NULL;
+      b->digest=arc_digest(b->data,b->bytes);
+   }
+   if(bytes)*bytes=b->bytes;if(digest)*digest=b->digest;return b->data;
+}
+void arc_io_state_binding(unsigned index,const char *path,bool writable)
+{
+   if(index>=ARC_STATE_FILE_BINDINGS)return;
+   snprintf(arc_io_state_paths[index].path,sizeof(arc_io_state_paths[index].path),"%s",path?path:"");
+   arc_io_state_paths[index].writable=writable;
+   arc_state_io_binding(index,path);
+}
+#include "arc_io_state_cache.inc"
+/* Reset-time host paths are rebound through the current prepared media table. */
+typedef struct { char *destination; size_t capacity; unsigned binding; } ArcIoStatePath;
+static void arc_io_state_path_commit(void *opaque)
+{
+   ArcIoStatePath *p=opaque;
+   snprintf(p->destination,p->capacity,"%s",p->binding<ARC_STATE_FILE_BINDINGS?arc_io_state_paths[p->binding].path:"");
+   free(p);
+}
+void arc_io_state_path(ArcState *s,const char *name,char *path,size_t capacity)
+{
+   if(arc_state_pass(s)||arc_state_error(s)||arc_state_registering(s))return;
+   uint64_t binding=UINT64_MAX;
+   if(!arc_state_loading(s)&&path[0]) {
+      for(unsigned i=0;i<ARC_STATE_FILE_BINDINGS;++i)
+         if(!strcmp(path,arc_io_state_paths[i].path)){binding=i;break;}
+      if(binding==UINT64_MAX){arc_state_fail(s,"unbound reset media");return;}
+   }
+   size_t bytes=0;const void *wire=arc_state_blob(s,name,&binding,sizeof(binding),sizeof(binding),&bytes);
+   if(!wire||bytes!=sizeof(binding)){arc_state_fail(s,"reset media binding");return;}
+   memcpy(&binding,wire,sizeof(binding));
+   if(binding!=UINT64_MAX&&(binding>=ARC_STATE_FILE_BINDINGS||!arc_io_state_paths[binding].path[0]||strlen(arc_io_state_paths[binding].path)>=capacity)) {
+      arc_state_fail(s,"reset media path");return;
+   }
+   if(arc_state_loading(s)) {
+      ArcIoStatePath *change=malloc(sizeof(*change));if(!change){arc_state_fail(s,"allocation");return;}
+      *change=(ArcIoStatePath){path,capacity,binding==UINT64_MAX?ARC_STATE_FILE_BINDINGS:(unsigned)binding};
+      arc_state_action(s,arc_io_state_path_commit,arc_state_free,change);
+   }
+}
+typedef struct { ArcIoFile *previous,*next; } ArcIoStateFileChange;
+static void arc_io_state_file_commit(void *opaque)
+{ ArcIoStateFileChange *c=opaque;if(c->previous)arc_io_close_file(c->previous);free(c); }
+static void arc_io_state_file_rollback(void *opaque)
+{ ArcIoStateFileChange *c=opaque;if(c->next)arc_io_close_file(c->next);free(c); }
+void arc_io_state_file(ArcState *s,const char *name,ArcIoFile *file)
+{
+   if(arc_state_error(s))return;
+   if(arc_state_pass(s)) {
+      uint64_t metadata[5]={0};char key[192];size_t n;
+      snprintf(key,sizeof(key),"%s.metadata",name);
+      const void *wire=arc_state_blob(s,key,NULL,0,sizeof(metadata),&n);
+      if(!wire||n!=sizeof(metadata)){arc_state_fail(s,"media metadata");return;}
+      memcpy(metadata,wire,sizeof(metadata));ArcDigest digest={0};
+      if(metadata[0]&&!arc_io_state_base((unsigned)metadata[1],NULL,&digest)){arc_state_fail(s,"media base");return;}
+      snprintf(key,sizeof(key),"%s.base",name);arc_state_expect(s,key,digest.sha1,sizeof(digest.sha1));return;
+   }
+   uint64_t meta[5]={0};char key[192];size_t bytes=0;
+   void *temporary=NULL;const void *contents=NULL;
+   if(!arc_state_loading(s)&&file) {
+      meta[0]=1;meta[1]=UINT64_MAX;meta[2]=file->writable;meta[3]=(uint64_t)arc_io_tell_file(file);
+      for(unsigned i=0;i<ARC_STATE_FILE_BINDINGS;++i) {
+         bool same=file->path&&arc_io_state_paths[i].path[0]&&!strcmp(file->path,arc_io_state_paths[i].path);
+         int memory=arc_io_memory_slot(arc_io_state_paths[i].path);
+         if(!file->handle&&memory>=0&&arc_memory[memory].data==file->memory)same=true;
+         if(same){meta[1]=i;break;}
+      }
+      if(meta[1]==UINT64_MAX){arc_state_fail(s,"unbound media file");return;}
+      if(file->state_cache){
+         if(!arc_io_state_cache_refresh(file)){arc_state_fail(s,"dirty media read");return;}
+         contents=file->state_cache->data;bytes=file->state_cache->bytes;
+      }
+      else if(file->memory){contents=file->memory;bytes=file->memory_size;}
+      else if(!arc_io_read_all(file->path,&temporary,&bytes)){arc_state_fail(s,"media read");return;}
+      else contents=temporary;
+      meta[4]=bytes;
+   }
+   snprintf(key,sizeof(key),"%s.metadata",name);size_t n=0;
+   const uint64_t *saved=arc_state_blob(s,key,meta,sizeof(meta),sizeof(meta),&n);
+   if(!saved||n!=sizeof(meta)){free(temporary);arc_state_fail(s,"media metadata");return;}
+   memcpy(meta,saved,sizeof(meta));
+   if(meta[0]>1||(!meta[0]&&(meta[1]||meta[2]||meta[3]||meta[4]))||
+      (meta[0]&&(meta[1]>=ARC_STATE_FILE_BINDINGS||meta[2]>1||meta[3]>meta[4]||meta[4]>16u*1024u*1024u||
+       !arc_io_state_paths[meta[1]].path[0]||(meta[2]&&!arc_io_state_paths[meta[1]].writable)))) {
+      free(temporary);arc_state_fail(s,"media binding");return;
+   }
+   bytes=(size_t)meta[4];size_t base_bytes=0;ArcDigest base_digest={0};
+   const void *base=meta[0]?arc_io_state_base((unsigned)meta[1],&base_bytes,&base_digest):NULL;
+   if(meta[0]&&(!base||base_bytes!=bytes)){free(temporary);arc_state_fail(s,"immutable media base");return;}
+   snprintf(key,sizeof(key),"%s.base",name);arc_state_expect(s,key,base_digest.sha1,sizeof(base_digest.sha1));
+   snprintf(key,sizeof(key),"%s.contents",name);
+   const void *data;
+   if(!arc_state_loading(s)&&file&&file->state_cache) {
+      arc_io_state_cache_capture(s,key,file->state_cache);data=contents;
+   } else data=arc_state_delta(s,key,contents,base,bytes);
+   if(!arc_state_loading(s)&&temporary) {
+      void *retained=arc_state_scratch(s,bytes);if(retained)memcpy(retained,contents,bytes);contents=retained;
+   }
+   snprintf(key,sizeof(key),"%s.view",name);arc_state_view(s,key,arc_state_loading(s)?data:contents,bytes,NULL);
+   free(temporary);
+   if(arc_state_error(s))return;
+   ArcIoFile *next=file;
+   if(arc_state_loading(s)) {
+      next=NULL;
+      if(meta[0]) {
+         /* Logical medium, cache indexes and reopened handle are ownership,
+          * independently bounded from the small delta on the wire. */
+         size_t ownership=2u*bytes+((bytes+511u)/512u)*8u+sizeof(ArcIoFile)+sizeof(ArcIoStateCache)+4096u;
+         if(!arc_state_ownership_resize(s,0,ownership))return;
+         next=arc_io_file_open(arc_io_state_paths[meta[1]].path,meta[2]!=0,false,RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS,NULL);
+         if(!next){arc_state_fail(s,"media reopen");return;}
+         uint8_t *view=malloc(bytes?bytes:1u);
+         if(!view){arc_io_close_file(next);arc_state_fail(s,"allocation");return;}
+#if defined(ARCDROID_TEST_FAULTS)
+         const char *drop=getenv("ARCDROID_SS1_DROP_OBJECT");
+         if(drop&&!strcmp(drop,"media.raw-image")&&next->handle) {
+            free(view);
+            if(arc_io_seek_file(next,(int64_t)meta[3],RETRO_VFS_SEEK_POSITION_START)<0){arc_io_close_file(next);arc_state_fail(s,"media seek");return;}
+         } else
+#endif
+         {memcpy(view,data,bytes);next->memory=view;next->owns_memory=true;next->memory_size=bytes;next->memory_at=(size_t)meta[3];if(!arc_io_state_cache_open(next)){arc_io_close_file(next);arc_state_fail(s,"media cache allocation");return;}}
+      }
+      ArcIoStateFileChange *change=malloc(sizeof(*change));
+      if(!change){if(next)arc_io_close_file(next);arc_state_fail(s,"allocation");return;}
+      change->previous=file;change->next=next;
+      arc_state_action(s,arc_io_state_file_commit,arc_io_state_file_rollback,change);
+   }
+   arc_state_region(s,name,next,next?sizeof(*next):0);
+   if(next)arc_state_target(s,next,ARC_STATE_REFERENCE_FILE);
+}
+#endif

@@ -137,7 +137,7 @@ function Invoke-OrdinaryPreemptRefusal($Run) {
 }
 function Get-OrdinarySecondaryCount($Run) {
     if (-not (Test-Path $Run.RetroLog)) { return 0 }
-    $pattern = [regex]::Escape('RPC secondary load refused before preparation, guest execution and writable stores.')
+    $pattern = [regex]::Escape('secondary load refused before preparation, guest execution and writable stores.')
     return [regex]::Matches([string](Get-Content -Raw $Run.RetroLog), $pattern).Count
 }
 function Wait-OrdinarySecondaryCount($Run, [int]$Minimum) {

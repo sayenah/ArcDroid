@@ -852,3 +852,10 @@ data_abort:
 /*        sprintf(err2,"Bad write long %06X %03X %04X %08X\n",a,a>>15,a&0x7FFF,v);*/
 }
 
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/mem_state.inc"
+#include "../../state-generated/memory_extra.inc"
+void arc_state_visit_engine_arculator_src_mem_extra(ArcState *s) { arc_state_memory_extra(s); }
+#endif

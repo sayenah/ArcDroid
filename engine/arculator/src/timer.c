@@ -143,3 +143,8 @@ void timer_add(emu_timer_t *timer, void (*callback)(void *p), void *p, int start
 	if (start_timer)
 		timer_set_delay_u64(timer, 0);
 }
+
+#if defined(ARCDROID_SAVE_STATES)
+/* ArcDroid modification (2026-10-18): expose reviewed state fields to the transactional save-state codec. */
+#include "../../state-generated/timer_state.inc"
+#endif

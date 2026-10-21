@@ -39,4 +39,11 @@ bool arc_install_store_probe_writable(ArcInstallStore *store);
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_install_store_test_corrupt_native_format(bool enabled);
 #endif
+uint64_t arc_install_store_sequence(const ArcInstallStore *store);
+#if defined(ARCDROID_SAVE_STATES)
+struct ArcState;
+bool arc_install_store_frontier(const ArcInstallStore *store, uint64_t result[2]);
+void arc_install_store_snapshot(struct ArcState *state, ArcInstallStore *store);
+#endif
+
 #endif

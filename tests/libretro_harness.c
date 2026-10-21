@@ -5,6 +5,8 @@
 #include "arculator_test.h"
 #include "boot_observation.h"
 #include "arc_io.h"
+#include "jfd.h"
+#include "playlist.h"
 #include "e_format_fixture.h"
 
 #include <assert.h>
@@ -19,6 +21,7 @@
 #include <malloc.h>
 #endif
 #include <stdarg.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,6 +50,8 @@ enum Phase { PHASE_NONE, PHASE_ENV, PHASE_INIT, PHASE_LOAD, PHASE_RUN };
 static enum Phase phase;
 static const char *system_dir;
 static const char *save_dir;
+static uint64_t ss1_native_mutations,ss1_native_read_bytes,ss1_native_write_bytes;
+static unsigned ss1_kill_phase;
 static unsigned open_files;
 static unsigned open_dirs;
 static unsigned video_frames;
@@ -55,6 +60,16 @@ static uint64_t nonzero_audio_samples;
 static uint64_t video_signatures[16];
 static unsigned video_signature_count;
 static uint64_t last_video_signature;
+static bool ss1_in_restore;
+static bool (*ss1_core_restore)(const void *,size_t);
+static bool (*ss1_tables_check)(void);
+static bool ss1_restore(const void *data,size_t bytes)
+{
+   assert(!ss1_in_restore);ss1_in_restore=true;
+   bool okay=ss1_core_restore(data,bytes);ss1_in_restore=false;
+   if(okay&&ss1_tables_check)assert(ss1_tables_check());
+   return okay;
+}
 static uint32_t last_video_pixel;
 static unsigned video_signature_last_change_frame;
 static bool last_video_was_duplicate;
@@ -93,6 +108,12 @@ static unsigned measured_video_frames;
 static bool av_rate_changed_during_measure;
 static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
+static const char *ss1_primary_path;
+static unsigned ss1_context_queries,ss1_secondary_calls,ss1_secondary_log_queries;
+static bool ss1_context_capability=true;
+static uint64_t ss1_quirks;
+static unsigned ss1_quirks_calls;
+static enum retro_savestate_context ss1_context=RETRO_SAVESTATE_CONTEXT_NORMAL;
 static char last_message[512];
 static char machine_resolution_log[128];
 static char hard_disc_policy_log[256];
@@ -474,6 +495,7 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
       !strcmp(path, aliased_vfs_file_path) ? aliased_vfs_file_source : path;
    FILE *f = fopen(native_path, m);
    if (!f) return NULL;
+   if((mode&RETRO_VFS_FILE_ACCESS_WRITE)&&!(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))++ss1_native_mutations;
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h));
    assert(h);
    h->file = f; h->path = copy_string(path); h->mode = mode;
@@ -498,13 +520,19 @@ static int64_t vfs_read(struct retro_vfs_file_handle *h, void *s, uint64_t n)
    if (observed_vfs_path && !strcmp(h->path, observed_vfs_path))
       ++observed_vfs_reads;
    if (fault_once(h->path, &fault_read_substring) && n) --n;
-   return (int64_t)fread(s, 1u, (size_t)n, h->file);
+   int64_t count=(int64_t)fread(s,1u,(size_t)n,h->file);if(count>0)ss1_native_read_bytes+=(uint64_t)count;return count;
 }
 static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_t n)
 {
    if (fault_once(h->path, &fault_write_substring) && n) --n;
    int64_t at = ftell(h->file); if (at < 0) return -1;
+   bool ss1_journal=strstr(h->path,"/journal.g")!=NULL;
+   if(ss1_kill_phase==1u&&ss1_journal&&n==80u)kill(getpid(),SIGKILL);
    int64_t written = (int64_t)fwrite(s, 1u, (size_t)n, h->file);
+   if(ss1_journal&&((ss1_kill_phase==2u&&n==512u)||(ss1_kill_phase==3u&&n==16u))) {
+      assert(!fflush(h->file));kill(getpid(),SIGKILL);
+   }
+   if(written>0){++ss1_native_mutations;ss1_native_write_bytes+=(uint64_t)written;}
    if (at + written > h->cached_size) h->cached_size = at + written;
    return written;
 }
@@ -515,7 +543,7 @@ static int vfs_flush(struct retro_vfs_file_handle *h)
    return fflush(h->file);
 }
 static int vfs_remove(const char *p)
-{ count_install_prefix(p); return fault_once(p, &fault_remove_substring) ? -1 : remove(p); }
+{ count_install_prefix(p); int result=fault_once(p,&fault_remove_substring)?-1:remove(p);if(!result)++ss1_native_mutations;return result; }
 static int vfs_rename(const char *a, const char *b)
 {
    count_install_prefix(a); count_install_prefix(b);
@@ -539,10 +567,15 @@ static int vfs_rename(const char *a, const char *b)
       assert(result==0);
       _Exit(87); /* Published, before the store updates its in-memory view. */
    }
-   return rename(a, b);
+   bool ss1_jfd=b&&strstr(b,"/arcdroid/jfd/");
+   bool ss1_counter=b&&strstr(b,"/arcdroid/state-stores/");
+   if((ss1_kill_phase==4u&&ss1_jfd)||(ss1_kill_phase==6u&&ss1_counter))kill(getpid(),SIGKILL);
+   int result=rename(a,b);if(!result)++ss1_native_mutations;
+   if(result==0&&((ss1_kill_phase==5u&&ss1_jfd)||(ss1_kill_phase==7u&&ss1_counter)))kill(getpid(),SIGKILL);
+   return result;
 }
 static int64_t vfs_truncate(struct retro_vfs_file_handle *h, int64_t n)
-{ if (ftruncate(fileno(h->file), n)) return -1; h->cached_size = n; return 0; }
+{ if (ftruncate(fileno(h->file), n)) return -1; h->cached_size = n; ++ss1_native_mutations;return 0; }
 static int32_t vfs_stat(const char *p, int32_t *size)
 {
    count_install_prefix(p);
@@ -555,7 +588,7 @@ static int vfs_mkdir(const char *p)
 {
    count_install_prefix(p);
    if (fault_once(p, &fault_mkdir_substring)) return -1;
-   int result = mkdir(p, 0755);
+   int result = mkdir(p, 0755);if(!result)++ss1_native_mutations;
    return result == 0 ? 0 : errno == EEXIST ? -2 : -1;
 }
 static struct retro_vfs_dir_handle *vfs_opendir(const char *p, bool hidden)
@@ -801,6 +834,7 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
          (void)sscanf(cmos_summary, "cmos_locked_attempts=%u cmos_locked_changes=%u",
                       &cmos_summary_attempts, &cmos_summary_changes);
    }
+   if(strstr(message,"Save state refused:")) fputs(message,stderr);
    if (evidence_log)
    {
       fputs(message, evidence_log);
@@ -1168,7 +1202,9 @@ static bool environment(unsigned command, void *data)
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
          assert(av->timing.fps < last_notified_rate - 0.01 ||
-                av->timing.fps > last_notified_rate + 0.01);
+                av->timing.fps > last_notified_rate + 0.01 ||
+                (ss1_in_restore&&(av->geometry.base_width != geometry_width ||
+                                  av->geometry.base_height != geometry_height)));
          if (measure_av) av_rate_changed_during_measure = true;
          geometry_width = av->geometry.base_width;
          geometry_height = av->geometry.base_height;
@@ -1182,6 +1218,15 @@ static bool environment(unsigned command, void *data)
             reported_rates[reported_rate_count++] = av->timing.fps;
          return true;
       }
+      case RETRO_ENVIRONMENT_GET_LIBRETRO_PATH:
+         if(!ss1_primary_path)return false;
+         *(const char **)data=ss1_primary_path;return true;
+      case RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT:
+         ++ss1_context_queries;
+         if(!ss1_context_capability)return false;
+         *(enum retro_savestate_context*)data=ss1_context;return true;
+      case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
+         ss1_quirks=*(uint64_t*)data;++ss1_quirks_calls;return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
@@ -1604,6 +1649,23 @@ static uint64_t hash_text(const char *text)
    return hash;
 }
 
+/* The existing ADFFS no-native-media assertion excludes CMOS. Its new
+ * durable sidecars contain those same excluded bytes; identify only sidecars
+ * whose filename is the digest of an actual CMOS basename in this save tree. */
+static bool snapshot_cmos_frontier(const char *directory,const char *leaf)
+{
+   if(strlen(leaf)<42u||leaf[40]!='.')return false;
+   char cmos[4096];assert(snprintf(cmos,sizeof(cmos),"%s/../cmos",directory)<(int)sizeof(cmos));
+   DIR *d=opendir(cmos);if(!d)return false;struct dirent *entry;bool found=false;
+   while((entry=readdir(d))!=NULL) {
+      if(entry->d_name[0]=='.')continue;
+      char identity[512];assert(snprintf(identity,sizeof(identity),"CMOS:%s",entry->d_name)<(int)sizeof(identity));
+      ArcDigest digest=arc_digest(identity,strlen(identity));
+      if(!strncmp(leaf,digest.sha1,40u)){found=true;break;}
+   }
+   assert(!closedir(d));return found;
+}
+
 static void snapshot_walk(const char *path, const char *relative,
                           bool ignore_cmos, TreeSnapshot *snapshot)
 {
@@ -1626,7 +1688,8 @@ static void snapshot_walk(const char *path, const char *relative,
          snapshot_walk(child, child_relative, ignore_cmos, snapshot);
       else if (S_ISREG(status.st_mode))
       {
-         if (ignore_cmos && !strncmp(child_relative, "arcdroid/cmos/", 14u))
+         if (ignore_cmos && (!strncmp(child_relative, "arcdroid/cmos/", 14u)||
+             (!strncmp(child_relative,"arcdroid/state-stores/",22u)&&snapshot_cmos_frontier(path,entry->d_name))))
             continue;
          uint64_t value = hash_text(child_relative) ^ hash_file(child) ^
                           (uint64_t)status.st_size;
@@ -2517,6 +2580,20 @@ static void stick_write_trace(FILE *file, const char *leg,
          (unsigned long long)events[i].guest_us);
 }
 
+#include "arculator_state_test_io.h"
+
+/* A copied core may ask for its module identity and diagnostic logger. In particular
+ * no frontend registrations, writable VFS request or CMOS preparation is allowed. */
+static bool ss1_secondary_environment(unsigned command,void *data)
+{
+   if(command==RETRO_ENVIRONMENT_GET_LIBRETRO_PATH){*(const char **)data=ss1_primary_path;return true;}
+   if(command==RETRO_ENVIRONMENT_GET_LOG_INTERFACE){
+      /* This separate library is initializing while the primary is RUNNING.
+       * Answer its read-only query without changing the primary phase. */
+      ++ss1_secondary_log_queries;((struct retro_log_callback *)data)->log=frontend_log;return true;
+   }
+   ++ss1_secondary_calls;return environment(command,data);
+}
 int main(int argc, char **argv)
 {
    bool reset_poweron = argc == 6 && !strcmp(argv[5], "--reset-poweron");
@@ -2582,6 +2659,8 @@ int main(int argc, char **argv)
    bool jfd_file_data_unavailable = false;
    bool jfd_allocation_set = false;
    bool native_hd_guest = false;
+   bool ss1_mode=argc>=6&&!strncmp(argv[5],"--ss1",5);
+   if(ss1_mode){keyboard_poll_capability=true;ss1_context_capability=strcmp(argv[5],"--ss1-compat")!=0;}
    bool cmos_exerciser = false;
    bool short_tail_guest = false;
    bool short_tail_newio_guest = false;
@@ -2752,7 +2831,7 @@ int main(int argc, char **argv)
          return 2;
       }
    }
-   else if (argc != 5 && argc != 16)
+   else if (!ss1_mode && argc != 5 && argc != 16)
    {
       print_usage(stderr, argv[0]);
       return 2;
@@ -2823,6 +2902,7 @@ int main(int argc, char **argv)
    system_dir = system_path; save_dir = save_path;
    assert(getcwd(cwd, sizeof(cwd)));
 
+   if(ss1_mode)ss1_primary_path=argv[1];
    void (*retro_set_environment)(retro_environment_t); LOAD(retro_set_environment);
    void (*retro_set_video_refresh)(retro_video_refresh_t); LOAD(retro_set_video_refresh);
    void (*retro_set_audio_sample_batch)(retro_audio_sample_batch_t); LOAD(retro_set_audio_sample_batch);
@@ -3091,7 +3171,7 @@ int main(int argc, char **argv)
          assert(arc_libretro_test_osk_visible && arc_libretro_test_session_state && arc_libretro_test_chooser_focus);
       }
    }
-   else if (!reset_poweron && !jfd_tab_step && !jfd_tab_route && !jfd_tab_set && !idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   else if (!ss1_mode && !reset_poweron && !jfd_tab_step && !jfd_tab_route && !jfd_tab_set && !idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
        !jfd_file_data_recovery && !jfd_file_data_unavailable &&
@@ -3352,6 +3432,7 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+   #include "arculator_state_harness.inc"
    #include "jfd_tab_harness.inc"
    if (reset_poweron) {
       void (*reset_state)(ArcArculatorResetState *) =
@@ -8781,6 +8862,14 @@ int main(int argc, char **argv)
    retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    phase = PHASE_RUN; retro_run();
+   /* AC-L2: a rejected replacement keeps the live primary. Preserve the
+    * separate empty-session failure/blank-frame oracle by unloading explicitly. */
+   unsigned live_refusal_files=open_files,live_refusal_dirs=open_dirs;
+   struct retro_disk_control_ext_callback live_refusal_disks=disk_control;
+   phase = PHASE_LOAD; assert(!retro_load_game(&bad_game));
+   assert(open_files==live_refusal_files && open_dirs==live_refusal_dirs &&
+          !memcmp(&disk_control,&live_refusal_disks,sizeof(disk_control)));
+   retro_unload_game();
    unsigned blank_before = video_frames;
    unsigned fault_vidc_info_before = vidc_info_log_lines;
    unsigned fault_vidc_warning_before = vidc_warning_log_lines;
@@ -8885,6 +8974,10 @@ int main(int argc, char **argv)
           !memcmp(preserved_cmos_record,
                   preserved_cmos_identity, sizeof(preserved_cmos_identity)));
    option_joystick = "Keyboard";
+   /* AC-L2: the rejected reset retained a live session. Replacing it also
+    * refuses until an explicit unload, in both gate states. */
+   phase = PHASE_LOAD; assert(!retro_load_game(&game));
+   retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    retro_unload_game();
    assert((launch_options_seen & 31u) == 31u);
@@ -10672,7 +10765,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_rows() == 3u &&
              arc_libretro_test_chooser_focus() == 0u &&
-             retro_serialize_size() == 0u &&
+             retro_serialize_size() > 0u &&
              disk_control.get_num_images() == 1u &&
              disk_control.get_image_index() == 0u &&
              !disk_control.get_eject_state() &&
@@ -10684,6 +10777,11 @@ int main(int argc, char **argv)
              !arc_engine_test_cmos_image(clean_machine_cmos) &&
              !file_exists(chooser_helper) && !file_exists(chooser_cmos) &&
              !file_exists(chooser_choice));
+      { uint8_t refused[64];memset(refused,0xa7,sizeof(refused));
+        bool (*save_state)(void *,size_t)=dlsym(module,"retro_serialize");
+        bool (*load_state)(const void *,size_t)=dlsym(module,"retro_unserialize");
+        assert(save_state&&load_state&&!save_state(refused,sizeof(refused))&&!load_state(refused,sizeof(refused)));
+        for(unsigned i=0;i<sizeof(refused);++i)assert(refused[i]==0xa7); }
       retro_cheat_set(0u, true, "invented-code");
       retro_cheat_reset();
       assert(arc_libretro_test_session_state() == 2u);
@@ -11878,7 +11976,8 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
       assert(arc_engine_test_drive_media(1u, NULL, NULL));
       option_launch = "app2";
-      fault_write_substring = ".tmp";
+      char binding_candidate[4096];snprintf(binding_candidate,sizeof(binding_candidate),"%s.tmp",explicit_binding);
+      fault_write_substring = binding_candidate;
       warnings = launch_warning_osd_calls;
       retro_reset();
       assert(!fault_write_substring &&
