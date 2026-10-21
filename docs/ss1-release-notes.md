@@ -20,12 +20,15 @@ RiscPC states remain unavailable. The launch chooser reports the admitted bound
 but refuses save/load until guest execution begins. Load New Disc may append
 slots up to the 32-disc limit without changing the fixed buffer. Save/load,
 rewind and single-instance run-ahead remain available when the appended image
-fits the session's media envelope; the existing ordered-media identity checks
-still apply. A replacement or appended image exceeding that envelope keeps
-running while state operations refuse with a timed notice. Save- and load-side
-notices are deduplicated per cause, including while rewind is held. A successful
-load rearms the recoverable media and pending-change notices; other state
-refusal latches reset only with a new content session.
+fits the session's media envelope. Save states and rewind history from before
+"Load New Disc" do not load after it, because the ordered media set has changed
+(the existing SS-1 behavior). A replacement or appended image exceeding that
+envelope keeps running while state operations refuse with a timed notice. Save-
+and load-side notices are deduplicated per cause, including while rewind is held. A successful
+load rearms the media, pending-change and mismatching-state notices, so a later
+mismatching manual load gets its notice and log reason. Repeated failures while
+rewind is held give one notice until a successful load. Other refusal latches
+reset with a new content session.
 
 States require the same core build, platform/ABI, machine, firmware, ordered
 media and options. Cross-version migration is unsupported. Mismatches preserve

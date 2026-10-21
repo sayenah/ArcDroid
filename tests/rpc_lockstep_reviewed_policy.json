@@ -6613,9 +6613,9 @@
       },
       "::arc_state_load_noticed": {
         "declaration": "static bool arc_state_load_noticed",
-        "citation": "docs/handoff.md:R-SS1b-2",
+        "citation": "docs/handoff.md:R-SS1b-3",
         "classification": "host-only/excluded",
-        "reason": "R-SS1b-2: host-only session latch for failed state validation, including held rewind at the oldest capture; never rewound; reset on session release."
+        "reason": "R-SS1b-3: host-only failed-load notice latch, including held rewind at the oldest capture; cleared on successful load or session release, never serialized."
       }
     },
     "tests/arc_test_plan.c": {

@@ -1103,16 +1103,19 @@ remain active. Linux sanitizer jobs and every non-ASan build still execute
 the full image unload/reload sequence. The separate secondary-route test is
 unchanged. No production loader behavior or sanitizer memory check is changed.
 
-## SS-1b: session follow-ups (run B, R-SS1b-2)
+## SS-1b: session follow-ups (runs B/C, R-SS1b-2/R-SS1b-3)
 
 Capture's unsupported-mode, media-budget and pending-log notices each have a
 host-only per-cause latch. Save and load share the media-budget latch. Invalid
-state loads have a separate session latch, covering the initial pre-first-frame
+state loads have a separate host latch, covering the initial pre-first-frame
 capture too. Held rewind repeats the oldest state on every frame even after
 reaching the end of the ring; it must not repeat any refusal notice or its
 associated diagnostic. Rewind and reset do not restore these host latches.
-A successful load clears the media-budget and pending-log latches because it
-recovers those causes; a subsequent failure may announce that cause once again.
+A successful load clears the media-budget, pending-log and invalid-load latches;
+a subsequent failure may announce its cause and log reason once again. Thus an
+early held rewind does not silence a later mismatching manual load after a
+successful restore. Repeated failed loads at the oldest entry have no successful
+load between them, and still give only one notice during that hold.
 Session release clears every latch. The core cannot distinguish a manual load
 from a rewind load, so both obey the same notice rules.
 
@@ -1126,9 +1129,9 @@ latches are unchanged.
 
 States captured before the first frame still fail transactional load validation.
 The public regression checks direct load and held rewind to that first capture,
-one notice in the session, unchanged canonical guest state and stores, and exact
-subsequent continuation. The CMOS cursor load check accepts every non-negative
-`int`, including values above 65,535, without masking or canonicalization. RAM
+one notice until a successful load, unchanged canonical guest state and stores,
+and exact subsequent continuation. The CMOS cursor load check accepts every
+non-negative `int`, including values above 65,535, without masking or canonicalization. RAM
 accesses mask its index, but the engine's unmasked `cmos.addr < 0x10` comparison
 in `cmos.c:333` makes masking the cursor itself observably different. The engine
 can produce large cursors through sequential transfers, so a load-only ceiling
@@ -1149,8 +1152,11 @@ boundary headers and checks an unchanged copied tree before precise omissions.
 Item (6)'s admitted-slot tightening is withdrawn. The fixed session capacity
 again reserves metadata for all 32 slots, exactly as SS-1 did. RetroArch's Load
 New Disc appends a slot; it need not remove slots or reload content to recover
-state features. Raw media still reserve every possible dirty byte and sector
-index across the largest admitted writable image, JFD every eligible replacement
+state features. Save states and rewind history from before "Load New Disc" do
+not load after it: the ordered media set has changed, as in SS-1. Fresh captures
+of the expanded media set remain usable within the existing envelope.
+Raw media still reserve every possible dirty byte and sector index across the
+largest admitted writable image, JFD every eligible replacement
 byte and allowed 1,024-byte creation, and native IDE its full image and indexes.
 These envelopes cannot shrink to current dirty bytes: normal guest writes can
 fill them. Only one mutable floppy graph is live; inactive JFD envelopes remain

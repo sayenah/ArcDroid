@@ -9438,9 +9438,9 @@ RETRO_API bool retro_unserialize(const void *data,size_t size)
       arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
    }
    if(okay) {
-      /* A successful rollback recovers media/queued changes. Permit one new
-       * warning if either recoverable cause occurs again after that load. */
-      arc_state_media_noticed=arc_state_pending_noticed=false;
+      /* A successful load recovers from prior refusals. Permit a new warning
+       * if a later load mismatches or media/queued changes fail again. */
+      arc_state_media_noticed=arc_state_pending_noticed=arc_state_load_noticed=false;
       arc_state_speculation=arc_state_rollback_failed=false;
       arc_platform_video_rebuild();
       memset(arc_frame,0,sizeof(arc_frame));memset(arc_audio_frame,0,sizeof(arc_audio_frame));

@@ -13,7 +13,7 @@ p = argparse.ArgumentParser(description=__doc__)
 for name in ('harness', 'core', 'fixtures', 'output'):
     p.add_argument(name, type=Path)
 p.add_argument('--mode', choices=('notices', 'session-poll', 'first-frame',
-                                 'cmos-cursor', 'capacity', 'held-media', 'retained-poll'), required=True)
+                                 'cmos-cursor', 'capacity', 'held-media', 'retained-poll', 'load-rearm'), required=True)
 a = p.parse_args()
 for name in ('harness', 'core', 'fixtures', 'output'):
     setattr(a, name, getattr(a, name).resolve())

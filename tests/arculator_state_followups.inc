@@ -153,7 +153,7 @@ if(!strcmp(argv[5],"--ss1-first-frame")) {
    retro_run();assert(retro_serialize(before,n));
    retro_run();assert(retro_serialize(latest,n)&&retro_unserialize(before,n));
    notices=total_osd_calls;native=ss1_native_mutations;
-   assert(!retro_unserialize(initial,n)&&total_osd_calls==notices&&ss1_native_mutations==native);
+   assert(!retro_unserialize(initial,n)&&total_osd_calls==notices+1u&&ss1_native_mutations==native);
    assert(retro_serialize(after,n)&&!memcmp(before,after,n));
    retro_run();assert(retro_serialize(after,n)&&!memcmp(latest,after,n));
    /* 1.22.2 pops its oldest block again on every held frame, even when
@@ -173,7 +173,53 @@ if(!strcmp(argv[5],"--ss1-first-frame")) {
       if(!held)assert(!memcmp(initial,after,n));retro_run();
    }
    free(initial);free(before);free(after);free(latest);retro_unload_game();
-   puts("SS1b first-frame: held rewind at oldest capture refuses once per session, unchanged guest/stores and exact continuation");continue;
+   puts("SS1b first-frame: held rewind at oldest capture refuses once until a successful load, unchanged guest/stores and exact continuation");continue;
+}
+if(!strcmp(argv[5],"--ss1-load-rearm")) {
+   size_t n=retro_serialize_size();uint8_t *oldest=malloc(n),*saved=malloc(n),*again=malloc(n),*bad=malloc(n);
+   assert(oldest&&saved&&again&&bad);
+   for(unsigned append=0;append<2u;++append) {
+      if(append){phase=PHASE_LOAD;assert(retro_load_game(&game));phase=PHASE_RUN;}
+      assert(retro_serialize(oldest,n)); /* Initial pre-first-frame capture. */
+      retro_run();assert(retro_serialize(saved,n));retro_run();
+      if(append) {
+         /* Use a valid pre-append capture for the ordered-media refusal. */
+         memcpy(oldest,saved,n);char path[4096];
+         assert(snprintf(path,sizeof(path),"%s/rearm-appended.adf",data_root)<(int)sizeof(path));copy_file(argv[3],path);
+         struct retro_game_info image={.path=path};unsigned slot=disk_control.get_num_images();
+         assert(disk_control.set_eject_state(true)&&disk_control.add_image_index());
+         assert(disk_control.replace_image_index(slot,&image)&&disk_control.set_image_index(slot)&&disk_control.set_eject_state(false));
+      }
+      /* 1.22.2 holds at the oldest block: load then run, with no successful
+       * load between these failures. Extra saves only observe canonical state. */
+      for(unsigned held=0;held<32u;++held) {
+         assert(retro_serialize(saved,n));unsigned notices=total_osd_calls,logs=ss1_state_refusal_logs;
+         uint64_t native=ss1_native_mutations;
+         assert(!retro_unserialize(oldest,n)&&total_osd_calls==notices+(held==0u));
+         assert(ss1_state_refusal_logs==logs+(held==0u)&&ss1_native_mutations==native);
+         assert(retro_serialize(again,n)&&!memcmp(saved,again,n));retro_run();
+      }
+      /* Release, play and successfully restore a current state. The subsequent
+       * mismatching manual load must announce its own notice and log reason. */
+      for(unsigned frame=0;frame<8u;++frame)retro_run();
+      assert(retro_serialize(saved,n));retro_run();
+      unsigned notices=total_osd_calls,logs=ss1_state_refusal_logs;
+      assert(retro_unserialize(saved,n)&&retro_serialize(again,n)&&!memcmp(saved,again,n));
+      assert(total_osd_calls==notices&&ss1_state_refusal_logs==logs);
+      memcpy(bad,saved,n);size_t at=ss1_record(bad,"identity.machine",5);assert(at);
+      bad[at+24]^=0x40u;ss1_checksum(bad);
+      for(unsigned attempt=0;attempt<32u;++attempt) {
+         notices=total_osd_calls;logs=ss1_state_refusal_logs;uint64_t native=ss1_native_mutations;
+         assert(!retro_unserialize(bad,n)&&total_osd_calls==notices+(attempt==0u));
+         assert(ss1_state_refusal_logs==logs+(attempt==0u)&&ss1_native_mutations==native);
+         assert(strstr(last_message,"does not match the running session"));
+         assert(strstr(ss1_state_refusal_reason,"identity.machine"));
+         assert(retro_serialize(again,n)&&!memcmp(saved,again,n));
+      }
+      assert(retro_serialize_size()==n);retro_unload_game();
+   }
+   free(oldest);free(saved);free(again);free(bad);
+   puts("SS1b load rearm: session-start and pre-append holds notify once; successful restore rearms later manual mismatch and reason");continue;
 }
 if(!strcmp(argv[5],"--ss1-cmos-cursor")) {
    retro_run();size_t n=retro_serialize_size();uint8_t *saved=malloc(n),*edited=malloc(n),*again=malloc(n);
