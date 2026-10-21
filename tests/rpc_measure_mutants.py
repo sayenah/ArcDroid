@@ -61,7 +61,7 @@ if args.group=='profile':
 header=(root/'engine/rpc/rpc_exercise.h').read_text()
 import re
 names=re.findall(r' X\((\w+)\)',header)
-if len(names)!=40 or names[0]!='lookup_access_empty' or names[-1]!='rational_cheap':raise RuntimeError('counter schema/fixture mismatch')
+if len(names)!=45 or names[0]!='lookup_access_empty' or names[-1]!='l1_linear_fallback':raise RuntimeError('counter schema/fixture mismatch')
 # The first X follows a newline rather than a leading space; the regex still
 # captures it because each declaration is indented by one space.
 for index,name in enumerate(names):

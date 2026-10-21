@@ -36,6 +36,10 @@ with tempfile.TemporaryDirectory(prefix='arc-build-identity-') as directory:
         dest = repo / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / relative, dest)
+    # Exercise a transitive local import as well as the classifier itself.
+    classifier=repo/'tools/check-rpc-artifacts.py'
+    write_lf(classifier,classifier.read_text()+'\nimport stage_import_probe\n')
+    write_lf(repo/'tools/stage_import_probe.py','# GPL-2.0-only; authored transitive import fixture.\n')
     write_lf(repo / 'CMakeLists.txt', '''# SPDX-License-Identifier: GPL-2.0-only
 cmake_minimum_required(VERSION 3.20)
 project(IdentityProbe C)
@@ -70,7 +74,7 @@ static void (*arc_log)(int, const char *, ...) = log_line;
 ''' + frontend[frontend.index('__attribute__((used)) static const char arc_rpc_build_descriptor'):logger.start()] + logger.group(0) + '\nint main(void) { arc_build_identity(); }\n')
     write_lf(repo / 'tracked','one\n')
     # Ignore build products just as the project does, including untracked files.
-    write_lf(repo / '.gitignore','ignored\nbuild/\n')
+    write_lf(repo / '.gitignore',(root/'.gitignore').read_text()+'\nignored\n')
     raw_crlf=b'/* GPL-2.0-only; authored CRLF fixture. */\r\n'
     (repo / 'raw-crlf.c').write_bytes(raw_crlf)
     run('git', 'init', '-q', cwd=repo)
@@ -124,9 +128,11 @@ static void (*arc_log)(int, const char *, ...) = log_line;
         manifest.write_text(json.dumps({'targets':[{'target':'probe','file':executable.name,
                                                    'gate_open':0,'authored':0}]}))
         output=source/'build/public-identity'
-        result=subprocess.run([sys.executable,'-B',str(source/'tools/stage-rpc-artifacts.py'),
+        stage_env=dict(os.environ if env is None else env)
+        for key in ('PYTHONDONTWRITEBYTECODE','PYTHONPYCACHEPREFIX'):stage_env.pop(key,None)
+        result=subprocess.run([sys.executable,str(source/'tools/stage-rpc-artifacts.py'),
             '--input',str(payload),'--output',str(output),'--manifest',str(manifest)],
-            cwd=source,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=60)
+            cwd=source,env=stage_env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=60)
         if failure:
             require(result.returncode!=0 and failure in result.stdout,result.stdout)
         else:
@@ -135,6 +141,48 @@ static void (*arc_log)(int, const char *, ...) = log_line;
             require(record=={'revision':expected,'url':'https://github.com/sayenah/ArcDroid/tree/'+expected,
                              'archive':'https://github.com/sayenah/ArcDroid/archive/'+expected+'.zip'},record)
             require(json.loads((output/'CLASSIFIED.json').read_text())['source']==record,'classified source differs')
+
+    def stage_windows_order(source,executable,env):
+        stage_env=dict(env)
+        for key in ('PYTHONDONTWRITEBYTECODE','PYTHONPYCACHEPREFIX'):stage_env.pop(key,None)
+        require(not run('git','status','--porcelain',cwd=source,env=stage_env),'clone is not clean before staging')
+        incoming=source/'build/windows';package=incoming/'retroarch-package';package.mkdir(parents=True)
+        name='rpc-stage-probe.exe'
+        shutil.copyfile(executable,incoming/name);shutil.copyfile(executable,package/name)
+        write_lf(package/'authored.adf','authored package media\n')
+        manifest=incoming/'rpc-artifact-targets.json'
+        manifest.write_text(json.dumps({'targets':[{'target':'probe','file':name,'gate_open':0,'authored':0}]}))
+        for payload,output,extra in ((incoming,'public-diagnostics',['--diagnostics']),
+                                     (package,'public-retroarch-input',[])):
+            command=[sys.executable,str(source/'tools/stage-rpc-artifacts.py'),'--input',str(payload),
+                     '--output',str(source/'build'/output),'--manifest',str(manifest),*extra]
+            result=run(*command,cwd=source,env=stage_env)
+            require((source/'build'/output/name).is_file(),'staging omitted the diagnostic probe')
+            require(not list(source.rglob('__pycache__')),'staging created bytecode despite ignored caches')
+            require(not run('git','status','--porcelain',cwd=source,env=stage_env),'staging dirtied the clone')
+            print(f'Windows-order {output}: {result}; no bytecode; git status --porcelain empty')
+        require((source/'build/public-retroarch-input/authored.adf').is_file(),'package media omitted')
+        # Ignore only caches, at every depth; an ordinary tools source remains
+        # visible; tracked edits and untracked source must still refuse.
+        for relative in ('__pycache__/probe.pyc','tools/__pycache__/probe.pyc',
+                         'tests/nested/__pycache__/probe.pyc'):
+            cache=source/relative;cache.parent.mkdir(parents=True,exist_ok=True);cache.write_bytes(b'authored cache')
+            require(run('git','check-ignore',relative,cwd=source,env=stage_env)==relative,'cache not ignored: '+relative)
+        require(not run('git','status','--porcelain',cwd=source,env=stage_env),'ignored cache dirtied clone')
+        for relative in ('tracked','tools/x.py'):
+            path=source/relative;original=path.read_bytes() if path.exists() else None
+            write_lf(path,'# GPL-2.0-only; genuine source edit\n')
+            for extra in ([],['--diagnostics']):
+                refused=subprocess.run([sys.executable,str(source/'tools/stage-rpc-artifacts.py'),
+                    '--input',str(incoming),'--output',str(source/'build/public-refused'),
+                    '--manifest',str(manifest),*extra],cwd=source,env=stage_env,text=True,
+                    stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=60)
+                require(refused.returncode!=0 and 'requires an exact clean source checkout' in refused.stdout,refused.stdout)
+                require(not (source/'build/public-refused').exists(),'dirty refusal wrote a stage')
+            if original is None:path.unlink()
+            else:path.write_bytes(original)
+            print('Windows-order source dirt refused: '+relative+' (package and diagnostics)')
+        require(not run('git','status','--porcelain',cwd=source,env=stage_env),'refusal probe left source dirt')
 
     # GitHub checks out a synthetic two-parent PR merge, not the branch head.
     run('git','branch','event-topic',second,cwd=repo)
@@ -176,6 +224,15 @@ static void (*arc_log)(int, const char *, ...) = log_line;
     for job in ('windows','windows-retroarch'):
         section=re.search(r'(?ms)^  '+job+r':\n(.*?)(?=^  [\w-]+:|\Z)',workflow)
         require(section is not None,'missing Windows job')
+        # The MSYS2 shell does not inherit the runner's Git/tool PATH. Both
+        # jobs build exact identities and inspect PE objects before consuming
+        # them, so each must provision its own build and guard tools.
+        installs=re.findall(r'^          install: (.+)$',section[1],re.M)
+        require(len(installs)==1,'missing unambiguous MSYS2 package list: '+job)
+        required={'git',*('mingw-w64-ucrt-x86_64-'+tool for tool in
+                         ('binutils','gcc','cmake','ninja','python'))}
+        missing=required-set(installs[0].split())
+        require(not missing,job+' lacks build/guard packages: '+', '.join(sorted(missing)))
         for key,value in policy.items():
             require(re.search(r'^      '+key+r": ['\"]?"+value+r"['\"]?\s*$",section[1],re.M),
                     'missing pre-checkout Windows Git policy: '+key)
@@ -212,6 +269,7 @@ static void (*arc_log)(int, const char *, ...) = log_line;
     clone_binary=clone_build/binary.name
     require('commit='+first+' target=' in run(str(clone_binary),cwd=preserved,env=ci_env),
             'CI checkout embedded a dirty or unrelated identity')
+    stage_windows_order(preserved,clone_binary,ci_env)
     stage_core(preserved,clone_binary,run('git','rev-parse','HEAD',cwd=preserved,env=ci_env),ci_env)
     (preserved/'tracked').write_bytes(b'genuine CRLF content edit\r\n')
     stage_core(preserved,clone_binary,first,ci_env,failure='requires an exact clean source checkout')

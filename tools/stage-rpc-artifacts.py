@@ -2,6 +2,10 @@
 """Fresh, licensed CI stage; only a successful classification is publishable.
 SPDX-License-Identifier: GPL-2.0-only
 """
+import sys
+# Staging must leave source untouched, including transitive classifier imports.
+sys.dont_write_bytecode=True
+
 import argparse
 import importlib.util
 import json

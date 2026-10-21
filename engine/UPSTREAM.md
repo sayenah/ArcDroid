@@ -304,3 +304,17 @@ The low-rate 1-bpp loop is bounded to its existing 32-pixel host scanout,
 so it never shifts a 32-bit word by 32–62 bits. Release disassembly verifies
 the preserved Mac behavior; no attempt to redesign this legacy pixel path is
 part of SS-1.
+
+AY-1 (2026-10-19) updates `src/cmos.c`/`src/cmos.h`: the PCF8583 date
+register includes the captured local clock's year modulo four. A session-only
+year overlay sets C0/C1 and recomputes the live checksum before the first
+instruction; guest-write tracking keeps that host patch out of persistence
+until the guest writes each byte, and survives reset. The backend selects
+firmware classes; frontend reconstruction supplies the retained live year
+and rebases the overlay on the persisted seed. The A500 kernel also reads
+C0/C1 from EEPROM; its PCF8573 branch receives no hardware year bits. The clock's
+month indexing and Gregorian February length are corrected so December
+rollover advances the RTC year safely. A fixed calendar clock exists only
+under ARCDROID_TEST_FAULTS; shipping builds retain the host local clock.
+The calendar additions follow the upstream CRLF line endings and tab
+indentation; their formatting correction changes no behavior.

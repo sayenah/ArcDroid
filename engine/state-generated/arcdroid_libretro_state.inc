@@ -2,6 +2,8 @@
 #include "arc_state.h"
 void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
 {
+   arc_state_region(s,"libretro/arcdroid_libretro.c:arc_cmos_session_year_valid",&arc_cmos_session_year_valid,sizeof(arc_cmos_session_year_valid));
+   arc_state_region(s,"libretro/arcdroid_libretro.c:arc_cmos_session_year",&arc_cmos_session_year,sizeof(arc_cmos_session_year));
    arc_state_region(s,"libretro/arcdroid_libretro.c:arc_kind",&arc_kind,sizeof(arc_kind));
    arc_state_region(s,"libretro/arcdroid_libretro.c:arc_frame",&arc_frame,sizeof(arc_frame));
    arc_state_region(s,"libretro/arcdroid_libretro.c:arc_video_pitch",&arc_video_pitch,sizeof(arc_video_pitch));
@@ -150,6 +152,10 @@ void arc_state_visit_libretro_arcdroid_libretro(ArcState *s)
    arc_state_region(s,"libretro/arcdroid_libretro.c:arc_riscpc_notice_shown",&arc_riscpc_notice_shown,sizeof(arc_riscpc_notice_shown));
    arc_state_target(s,&arc_inputs,ARC_STATE_REFERENCE_INPUT);
    if (!arc_state_pass(s)) return;
+   arc_state_object(s,"libretro/arcdroid_libretro.c:arc_cmos_session_year_valid");
+   arc_state_value(s,&arc_cmos_session_year_valid,sizeof(arc_cmos_session_year_valid));
+   arc_state_object(s,"libretro/arcdroid_libretro.c:arc_cmos_session_year");
+   arc_state_value(s,&arc_cmos_session_year,sizeof(arc_cmos_session_year));
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_kind");
    arc_state_value(s,&(arc_kind),sizeof(arc_kind));
    arc_state_object(s,"libretro/arcdroid_libretro.c:arc_frame");

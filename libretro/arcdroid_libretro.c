@@ -208,6 +208,9 @@ static bool arc_boot_recovery_phase;
 static const char *arc_boot_recovery_action;
 static const char *arc_boot_watch_override;
 static ArcBootWatchState arc_boot_last_state;
+/* AY-1: a frontend reset/recovery can reconstruct the engine in this session. */
+static bool arc_cmos_session_year_valid;
+static uint8_t arc_cmos_session_year[2];
 static ArcBootObservation arc_boot_start_stamp;
 static bool arc_boot_stamp_ready;
 static bool arc_boot_record_hit;
@@ -425,6 +428,14 @@ static bool arc_state_speculation,arc_state_rollback_failed;
 static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES];
 
 #if defined(ARCDROID_TEST_FAULTS)
+/* AY-1 I-1: exact ordinary-load epoch, queried only by the fault-test harness. */
+static uint64_t arc_test_rpc_load_epoch;
+RETRO_API unsigned arc_libretro_test_rpc_load_year(void)
+{
+   unsigned year=0;
+   (void)arc_engine_rpc_calendar_year(arc_test_rpc_load_epoch,&year);
+   return year;
+}
 static const ArcRpcFirmwareFingerprint *arc_test_rpc_catalogue;
 static size_t arc_test_rpc_catalogue_count;
 RETRO_API void arc_libretro_test_rpc_catalogue(const ArcRpcFirmwareFingerprint *table, size_t count)
@@ -1311,6 +1322,11 @@ static void arc_release_session(void)
    arc_helper_path[0] = '\0';
    arc_choice_path[0] = '\0';
    arc_cmos_last_written_valid = false;
+   arc_cmos_session_year_valid = false;
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_rpc_load_epoch=0;
+#endif
+   memset(arc_cmos_session_year,0,sizeof(arc_cmos_session_year));
    arc_cmos_ignored_logged = false;
    arc_cmos_ignored_attempts = 0u;
    arc_cmos_ignored_changes = 0u;
@@ -1331,6 +1347,7 @@ static void arc_sync_cmos(void)
    }
    else
       arc_engine_cmos(payload);
+   arc_cmos_session_year_valid=arc_engine_cmos_year(arc_cmos_session_year);
    arc_cmos_normalise_payload(payload, arc_cmos_policy_os(), machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
 }
@@ -7052,6 +7069,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
     * power-on release. Frontend input is sampled again on the next run. */
    arc_input_reset(&arc_inputs);
    arc_power_on_shift = false;
+   arc_engine_cmos_resume_year(arc_cmos_session_year_valid?arc_cmos_session_year:NULL);
    if (
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
@@ -7060,6 +7078,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
                          machine_cmos, locked_cmos_mask,
                          arc_cmos_ignored_write, NULL, error, error_size))
       return false;
+   arc_cmos_session_year_valid=arc_engine_cmos_year(arc_cmos_session_year);
    bool riscos3 = arc_cmos_policy_riscos3();
    arc_power_on_shift = arc_cmos_power_on_shift(arc_cmos_policy_os(), machine_cmos);
    arc_engine_power_on_arm(&arc_inputs, arc_power_on_shift);
@@ -7717,6 +7736,9 @@ static int arc_rpc_check_selection(const char *firmware_dir,bool ordinary,const 
       request.key.model=(unsigned)rpc_selection.model-1;request.key.layout=rpc_selection.os==ARC_RPC_OS_350?1:rpc_selection.os==ARC_RPC_OS_360?2:3;
       snprintf(request.key.content,sizeof(request.key.content),"%s",arc_content_digest.sha1);
       if(!arc_riscpc_route_epoch(&request.epoch)){free(firmware);arc_release_session();arc_riscpc_host_load_failure(&ops,"N-21","The local clock could not be used for RiscPC settings. Check the system clock, then close and reload this content.");return -1;}
+#if defined(ARCDROID_TEST_FAULTS)
+      arc_test_rpc_load_epoch=request.epoch;
+#endif
       arc_plan.disk_writes=arc_core_options.disk_writes;
       arc_rpc_host=arc_riscpc_host_begin(&request,&ops,error,sizeof(error));free(firmware);
       if(!arc_rpc_host){arc_release_session();return -1;}
@@ -9612,4 +9634,6 @@ bool arc_libretro_test_ss1_store_status(uint64_t out[4])
 
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_libretro_test_ss1_persist_cmos(void) { arc_persist_cmos(); }
+RETRO_API void arc_libretro_test_ss1_poison_calendar_cache(void)
+{ arc_cmos_session_year_valid=false;memset(arc_cmos_session_year,0xaa,sizeof(arc_cmos_session_year)); }
 #endif

@@ -15,6 +15,12 @@ if(ARCDROID_RPC_AUTHORED_ROUTE AND NOT BUILD_TESTING)
 endif()
 
 option(ARCDROID_RPC_CROSSCHECK "Build test-only RPC canonical field cross-check reporting" OFF)
+option(ARCDROID_RPC_L1_VARIANTS "Build separately named L1 measurement variants" OFF)
+set(ARCDROID_RPC_L1_TEST_GATE "" CACHE STRING "Test-core-only L1 gate: empty=default, 0=off, 1=hint, 2=mirror, 3=way0-hint, 4=way0-mirror")
+option(ARCDROID_RPC_L1_POISON "Poison test-core L1 hints (never mirrors)" OFF)
+if(NOT ARCDROID_RPC_L1_TEST_GATE MATCHES "^([01234])?$")
+  message(FATAL_ERROR "ARCDROID_RPC_L1_TEST_GATE must be empty or 0 through 4")
+endif()
 option(ARCDROID_RPC_LOCKSTEP "Build the non-installed RPC lockstep core (host only)" OFF)
 option(ARCDROID_RPC_LOCKSTEP_LOCAL_TESTS "Register the 75 local lockstep golden-density checks" ON)
 if(ARCDROID_RPC_LOCKSTEP)
@@ -263,6 +269,14 @@ function(arcdroid_add_libretro target shipping)
     $<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>)
   target_compile_options(${target}_rpc PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-fno-strict-aliasing;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  if(NOT shipping AND NOT target MATCHES "rpcmeasure")
+    if(NOT ARCDROID_RPC_L1_TEST_GATE STREQUAL "")
+      target_compile_definitions(${target}_rpc PRIVATE ARCDROID_RPC_L1_GATE=${ARCDROID_RPC_L1_TEST_GATE})
+    endif()
+    if(ARCDROID_RPC_L1_POISON)
+      target_compile_definitions(${target}_rpc PRIVATE ARCDROID_RPC_L1_POISON=1)
+    endif()
+  endif()
   set_target_properties(${target}_rpc PROPERTIES POSITION_INDEPENDENT_CODE ON)
   if(ARCDROID_SANITIZERS)
     target_link_libraries(${target}_rpc PRIVATE arcdroid_sanitizer_compile)
@@ -989,6 +1003,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME jfd-engine-reader COMMAND jfd_reader_tests)
   add_executable(cmos_device_tests tests/cmos_device_tests.c engine/arculator/src/cmos.c)
+  target_compile_definitions(cmos_device_tests PRIVATE ARCDROID_TEST_FAULTS=1)
   target_include_directories(cmos_device_tests PRIVATE
     engine engine/compat engine/arculator/src)
   target_compile_options(cmos_device_tests PRIVATE
@@ -998,6 +1013,49 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME cmos-device-bus COMMAND cmos_device_tests)
+  add_executable(arc_calendar_test tests/arc_calendar_test.c)
+  target_include_directories(arc_calendar_test PRIVATE core engine libretro/include)
+  target_compile_definitions(arc_calendar_test PRIVATE RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(arc_calendar_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(arc_calendar_test PRIVATE ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arc_calendar_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME cmos-session-calendar COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arc_calendar_fixture.py"
+    $<TARGET_FILE:arc_calendar_test> $<TARGET_FILE:arcdroid_libretro_test>)
+  set_tests_properties(cmos-session-calendar PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  add_executable(calendar_launch_test tests/calendar_launch_test.c)
+  target_include_directories(calendar_launch_test PRIVATE core libretro/include)
+  target_compile_definitions(calendar_launch_test PRIVATE RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(calendar_launch_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(calendar_launch_test PRIVATE ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(calendar_launch_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME cmos-calendar-launch COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/calendar_launch_test.py"
+    $<TARGET_FILE:calendar_launch_test> $<TARGET_FILE:arcdroid_libretro_test>
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  set_tests_properties(cmos-calendar-launch PROPERTIES TIMEOUT 180)
+  add_test(NAME arculator-state-calendar COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_calendar.py"
+    $<TARGET_FILE:calendar_launch_test> $<TARGET_FILE:arcdroid_libretro_test>
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  set_tests_properties(arculator-state-calendar PROPERTIES TIMEOUT 900 LABELS slow)
+
+  add_test(NAME rpc-calendar-mutants COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/calendar_mutants.py"
+    "${CMAKE_C_COMPILER}" "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(rpc-calendar-mutants PROPERTIES TIMEOUT 180)
+  if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-calendar-session-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/arc_calendar_session_mutants.py"
+      "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:arc_calendar_test>
+      $<TARGET_FILE:calendar_launch_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+    set_tests_properties(rpc-calendar-session-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  endif()
+
   add_executable(jfd_controller_tests
     tests/jfd_controller_tests.c
       engine/arculator/src/wd1770.c
@@ -2839,6 +2897,8 @@ if(TARGET arcdroid_libretro_test)
   endif()
 
   if(ARCDROID_RPC_CROSSCHECK)
+    target_compile_definitions(arcdroid_libretro_test_rpc PRIVATE ARCDROID_RPC_CROSSCHECK=1)
+    target_sources(arcdroid_libretro_test_rpc PRIVATE engine/rpc/rpc_crosscheck.c)
     target_compile_definitions(arcdroid_rpcplan_libretro_rpc PRIVATE ARCDROID_RPC_CROSSCHECK=1)
     target_sources(arcdroid_rpcplan_libretro_rpc PRIVATE engine/rpc/rpc_crosscheck.c)
     add_executable(rpc_crosscheck_test tests/rpc_crosscheck_test.c engine/rpc/rpc_crosscheck.c)
@@ -3032,6 +3092,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   # Keep the original session bound; the blanket 1200 s merge override was
   # unsupported by a duration measurement. The W4 session bound is unchanged.
   set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  add_test(NAME rpc-session-calendar-range COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+    $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar-range)
+  set_tests_properties(rpc-session-calendar-range PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   if(ARCDROID_SANITIZERS)
     # Keep every pair/year/client and all 200 switches. Debug sanitizer factory
     # generation is much slower; independent process-owned fixtures can shard.
@@ -3039,7 +3103,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       add_test(NAME rpc-session-calendar-${calendar_case} COMMAND "${Python3_EXECUTABLE}" -B
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
         $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" calendar-${calendar_case})
-      set_tests_properties(rpc-session-calendar-${calendar_case} PROPERTIES TIMEOUT 900)
+      set_tests_properties(rpc-session-calendar-${calendar_case} PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
     endforeach()
   else()
     add_test(NAME rpc-session-calendar COMMAND "${Python3_EXECUTABLE}" -B
@@ -3536,6 +3600,8 @@ if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
 endif()
 include(cmake/rpc-lockstep.cmake)
 
+include(cmake/rpc-l1.cmake)
+
 # R3d-3: store handles require the ownership primitive in every build class.
 get_property(rpc_owner_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(rpc_owner_target IN LISTS rpc_owner_targets)
@@ -3549,6 +3615,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_test(NAME rpc-retroarch-notice-privacy COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_rpc_privacy_test.py")
   set_tests_properties(rpc-retroarch-notice-privacy PROPERTIES TIMEOUT 30)
+  add_test(NAME rpc-retroarch-windows-config COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/retroarch_windows_config_test.py")
+  set_tests_properties(rpc-retroarch-windows-config PROPERTIES TIMEOUT 30)
   add_test(NAME rpc-host-source-guard COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_host_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}")
   set_tests_properties(rpc-host-source-guard PROPERTIES TIMEOUT 30)
@@ -3797,6 +3866,7 @@ if(ARCDROID_RPC_AUTHORED_ROUTE)
     add_test(NAME rpc-route-authored COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_test.py"
       $<TARGET_FILE:rpc_route_harness> $<TARGET_FILE:arcdroid_rpcroute_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}" "$<BOOL:${ARCDROID_RPC_ORDINARY_LOAD}>" $<TARGET_FILE:arcdroid_rpcroute_fault_libretro>)
     set_tests_properties(rpc-route-authored PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
+    add_test(NAME rpc-route-discarded-paths COMMAND rpc_route_harness --check-discarded-paths)
     add_test(NAME rpc-route-matrix COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_route_matrix_test.py" "${CMAKE_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:rpc_route_harness> "${RPC_ROUTE_FIXTURES}" "${FIXTURE_DIR}")
     set_tests_properties(rpc-route-matrix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE LABELS slow)
     if(ARCDROID_SANITIZERS)

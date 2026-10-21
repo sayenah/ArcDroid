@@ -14,6 +14,8 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid chooser application ROM", 524288u, 0x278555b5, "32f7d800e65fbd26325241b874f9279021c465a9"),
    C(ARC_OS_TEST, "ArcDroid D-format helper visual ROM", 524288u, 0xeeea625e, "13fc935664e628a9c751f3b280346fab60285ccf"),
 #if defined(ARCDROID_TEST_FAULTS)
+   /* Authored IOC calendar reader; private firmware is never added here. */
+   C(ARC_OS_RISCOS_311, "ArcDroid authored calendar ROM", 524288u, 0xb51b1687, "48bb9485af0ff10c1bab4f6d455a30a8f5633b45"),
    C(ARC_OS_TEST, "ArcDroid jfd-guard-data ROM", 524288u, 0xa8c7865b, "6d94360cbe5a548dc7080b6222e0e53119235fec"),
    C(ARC_OS_TEST, "ArcDroid jfd-guard-invalid ROM", 524288u, 0x40ffc2d9, "777e5667ecf0ce06c3ab2ba0a5f6aa5f500d64e0"),
    C(ARC_OS_TEST, "ArcDroid jfd-guard-size ROM", 524288u, 0xebdcbef7, "25b76d16d72db94b93e13b5a3382b0ce35149454"),

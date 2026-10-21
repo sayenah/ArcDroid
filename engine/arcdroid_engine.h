@@ -112,6 +112,11 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
                              char *error, size_t error_size);
 bool arc_engine_get_av_info(unsigned *width, unsigned *height, double *refresh_hz);
 void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
+/* Live calendar for a frontend-owned reconstruction; read is false for an
+ * inactive or calendar-free session. A NULL resume starts
+ * from the next construction's captured host clock; consumed even on failure. */
+bool arc_engine_cmos_year(uint8_t year[2]);
+void arc_engine_cmos_resume_year(const uint8_t year[2]);
 bool arc_engine_faulted(const char **message);
 bool arc_engine_active(void);
 

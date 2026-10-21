@@ -25,8 +25,10 @@ bool arc_riscpc_cmos_checksum(const uint8_t p[240])
 { unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=p[i];return (uint8_t)sum==p[47]; }
 void arc_riscpc_cmos_session_year(uint8_t p[240],unsigned year)
 {
+    /* AY-1 L-1: preserve the checksum error of a guest-corrupted record. */
+    unsigned old=p[176]+p[177];
     p[176]=(uint8_t)(year%100);p[177]=(uint8_t)(year/100);
-    unsigned sum=1;for(unsigned i=0;i<240;++i)if(i!=47)sum+=p[i];p[47]=(uint8_t)sum;
+    p[47]=(uint8_t)(p[47]+p[176]+p[177]-old);
 }
 bool arc_riscpc_cmos_two_floppies(unsigned layout,uint8_t p[240])
 {

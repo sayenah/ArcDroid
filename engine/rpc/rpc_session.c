@@ -648,8 +648,9 @@ RETRO_API void arc_rpc_test_timing_measure(uint64_t first, uint64_t last, bool d
     (void)first;(void)last;(void)drained;arc_rpc_test_refuse("intrusive measurement");
 #endif
 }
-RETRO_API bool arc_rpc_test_exercise(ArcRpcExercise *out)
+RETRO_API bool arc_rpc_test_exercise_v3(ArcRpcExercise *out,unsigned revision,size_t size)
 {
+    if(revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false;
 #if defined(ARCDROID_TEST_FAULTS)
     if(!out)return false;
     *out=arc_rpc_exercise;return true;
@@ -657,17 +658,19 @@ RETRO_API bool arc_rpc_test_exercise(ArcRpcExercise *out)
     (void)out;return arc_rpc_test_refuse("exercise counters");
 #endif
 }
-RETRO_API bool arc_rpc_test_ranking(ArcRpcExercise *out,uint64_t *attempts)
+RETRO_API bool arc_rpc_test_ranking_v3(ArcRpcExercise *out,uint64_t *attempts,unsigned revision,size_t size)
 {
+    if(revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false;
 #if defined(ARCDROID_RPC_PROFILE)
     if(!out || !attempts)return false;
-    ArcRpcProfile p;arc_rpc_profile_snapshot(&p);*out=p.ranking;*attempts=p.ranking_attempts;return true;
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));*out=p.ranking;*attempts=p.ranking_attempts;return true;
 #else
     (void)out;(void)attempts;return arc_rpc_test_refuse("ranking counters");
 #endif
 }
-RETRO_API bool arc_rpc_test_interval_exercise(ArcRpcExercise *out)
+RETRO_API bool arc_rpc_test_interval_exercise_v3(ArcRpcExercise *out,unsigned revision,size_t size)
 {
+    if(revision!=ARC_RPC_COUNTER_ABI || size!=sizeof(*out))return false;
 #if defined(ARCDROID_TEST_FAULTS)
     return arc_rpc_mem_exercise_interval(out);
 #else
@@ -741,6 +744,11 @@ RETRO_API bool arc_rpc_test_read_ram(unsigned offset,uint32_t *out)
     if(!arc_rpc_live||arc_rpc_fault||!out||offset>=32u*1024u*1024u||(offset&3))return false;
     *out=ram00[offset/4];return true;
 }
+#endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_rpc_test_l1_state(bool seed_hint)
+{ return arc_rpc_mem_l1_state(seed_hint); }
 #endif
 
 #if defined(ARCDROID_RPC_LOCKSTEP)

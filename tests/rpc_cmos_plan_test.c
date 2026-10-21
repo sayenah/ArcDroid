@@ -106,9 +106,10 @@ static void settle(void (*run)(void))
 }
 static void expected_reload(uint8_t bytes[256],const uint8_t session[256])
 {
-    /* R-Y1 refreshes only the calendar year and its checksum at reopen. */
+    /* AY-1 L-1 retains the guest's checksum error across year refresh. */
+    unsigned old=bytes[0xc0]+bytes[0xc1];
     bytes[0xc0]=session[0xc0];bytes[0xc1]=session[0xc1];
-    unsigned sum=1;for(unsigned i=16;i<256;++i)if(i!=63)sum+=bytes[i];bytes[63]=(uint8_t)sum;
+    bytes[63]=(uint8_t)(bytes[63]+bytes[0xc0]+bytes[0xc1]-old);
 }
 int main(int argc,char **argv)
 {
@@ -279,7 +280,16 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
     }
     cmos(before);unload();assert(phase()==0);assert(load(&game));settle(run);assert(phase()==2);cmos(after);expected_reload(before,session);assert(!memcmp(before+16,after+16,240));
     /* Guest work outside retro_run is persisted specifically by unload. */
-    assert(advance(10000000));cmos(before);unload();assert(load(&game));settle(run);assert(phase()==2);cmos(after);expected_reload(before,session);assert(!memcmp(before+16,after+16,240));unload();
+    assert(advance(10000000));
+    if(!strcmp(mode,"writer")){
+        bool (*ram)(unsigned,uint32_t *);LOAD(ram,"arc_rpc_test_read_ram");
+        for(unsigned step=0;;++step){
+            uint32_t done=0;assert(ram(0x20040,&done));
+            if(done==0xa5)break;
+            assert(step<1000 && advance(1000000));
+        }
+    }
+    cmos(before);unload();assert(load(&game));settle(run);assert(phase()==2);cmos(after);expected_reload(before,session);assert(!memcmp(before+16,after+16,240));unload();
     /* Failed admission leaves persistence unarmed. */
     game.path="/missing.arcplan";assert(!load(&game)&&phase()==0);unload();deinit();vfs_assert_no_open_handles();
     puts("RPC plan CMOS: slices, clean restart, reset, eager/unload and failed start passed");

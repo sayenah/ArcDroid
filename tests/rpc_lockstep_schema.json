@@ -7472,7 +7472,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "ArcRpcScheduler *",
@@ -7493,7 +7493,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -7514,7 +7514,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -7535,7 +7535,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -7556,7 +7556,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -7577,7 +7577,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -7598,7 +7598,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -7619,7 +7619,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -7640,7 +7640,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -7664,7 +7664,7 @@
         "index": "i"
       },
       "exclusion_reason": "Invalid cache tag, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -7690,7 +7690,7 @@
         "index": "i"
       },
       "exclusion_reason": "Invalid cache tag, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -7713,7 +7713,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -7739,7 +7739,7 @@
         "index": "i"
       },
       "exclusion_reason": "Invalid cache tag, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -7762,7 +7762,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -7785,7 +7785,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -7806,7 +7806,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -7827,7 +7827,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -7848,7 +7848,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -7872,7 +7872,7 @@
         "index": "i"
       },
       "exclusion_reason": "Invalid cache tag, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -7898,7 +7898,7 @@
         "index": "i"
       },
       "exclusion_reason": "Invalid cache tag, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -7921,7 +7921,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -7947,7 +7947,7 @@
         "index": "i"
       },
       "exclusion_reason": "Invalid cache tag, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -7970,7 +7970,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -7993,7 +7993,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8014,7 +8014,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8035,7 +8035,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8056,7 +8056,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8108,7 +8108,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8162,7 +8162,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8216,7 +8216,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8270,7 +8270,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint16_t",
@@ -8324,7 +8324,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -8378,7 +8378,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -8432,7 +8432,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -8486,7 +8486,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -8567,7 +8567,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -8649,7 +8649,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -8704,7 +8704,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8758,7 +8758,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8812,7 +8812,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -8866,7 +8866,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint16_t",
@@ -8920,7 +8920,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -8974,7 +8974,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9028,7 +9028,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9082,7 +9082,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9163,7 +9163,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -9245,7 +9245,7 @@
         ]
       },
       "exclusion_reason": "Dead ring slots and lanes >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -9271,7 +9271,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9294,7 +9294,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9317,7 +9317,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9340,7 +9340,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint16_t",
@@ -9363,7 +9363,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9386,7 +9386,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9409,7 +9409,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9432,7 +9432,7 @@
         "field": "memory.active_valid"
       },
       "exclusion_reason": "!active_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9469,7 +9469,7 @@
         ]
       },
       "exclusion_reason": "Inactive active packet or lane >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint8_t",
@@ -9508,7 +9508,7 @@
         ]
       },
       "exclusion_reason": "Inactive active packet or lane >= count, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -9531,7 +9531,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9552,7 +9552,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9573,7 +9573,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9594,7 +9594,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9615,7 +9615,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9636,7 +9636,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9657,7 +9657,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -9683,7 +9683,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9704,7 +9704,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9725,7 +9725,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -9746,7 +9746,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9767,7 +9767,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9797,7 +9797,7 @@
         ]
       },
       "exclusion_reason": "No cycle/video active, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9818,7 +9818,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9839,7 +9839,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9860,7 +9860,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9881,7 +9881,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9902,7 +9902,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -9923,7 +9923,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9944,7 +9944,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9965,7 +9965,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -9986,7 +9986,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10007,7 +10007,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10028,7 +10028,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10049,7 +10049,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10070,7 +10070,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10091,7 +10091,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10112,7 +10112,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10133,7 +10133,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53",
+      "citation": "engine/rpc/rpc_mem_timing.c:57",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -10154,7 +10154,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10175,7 +10175,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10196,7 +10196,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10217,7 +10217,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10238,7 +10238,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10259,7 +10259,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10280,7 +10280,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10301,7 +10301,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -10322,7 +10322,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10346,7 +10346,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "ArcRpcScheduler *",
@@ -10367,7 +10367,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -10388,7 +10388,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -10409,7 +10409,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10430,7 +10430,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10453,7 +10453,7 @@
         "field": "fast.memo_valid"
       },
       "exclusion_reason": "!memo_valid, §2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -10474,7 +10474,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10495,7 +10495,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10519,7 +10519,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10543,7 +10543,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint32_t",
@@ -10564,7 +10564,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10603,7 +10603,7 @@
         ]
       },
       "exclusion_reason": "P2 with pending requests only, §2.1",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10624,7 +10624,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10663,7 +10663,7 @@
         ]
       },
       "exclusion_reason": "P2 with pending requests only, §2.1",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10684,7 +10684,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10723,7 +10723,7 @@
         ]
       },
       "exclusion_reason": "P2 with pending requests only, §2.1",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -10744,7 +10744,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10783,7 +10783,7 @@
         ]
       },
       "exclusion_reason": "P2 with pending requests only, §2.1",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10804,7 +10804,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10825,7 +10825,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54",
+      "citation": "engine/rpc/rpc_mem_timing.c:58",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned int",
@@ -10846,7 +10846,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:56",
+      "citation": "engine/rpc/rpc_mem_timing.c:181",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10870,7 +10870,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:56",
+      "citation": "engine/rpc/rpc_mem_timing.c:181",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10894,7 +10894,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:57",
+      "citation": "engine/rpc/rpc_mem_timing.c:182",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10918,7 +10918,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10942,7 +10942,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10966,7 +10966,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -10990,7 +10990,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11014,7 +11014,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11038,7 +11038,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11062,7 +11062,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11086,7 +11086,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11110,7 +11110,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11134,7 +11134,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11158,7 +11158,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11182,7 +11182,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11206,7 +11206,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11230,7 +11230,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11254,7 +11254,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11278,7 +11278,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11302,7 +11302,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11326,7 +11326,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11350,7 +11350,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11374,7 +11374,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11398,7 +11398,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11422,7 +11422,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11446,7 +11446,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11470,7 +11470,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11494,7 +11494,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11518,7 +11518,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: canonical state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58",
+      "citation": "engine/rpc/rpc_mem_timing.c:183",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {
         "cross-quota": "A-25(b): batch representation only; remaining budgets compared after projection",
@@ -11542,7 +11542,7 @@
       ],
       "condition": true,
       "exclusion_reason": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:541",
+      "citation": "engine/rpc/rpc_mem_timing.c:921",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "meaning": "SHA-256/64 identity of immutable input/table, not host address",
@@ -11564,7 +11564,7 @@
       ],
       "condition": true,
       "exclusion_reason": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:550",
+      "citation": "engine/rpc/rpc_mem_timing.c:930",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "meaning": "SHA-256/64 identity of immutable input/table, not host address",
@@ -22111,7 +22111,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:192; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -22132,7 +22132,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:192; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -22153,7 +22153,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:192; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool",
@@ -22174,7 +22174,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:193; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -22195,7 +22195,7 @@
       ],
       "condition": true,
       "exclusion_reason": "None: D-195 R-e0-2 measurement state compared",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:193; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t",
@@ -22248,7 +22248,7 @@
       "name": "rpc_mem_timing.arc_rpc_exercise.values",
       "group": "session",
       "type": "u64",
-      "count": 168,
+      "count": 173,
       "class": "host-only/excluded",
       "phases": [
         0,
@@ -22258,7 +22258,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:156; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -22267,7 +22267,7 @@
       "name": "rpc_mem_timing.interval_exercise_start.values",
       "group": "session",
       "type": "u64",
-      "count": 168,
+      "count": 173,
       "class": "host-only/excluded",
       "phases": [
         0,
@@ -22277,7 +22277,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:184; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -22286,7 +22286,7 @@
       "name": "rpc_mem_timing.interval_exercise_end.values",
       "group": "session",
       "type": "u64",
-      "count": 168,
+      "count": 173,
       "class": "host-only/excluded",
       "phases": [
         0,
@@ -22296,7 +22296,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:184; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -22315,7 +22315,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:157; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "unsigned"
@@ -22334,7 +22334,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -22353,7 +22353,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -22372,7 +22372,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "uint64_t"
@@ -22391,7 +22391,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -22410,7 +22410,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -22429,7 +22429,7 @@
       ],
       "condition": false,
       "exclusion_reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "source": "engine/rpc/rpc_mem_timing.c",
       "mode_exclusions": {},
       "c_type": "bool"
@@ -25245,6 +25245,328 @@
       "meaning": "Borrowed token identity by preparation role, never its address.",
       "c_expression": "arc_rpc_lockstep_preparation_value(state.binding.opaque,state.binding.boundary,33u)",
       "c_layout": false
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.keys",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint32_t",
+      "c_dimensions": [
+        512
+      ],
+      "c_expression": "l1_instruction.keys[j0]"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.hints",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint8_t",
+      "c_dimensions": [
+        512
+      ],
+      "c_expression": "l1_instruction.hints[j0]"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.gate",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_instruction.gate"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.set_mask",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_instruction.set_mask"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.set_shift",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_instruction.set_shift"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.way_mask",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_instruction.way_mask"
+    },
+    {
+      "name": "rpc_mem_timing.l1_instruction.way_shift",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_instruction.way_shift"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.keys",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint32_t",
+      "c_dimensions": [
+        512
+      ],
+      "c_expression": "l1_data.keys[j0]"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.hints",
+      "group": "session",
+      "type": "u64",
+      "count": 512,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint8_t",
+      "c_dimensions": [
+        512
+      ],
+      "c_expression": "l1_data.hints[j0]"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.gate",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_data.gate"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.set_mask",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_data.set_mask"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.set_shift",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_data.set_shift"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.way_mask",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_data.way_mask"
+    },
+    {
+      "name": "rpc_mem_timing.l1_data.way_shift",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "unsigned",
+      "c_dimensions": [],
+      "c_expression": "l1_data.way_shift"
+    },
+    {
+      "name": "rpc_mem_timing.l1_poison_state",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "host-only/excluded",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": false,
+      "exclusion_reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "mode_exclusions": {},
+      "c_type": "uint32_t",
+      "c_dimensions": []
     }
   ],
   "inventory": [
@@ -26012,7 +26334,7 @@
       "root": "memory",
       "classification": "contents-compared",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:53"
+      "citation": "engine/rpc/rpc_mem_timing.c:57"
     },
     {
       "category": "reachable-storage",
@@ -26020,7 +26342,7 @@
       "symbol": "memory.clock",
       "classification": "contents-compared",
       "ruling": "Pointee contents traversed by owning serializer; function callbacks identified by owner, never by executable address",
-      "citation": "engine/rpc/rpc_mem_timing.c:53"
+      "citation": "engine/rpc/rpc_mem_timing.c:57"
     },
     {
       "category": "static-root",
@@ -26029,7 +26351,7 @@
       "root": "fast",
       "classification": "contents-compared",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:54"
+      "citation": "engine/rpc/rpc_mem_timing.c:58"
     },
     {
       "category": "reachable-storage",
@@ -26037,7 +26359,7 @@
       "symbol": "fast.clock",
       "classification": "contents-compared",
       "ruling": "Pointee contents traversed by owning serializer; function callbacks identified by owner, never by executable address",
-      "citation": "engine/rpc/rpc_mem_timing.c:54"
+      "citation": "engine/rpc/rpc_mem_timing.c:58"
     },
     {
       "category": "static-root",
@@ -26046,7 +26368,7 @@
       "root": "rpc_mem_timing.measure_first",
       "classification": "contents-compared",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:56"
+      "citation": "engine/rpc/rpc_mem_timing.c:181"
     },
     {
       "category": "static-root",
@@ -26055,7 +26377,7 @@
       "root": "rpc_mem_timing.measure_last",
       "classification": "contents-compared",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:56"
+      "citation": "engine/rpc/rpc_mem_timing.c:181"
     },
     {
       "category": "static-root",
@@ -26064,7 +26386,7 @@
       "root": "rpc_mem_timing.measure_drained",
       "classification": "contents-compared",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:57"
+      "citation": "engine/rpc/rpc_mem_timing.c:182"
     },
     {
       "category": "static-root",
@@ -26073,7 +26395,7 @@
       "root": "rpc_mem_timing.interval",
       "classification": "contents-compared",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:58"
+      "citation": "engine/rpc/rpc_mem_timing.c:183"
     },
     {
       "category": "static-root",
@@ -26082,7 +26404,7 @@
       "root": "rpc_mem_timing.cycle.simple",
       "classification": "immutable-input identity",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:541"
+      "citation": "engine/rpc/rpc_mem_timing.c:921"
     },
     {
       "category": "static-root",
@@ -26091,7 +26413,7 @@
       "root": "rpc_mem_timing.cycle.pc",
       "classification": "immutable-input identity",
       "ruling": "§2.2 included state",
-      "citation": "engine/rpc/rpc_mem_timing.c:550"
+      "citation": "engine/rpc/rpc_mem_timing.c:930"
     },
     {
       "category": "static-root",
@@ -27993,7 +28315,7 @@
       "root": "rpc_mem_timing.endpoint_mode",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:192; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28002,7 +28324,7 @@
       "root": "rpc_mem_timing.previous_valid",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:192; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28011,7 +28333,7 @@
       "root": "rpc_mem_timing.pending_end",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:95; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:192; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28020,7 +28342,7 @@
       "root": "rpc_mem_timing.previous_completion",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:193; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28029,7 +28351,7 @@
       "root": "rpc_mem_timing.end_completion",
       "classification": "contents-compared",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:96; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:193; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28038,7 +28360,7 @@
       "root": "rpc_mem_timing.arc_rpc_exercise",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:156; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28047,7 +28369,7 @@
       "root": "rpc_mem_timing.interval_exercise_start",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:184; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28056,7 +28378,7 @@
       "root": "rpc_mem_timing.interval_exercise_end",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:184; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28065,7 +28387,7 @@
       "root": "rpc_mem_timing.arc_rpc_exercise_path",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:157; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28074,7 +28396,7 @@
       "root": "rpc_mem_timing.exercise_batch",
       "classification": "excluded with ruling",
       "ruling": "docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2"
     },
     {
       "category": "static-root",
@@ -28360,6 +28682,33 @@
       "classification": "excluded with ruling",
       "ruling": "Native platform operation table: callbacks/handles are host-only; logical ownership state compared separately.",
       "citation": "docs/riscpc-lockstep-harness.md:Run C host merge"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "l1_instruction",
+      "root": "rpc_mem_timing.l1_instruction",
+      "classification": "excluded with ruling",
+      "ruling": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "l1_data",
+      "root": "rpc_mem_timing.l1_data",
+      "classification": "excluded with ruling",
+      "ruling": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_mem_timing.c",
+      "symbol": "l1_poison_state",
+      "root": "rpc_mem_timing.l1_poison_state",
+      "classification": "excluded with ruling",
+      "ruling": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2"
     }
   ],
   "object_symbols": {
@@ -28627,7 +28976,10 @@
           "rpc_mem_timing.interval_exercise_start",
           "rpc_mem_timing.interval_exercise_end",
           "rpc_mem_timing.arc_rpc_exercise_path",
-          "rpc_mem_timing.exercise_batch"
+          "rpc_mem_timing.exercise_batch",
+          "rpc_mem_timing.l1_instruction",
+          "rpc_mem_timing.l1_data",
+          "rpc_mem_timing.l1_poison_state"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -30544,61 +30896,61 @@
     {
       "field": "rpc_mem_timing.arc_rpc_exercise.values",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:156; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.interval_exercise_start.values",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:184; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.interval_exercise_end.values",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:184; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.arc_rpc_exercise_path",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:157; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.start",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.integer",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.services",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.live",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.integral",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
       "field": "rpc_mem_timing.exercise_batch.batched",
       "class": "host-only/excluded",
-      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "citation": "engine/rpc/rpc_mem_timing.c:158; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
     },
     {
@@ -30618,6 +30970,96 @@
       "class": "host-only/excluded",
       "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
       "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.keys",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.hints",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.gate",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.set_mask",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.set_shift",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.way_mask",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_instruction.way_shift",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.keys",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.hints",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.gate",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.set_mask",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.set_shift",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.way_mask",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_data.way_shift",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:Run B implementation note; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / Run B: host-only geometry mask or shift derived at bind; reset at every G-13 bind before early return"
+    },
+    {
+      "field": "rpc_mem_timing.l1_poison_state",
+      "class": "host-only/excluded",
+      "citation": "docs/decision-log.md:D-200; docs/riscpc-6b-l1.md:L1 implementation design; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-200 / AS-L1-7: host-only derived hint, exact mirror, geometry gate or hint-poison PRNG; reset at every G-13 bind before early return"
     }
   ],
   "cross_quota_projections": {
@@ -31270,7 +31712,21 @@
       "previous_valid",
       "pending_end",
       "previous_completion",
-      "end_completion"
+      "end_completion",
+      "l1_instruction.keys",
+      "l1_instruction.hints",
+      "l1_instruction.gate",
+      "l1_instruction.set_mask",
+      "l1_instruction.set_shift",
+      "l1_instruction.way_mask",
+      "l1_instruction.way_shift",
+      "l1_data.keys",
+      "l1_data.hints",
+      "l1_data.gate",
+      "l1_data.set_mask",
+      "l1_data.set_shift",
+      "l1_data.way_mask",
+      "l1_data.way_shift"
     ],
     "engine/rpc/rpc_observer.c": [
       "arc_rpc_observer_active",
@@ -32045,8 +32501,8 @@
     "rule": "Only page-boundary markers compare output: initialized published video rectangle and live queued PCM, canonical u64 values, SHA-256. Never read uninitialized presentation rows."
   },
   "reviewed_inventory": {
-    "inventory": "97ed05e09f216382866fd0af2a295dbe903926307f0bb7b65b6ff31c75537777",
-    "object_symbols": "8bb836a812f81179169a82d760d0e0d38fe44696bf2dbee366de7bdd8f8c140a",
+    "inventory": "8c2f61f0693238c4b31480962bcab8f565d0dab8b3a6237c41feaa065cc6822f",
+    "object_symbols": "2d6827d5c3093be80794916ba201499b8fd2385f993387c25875b52fff443ea4",
     "local_static_symbols": "e6ebd36287fa76f3fe573799779de69236bc966a8a01a6f5d2e120b4f042219f"
   },
   "reachable_types": {
@@ -35923,6 +36379,24 @@
         "citation": "docs/riscpc-lockstep-harness.md:Run C host merge",
         "classification": "baseline M2b object",
         "reason": "Unchanged explicitly named object from the merged M2b base; no new exclusion or semantic contract."
+      },
+      "::arc_cmos_session_year_valid": {
+        "declaration": "static bool arc_cmos_session_year_valid",
+        "citation": "docs/arculator-calendar.md",
+        "classification": "host-only/excluded",
+        "reason": "Archimedes-only reconstruction cache validity under R-AY1; cleared on content release and never consumed by RiscPC preparation or execution."
+      },
+      "::arc_cmos_session_year": {
+        "declaration": "static uint8_t arc_cmos_session_year[2]",
+        "citation": "docs/arculator-calendar.md",
+        "classification": "host-only/excluded",
+        "reason": "Retains the live Archimedes year across frontend reconstruction under R-AY1. RiscPC uses its own requested epoch; these bytes do not feed RPC guest state."
+      },
+      "::arc_test_rpc_load_epoch": {
+        "declaration": "static uint64_t arc_test_rpc_load_epoch",
+        "citation": "docs/arculator-calendar.md",
+        "classification": "host-only/excluded",
+        "reason": "Test-only read-only copy of the admitted load epoch for the I-1 year oracle. It cannot alter guest execution, RTC state, stores or routing."
       },
       "::arc_boot_start_stamp": {
         "declaration": "static ArcBootObservation arc_boot_start_stamp",

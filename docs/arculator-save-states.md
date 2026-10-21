@@ -943,3 +943,57 @@ and every 256-byte CMOS payload byte in both slots. All other persisted files
 and frontend observations remain byte-identical; no file is excluded. Current
 closed/open gate comparisons retain exact file-byte equality. The Run M report
 records both timing windows and leaves warm load ≤5 ms open on the shared Mac.
+
+## Run N integration: AY-1 calendar census
+
+The AY-1 overlay has three additional serialized CMOS objects:
+`year_original[3]` retains the pre-overlay year/checksum bytes,
+`year_written` retains the three guest-write bits (even an equal-value write
+changes persistence), and `year_overlay` retains activation. None is recoverable
+from the live CMOS image alone. The frontend's `arc_cmos_session_year_valid`
+and `arc_cmos_session_year[2]` are serialized too: stopped-engine reset/recovery
+uses that historical cache, and canonical saves must preserve its exact bytes.
+These five objects add 14 payload bytes plus five 24-byte record headers,
+so the advertised bound grows by 134 bytes.
+
+The immutable `year_raw[3]` address table is host-only. The test-only
+`test_clock[7]` is an external wall-clock input to construction; the active
+virtual RTC remains serialized as `systemtime`, while loading must not rewind
+the clock used by a subsequent reset. Backend `arc_resume_year_pending` and
+`arc_resume_year[2]` are host-only synchronous constructor arguments, consumed
+before any admitted snapshot or guest instruction; reconstruction supplies
+them afresh from the restored frontend cache. The test-only RPC load-epoch
+counter is host-only and inactive in Archimedes sessions. There are no new
+derived-on-load calendar objects. Each declaration has its own inventory row
+and reason; RPC's separate census correctly treats the inactive Archimedes
+calendar cache as host-only for its backend.
+
+`arculator-state-calendar` checks all eight write masks for raw C0/C1/3F,
+years 2025/2099, and all four 4 MiB profiles: 64 fresh-process canonical
+save/load/save cases, 1,536 differential frames (wire guest state, CPU, PCM
+and live CMOS), and 64 compared resets after load. Each reference and loaded
+branch runs 12 frames before reset and 12 after it; host-picture differences
+are reported per case. Both branches must finish with byte-identical native
+store trees too. Five omission mutants cover the five new serialized objects.
+
+The producer pauses at capture while the parent copies its committed stores,
+as in the existing fresh-process matrix. The consumer starts on that disposable
+checkpoint and loads the post-first-frame state before publishing its first
+frame. This matters for partial write masks: normal construction repairs a
+partial guest checksum, and a real frame or reset can publish a newer frontier;
+loading the older capture against that newer store must still refuse. The
+independent branches preserve that rule. Changing the external clock before
+load proves that virtual time replays exactly and both resets sample the new
+host month. This is distinct from the documented limitation on states *taken*
+before their source session's first frame.
+
+The authored firmware's sequential CMOS read also exposes a valid cursor above
+255; restore retains this nonnegative integer because the controller masks
+addresses on access, rather than incorrectly restricting the retained cursor
+to one byte.
+The calendar test is registered outside `ARCDROID_RPC_LOCKSTEP_LOCAL_TESTS`;
+it requires no local-shard placement. The incoming placement guard still checks
+the complete ON/OFF test-set difference. The accepted first-frame limitation
+is recorded in the SS-1 release notes. Fable's Run M quiet-host confirmation
+closes the earlier timing gap (floppy maxima: save 1.26 ms, warm load 3.30 ms);
+Run N does not repeat an unchanged performance campaign.

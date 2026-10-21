@@ -497,6 +497,9 @@ static ArcMediaGeometry arc_saved_helper_geometry;
 static const uint8_t *arc_saved_helper_data;
 static size_t arc_saved_helper_size;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
+static bool arc_resume_year_pending;
+static uint8_t arc_resume_year[2];
+
 static uint8_t arc_locked_cmos_mask[32];
 static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
@@ -1025,6 +1028,10 @@ static bool arc_arculator_start(const uint8_t *firmware, size_t firmware_size,
                       void *ignored_opaque,
                       char *failure, size_t failure_size)
 {
+   uint8_t resume_year[2];
+   memcpy(resume_year, arc_resume_year, sizeof(resume_year));
+   bool resume = arc_resume_year_pending;
+   arc_resume_year_pending = false;
    arc_arculator_stop();
    arc_error_box.os = os;
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
@@ -1080,6 +1087,10 @@ static bool arc_arculator_start(const uint8_t *firmware, size_t firmware_size,
       arc_arculator_stop();
       return false;
    }
+   /* R-AY1: use the clock captured by construction, before guest execution.
+    * Backend reset retains the overlay; frontend reconstruction supplies
+    * the prior live year through its session-owned cache. */
+   cmos_session_year(arc_cmos_uses_year(os),resume?resume_year:NULL);
    return true;
 }
 
@@ -1297,12 +1308,28 @@ static bool arc_arculator_get_av_info(unsigned *width, unsigned *height, double 
    if (refresh_hz) *refresh_hz = arc_last_refresh;
    return true;
 }
+bool arc_engine_cmos_year(uint8_t year[2])
+{
+   if (!year || !arc_active || !arc_machine_live ||
+       !arc_cmos_uses_year(arc_error_box.os)) return false;
+   uint8_t image[ARC_CMOS_MACHINE_SIZE];
+   cmos_get_image(image, sizeof(image));
+   year[0] = image[0xc0];
+   year[1] = image[0xc1];
+   return true;
+}
+
+void arc_engine_cmos_resume_year(const uint8_t year[2])
+{
+   arc_resume_year_pending = year != NULL;
+   if (year) memcpy(arc_resume_year, year, sizeof(arc_resume_year));
+}
 static void arc_arculator_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
 {
    uint8_t machine[ARC_CMOS_MACHINE_SIZE];
    if (output && arc_machine_live)
    {
-      cmos_get_image(machine, sizeof(machine));
+      cmos_get_persisted_image(machine, sizeof(machine));
       memcpy(output, machine + 16u, ARC_CMOS_PAYLOAD_SIZE);
    }
 }

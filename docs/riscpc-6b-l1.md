@@ -436,6 +436,88 @@ The ranking counts lookups per access caller, not per SA-110 cache (I and D are 
 4. **Confirmation:** after selection, a fresh AC-8 run of the chosen configuration on every frozen workload (hot, the four synthetics, 031) decides merge under the frozen benefit rule (gain on 031, no regression elsewhere), and D-180 is rechecked on hot and 031 with observers genuinely off; the selection data is not reused.
 5. The gate is computed at bind from the bound `sets` and `ways` (finding 15), not from the model name.
 
+
+## L1 implementation design (Sol, 2026-10-17; accepted rulings applied)
+
+This records D-200's adjudicated choices, not a new gate decision. The final
+Astra adjudication and frozen table above supersede the draft: SA-110 ships
+linear pending Fable's selection; ARM710/ARM7500 stay linear; ARM610 uses both
+mechanisms. Variant measurement cores use independent build definitions, never
+TEST_FAULTS, for SA linear/hint/mirror and the all-geometries forced-off leg.
+
+Each canonical Cache has its own file-scope `l1_instruction` or `l1_data`
+side state, outside `m` and `arc_rpc_mem_fast`. Each holds 512 exact mirror keys,
+512 hint bytes (four direct-mapped hint entries per set, keyed by line within
+that set), and a gate. The fixed bound is 5,128 bytes for both side states on
+hosts with four-byte unsigned. A hint is exclusively a way index in the current
+cache's selected set: bounds, validity and line equality are checked before
+acceptance. No unvalidated or negative reuse is permitted. Hits never move the
+cyclic victim cursor or reorder tags. At most one valid copy of a line exists
+per set; allocation only follows a miss. Every tag identity/validity writer
+updates the mirror through `tag_write`; dirty-only writers need no key update.
+The invalid key is UINT32_MAX, outside the 28-bit line domain. Mirror search
+builds a 64-bit mask, tests zero before selecting its first bit with a portable scan, and retains a
+redundant tag recheck. Removing that recheck is equivalent with an exact mirror
+(AS-L1-7); mirror-writer mutants instead fail explicit integrity assertions.
+
+Bind resets both side states unconditionally before the null-clock return,
+then derives gates from bound sets/ways after the unchanged geometry lines.
+Any future restore of canonical timing state must reset or rebuild side state.
+The hot-test-only mem_l1_state/test_l1_state services expose a boolean pristine
+check and seed stale hints (never keys) for real reset, stop, failed-start,
+rate-rebind, model-change and engine-switch tests. Both names are registered
+in rpc_namespace.h and backend-symbols.json, absent from measurement/shipping.
+Test helpers write arbitrary slots without moving cursors, maintaining mirrors;
+lookup counter fixtures use bound caches rather than foreign shipping caches.
+The test-only poison stream (`l1_poison_state`) corrupts hints only, including
+out-of-range ways. The retained cross-check scan reads canonical tags only,
+changes no counters or side state, and compares cache identity and slot index.
+Cross-check fills assert uniqueness; bind and each tag writer assert integrity
+of the mirror slots they changed. The retained linear scan still runs on every
+lookup, including empty returns.
+
+New scalar counts append after rational_cheap: l1_hint_accepted,
+l1_hint_rejected, l1_mirror_search, l1_mirror_recheck_failed,
+l1_linear_fallback. Existing probe/way counters describe the linear reference's
+work, derived from the returned slot. Mirror recheck failures are structural
+zeros with an exact mirror. Counter ABI revision 3 plus structure-size checks
+protect exercise, interval-exercise, ranking and profile snapshots before any
+copy. Profile JSON remains schema 2, compatible by name only. Runner and core
+must come from the same revision; predecessor comparisons use two runner/core
+pairs. No M2b emitter is assumed or backported.
+
+The independent model runs fixed seeds over three unified caches and SA I/D,
+using the real access allocation path. It compares every tag's validity, valid
+VA/physical and dirty halves, all victim cursors, geometry, populated count,
+separate stats.hits/fetch_hits, fills, dirty castouts and memo after each mixed
+operation. Requests are drained through the ordinary timing service between
+operations so no command ring exceeds its bound. Invalid tag addresses remain
+excluded under section 2.2. The model independently asserts uniqueness.
+
+Risks to report: shrinking unobserved time increases the D-180 ratio even if
+observer absolute cost stays constant (the prototype would lift +2.20% to about
++2.6%, leaving about 0.4 percentage points for S1). Fable reports before/after
+031 ratios and remaining margin. Full invalidation also writes mirror keys;
+c7-heavy cost must be reported. The gate-table histograms predict SA way-0
+risk on warm/ldm-stm8 and benefit on 031; ARM610 streaming is miss dominated.
+031's sourced lookup rate is the frozen table at 38eae49; with 32-way searches,
+hit/miss probe work is about 87%/13%, replacing the draft's 90%/10% estimate.
+AC-1 goldens, calibrations and observation plans retain post-P0i anchor evidence
+(A-31); forced-on/off execution includes Mac arm64 and Fable's Odin3 leg.
+
+D-200's inventory exclusion ruling applies individually to `l1_instruction`,
+`l1_data` and test-only `l1_poison_state`: host-only derived lookup hints, exact
+keys, gate and poison PRNG state; no guest state, reset at every G-13 bind.
+The schema and independent reviewed policy pin each exclusion. These metadata
+additions do not alter M2b's wire-compatibility contract.
+
+
+The primary sanitizer suite uses its actual Debug cores. The secondary full
+L1 gate corpus also exercises sanitized RPC objects and the unchanged firmware hash helper at -O2, retaining every
+preprocessor, ABI and sanitizer flag and all assertions. This supplies a second
+optimization level while avoiding five repetitions of the 485-million-attempt
+Debug SA calibration. These temporary correctness cores are never measurement
+cores and never decide benefit.
 ## SA-110 selection run 1 and run B (Fable, S67)
 
 **Selection run 1** (Odin3, L1 run A variant measurement cores, the 1a-0 AC-8 procedure: two six-run orders per comparison, A = SA linear, 120 s idle; realtime 60 + 300 s for the synthetics, 031 under the S61 recipe, window 6400–7400; D-201 bands). p50 change of the candidate against linear, per order:
@@ -451,6 +533,25 @@ Both candidates gain about 13 % on 031 but regress both way-0 guards beyond thei
 **Cause (Fable).** The hint path computes its index with `line / c->sets` (a division by a runtime field) on every gated lookup, and after each hit recomputes it and stores the hint with `% c->ways`: about two to three hardware divides per lookup that the linear path, whose way-0 hit is one tag compare, does not pay (19 `udiv` in the object). Every cache geometry is a power of two, so this is an implementation cost, not a property of the design.
 
 **Run B (ruling).** Sol makes the hint index and the way arithmetic division-free (per-cache shifts or masks fixed at bind, valid for the power-of-two geometries, asserted at bind) and stores a hint only when it changes; no other behaviour change, the same tests, mutants and identity checks. Fable then repeats the selection on run B's variant cores with the rule, workloads and bands unchanged. Selection run 1 stays on record; run B's cores supersede its candidates.
+
+
+### Run B implementation note (Sol, 2026-10-17)
+
+Before code: retain canonical `Cache` and raw snapshots verbatim. Add only
+bind-derived `set_mask`, `set_shift`, `way_mask` and `way_shift` to each existing
+host-only side state (D-200 exclusion, Run B ruling above); pin all eight leaves
+in the M2 schema and independent reviewed policy (5,160 bytes total side state
+on hosts with four-byte unsigned, replacing Run A's 5,128-byte bound). Bind checks nonzero power-of-two
+sets and ways through the contained fatal path, then derives masks and shifts
+from the bound geometry. Reset clears this metadata before the null-clock return.
+Lookup/fill use mask-and-shift set/slot arithmetic; slot-to-way and cyclic advance
+use the way mask. The retained linear reference keeps its independent formula.
+The hint index is computed once per gated lookup and reused after the hit.
+A shared hint writer compares the old byte before storing, on fills and hits;
+poison and lifecycle seeding retain their intentional test writes. A white-box
+unit-only store observer makes an unconditional-store mutant observable without
+adding core state, counters or ABI. Gates, counters, mirror and fallback semantics
+are unchanged; SA-110 remains linear pending Fable's repeated selection.
 
 ## SA-110 selection run 2 (Fable, S68)
 
@@ -472,6 +573,24 @@ Both candidates gain about 13 % on 031 but regress both way-0 guards beyond thei
 - Hint-only and hint-plus-mirror stay on record as measured; they are not re-run.
 Sol builds both variants as selectable SA-110 gate configurations in the variant measurement cores (the same mechanism as run A's variants), with the same exactness tests, reference cross-check, mutants (including one that skips the way-0 check and one that consults the hint before way 0) and identity checks; ARM610, ARM710 and ARM7500 gates unchanged. Fable then runs **selection run 3** (way0-hint and way0-mirror against linear, the same three workloads, on a device verified at normal speed before the run and re-checked after it). If neither qualifies, SA-110 stays linear and L1 is not merged on benefit grounds; S1 is then re-planned onto `main`.
 
+### Run C implementation note (Sol, 2026-10-18)
+
+Before code: gate values 3 and 4 select way0-hint and way0-mirror respectively;
+values 0/1/2 and the production gate table retain their Run B meanings. The
+new gates compare canonical way 0 before computing the hint index or touching
+the hint. A way-0 hit performs no hint store or hint/mirror/fallback counting;
+the existing probe/way counters still describe the retained linear scan. On a
+way-0 miss the ordinary bounds/valid/VA validation applies, followed by the
+remainder starting at way 1 (canonical tags for gate 3, exact mirror for gate 4).
+Only that hint path updates a hit hint, through Run B's conditional writer.
+No new state, counter, ABI or snapshot field is needed. Unit expectations cover
+both valid and rejected hints behind a way-0 hit and prove no hint work/store,
+including poison builds; the independent model runs all five gates. Two ordering
+mutants skip the first check or move it behind hint validation. Separately named
+SA-only measurement targets preserve the production SA linear default pending
+Fable's selection run 3. The resolved incoming-main tree is the Run C identity
+baseline, so R3c-3b and W8/W9 changes are present on both sides of that comparison.
+
 ## SA-110 selection run 3 (Fable, S68)
 
 Run C's variant cores (way0-hint, way0-mirror), the same procedure, workloads and D-201 bands; 72 runs, all rc 0; device at normal speed throughout (battery 87 % to 55 % with the S68 battery guard, no pause). p50 change against linear, per order:
@@ -483,6 +602,24 @@ Run C's variant cores (way0-hint, way0-mirror), the same procedure, workloads an
 | ldm-stm8 (guard) | −2.96 % / −2.27 % | −2.00 % / −2.30 % | 0.50 % / 0.50 % |
 
 Both candidates qualify (031 gain beyond band in both orders; no guard regression — both guards now improve). The 031 gains lie within each other's band₅₀, so the tie rule selects **way0-hint** (fewer mechanisms). **SA-110 gate: way0-hint.** The rule-4 confirmation run (L1 off against the way0-hint core on hot, warm, stream-sa110, stream-arm710, ldm-stm8 and 031) started on the Odin3 at 21:40 on 2026-10-18.
+
+### Run D implementation note (Sol, 2026-10-18)
+
+Before code: selection run 3 above fixes the production SA-110 I/D gate to
+way0-hint (gate 3), derived from the bound 16-set/32-way geometry. ARM610
+remains hint plus mirror; ARM710/ARM7500 remain linear. All six named
+measurement variants remain available, including all-geometries forced-off.
+M2b's owning-TU timing and session serializers coexist with the L1 lifecycle
+accessors. Canonical fields retain main's generated emitter and policy. Only
+the fifteen individual derived L1 leaves retain D-200(6)'s exclusions, with
+explicit C member/capacity probes and per-field reviewed reasons; no canonical
+cache, packet, timing or session field is excluded for L1. Their metadata
+does not change v1 compatibility. Immediate-predecessor lockstep uses main's
+runner/core pair and this tree's pair. Actual H-2 block exits remain deferred
+to B-0 by M2b's binding M12 ruling; quota schedules are separate evidence.
+W10/D-209 applies: affected local tests, the non-slow lockstep subset, and
+explicitly slow-labelled L1 corpus/mutant matrices; full-suite CI and private
+device confirmation remain Fable's legs.
 
 ## Rule-4 confirmation run (S69, recorded by Fable)
 
@@ -498,3 +635,50 @@ Odin3, L1 off (every cache linear) against the way0-hint core (run C variant cor
 | ldm-stm8 | −1.70 % / −1.77 % | −1.94 % / −1.76 % | 0.50 % / 0.50 % | no regression |
 
 **Outcome by the frozen rule: not confirmed** (regressions on stream-sa110 and stream-arm710 in both orders; hot to be retested). L1 does not merge at this head. **Fable's ruling (run F):** the cost is consistent with QA S-2 (hint and mirror maintenance on every fill and invalidate for gates that never read them) and with the hint check after a way-0 miss on miss-heavy streams. Run F removes all hint and mirror maintenance for linear gates (ARM710, ARM7500, and any linear SA-110 configuration), keeps exactness, and minimises the way-0-miss path cost on SA-110 without changing its lookup order; then a fresh rule-4 confirmation run on all six workloads (the frozen rule and bands unchanged; this run's data is not reused).
+
+### Run F implementation note (Sol, 2026-10-19; before code)
+
+Linear gates keep the bind-cleared sentinel keys and unknown hint bytes untouched
+through lookup, fill and invalidation. Canonical set/way arithmetic on lookup
+and allocation uses the cache geometry directly, without hint-side metadata.
+The gate check remains the dispatch between the existing search mechanisms.
+
+For way0-hint (gate 3), the unread mirror also stays at its bind sentinel and
+fills do not seed hints. Only a successful lookup beyond way 0 learns a hint,
+through the conditional writer; an unknown byte (255) skips hinted-tag reads
+and falls through to the linear remainder. A miss never updates a hint. Stale
+positive hints remain subject to the same bounds/valid/VA checks. This amends
+R-L1-5's fill-update policy for gate 3 under Fable's Run F optimisation ruling;
+it introduces no negative result reuse. Gates 1/2/4 retain their existing fill
+hint policy, and mirror gates 2/4 retain their exact sentinel mirror. Canonical
+state, snapshots, first-match order, counters and their ABI do not change.
+
+No new side-state fields or statics are needed. Integrity tests distinguish
+maintained mirrors from deliberately dormant keys and require linear side state
+to remain byte-identical, including full/single invalidation and lookup. A mutant
+restores linear maintenance. The existing hit-refresh and ordering mutants stay
+load-bearing. A repeatable authored lookup/fill stream micro-benchmark compares
+this head with the immediate predecessor; device benefit remains Fable's fresh
+confirmation decision under the unchanged frozen rule.
+
+Run F code-generation refinement: the tag writer is forced inline on the
+supported GCC/Clang toolchains, so a linear fill does not call a generic writer.
+Full invalidation selects the dormant-side path once, outside a canonical
+valid/dirty clear loop; it performs no per-slot hint/gate bookkeeping. All
+maintained mirrors still go through the writer. Correctness does not depend
+on inlining; the cross-check and canonical layout contracts stay unchanged.
+
+## Rule-4 confirmation run 2 (S70, recorded by Fable)
+
+Odin3, L1 off (every cache linear) against the way0-hint core, both built from run F (`c57c707`), the same six frozen workloads, two six-run orders each, 120 s idle, the same frozen analysis and D-201 bands; no run flagged by the clock-step rule (private `.work/s70/l1conf2/`). Δ = (B − A)/A, p50 / p95:
+
+| Workload | Order 1 | Order 2 | Band₅₀ / band₉₅ (D-201) | Outcome |
+|---|---|---|---|---|
+| 031 | −10.59 % / −10.86 % | −11.54 % / −11.33 % | 0.80 % / 0.62 % | gain |
+| hot | −0.00 % / +0.11 % | −0.04 % / −0.14 % | 0.90 % / 0.99 % | no regression |
+| warm | −2.18 % / −2.32 % | −1.61 % / −0.77 % | 0.50 % / 0.50 % | no regression |
+| stream-sa110 | +0.03 % / −1.76 % | +0.01 % / +0.42 % | 0.50 % / 0.50 % | no regression |
+| stream-arm710 | −0.03 % / +0.14 % | −0.09 % / −0.03 % | 0.78 % / 0.50 % | no regression |
+| ldm-stm8 | −2.88 % / −2.79 % | −2.14 % / −2.21 % | 0.50 % / 0.50 % | no regression |
+
+**Outcome by the frozen rule: confirmed.** Run F removed the stream regressions of the first confirmation (stream-sa110 +0.76 % / +1.00 % p50 then, +0.03 % / +0.01 % now; stream-arm710 +0.88 % / +0.82 % then, −0.03 % / −0.09 % now) and kept the 031 gain. L1 merges at run F's head after it is merged with `main` and its full local PR tier passes (D-212); S1 follows.

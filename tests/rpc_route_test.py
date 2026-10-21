@@ -106,6 +106,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-route-') as temporary:
             if rom.name!=['','ro350.rom','ro360.rom','ro370.rom','ro371.rom'][os]:rom.unlink()
         image=bytearray((fixtures/'route.jfd').read_bytes());struct.pack_into('<I',image,304,(cpu<<8)|(os_bits<<16));disc=work/'ROUTE-PRIVATE-SENTINEL.jfd';disc.write_bytes(image)
         subprocess.run([exe,test,str(system),str(save),str(disc),'admit',str(secondary)],check=True,timeout=360)
+        raster_save=work/'raster-save';raster_save.mkdir()
+        subprocess.run([exe,test,str(system),str(raster_save),str(disc),'raster',str(secondary)],check=True,timeout=360)
         # The ordinary route uses the same authored firmware. Existing test
         # exports only read the guest's IIC result; no fault is injected.
         calendar_save=work/'calendar-save';calendar_save.mkdir()

@@ -708,6 +708,78 @@ Select exact recorded frame bounds within that workload's measured window for
 `rpc_rank_report.py`. The fixed 6400–7400 decision window belongs to private
 031; the hot wall-clock window remains 60/300 seconds.
 
+### L1 measurement variants (D-200, frozen selection table)
+
+Configure a separate Release tree with `-DARCDROID_RPC_L1_VARIANTS=ON`.
+The default measurement core retains the shipping gates: ARM610 hint+mirror,
+ARM710/ARM7500 linear, SA-110 way0-hint (selection run 3, S68).
+These separately named measurement targets retain shipping-shaped flags and
+carry no counters, hint poison or cross-check. Their gate macro survives the
+measurement core's TEST_FAULTS undefinition:
+
+```sh
+cmake -S . -B /private/tmp/arcdroid-l1-measure-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_L1_VARIANTS=ON
+cmake --build /private/tmp/arcdroid-l1-measure-host -j3 --target rpc_runner \
+  arcdroid_rpcmeasure_libretro \
+  arcdroid_rpcmeasure_l1_sa_linear_libretro \
+  arcdroid_rpcmeasure_l1_sa_hint_libretro \
+  arcdroid_rpcmeasure_l1_sa_mirror_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_hint_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_mirror_libretro \
+  arcdroid_rpcmeasure_l1_off_libretro
+```
+
+For native Windows use the same configure/build arguments from its MinGW shell
+and an external build path. For a MinGW cross-build on the Mac add
+`-DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw-w64-x86_64.cmake` to configure.
+Android arm64 measurement cores and runner (NDK r29 / API 21):
+
+```sh
+L1_NDK="${ANDROID_NDK_HOME:?set the NDK path}"
+cmake -S . -B /private/tmp/arcdroid-l1-measure-android -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DARCDROID_ANDROID_TEST_CORE=ON \
+  -DCMAKE_TOOLCHAIN_FILE="$L1_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 \
+  -DARCDROID_RPC_L1_VARIANTS=ON
+cmake --build /private/tmp/arcdroid-l1-measure-android -j3 --target rpc_runner \
+  arcdroid_rpcmeasure_libretro \
+  arcdroid_rpcmeasure_l1_sa_linear_libretro \
+  arcdroid_rpcmeasure_l1_sa_hint_libretro \
+  arcdroid_rpcmeasure_l1_sa_mirror_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_hint_libretro \
+  arcdroid_rpcmeasure_l1_sa_way0_mirror_libretro \
+  arcdroid_rpcmeasure_l1_off_libretro
+```
+
+`sa_linear`, `sa_hint`, `sa_mirror`, `sa_way0_hint` and `sa_way0_mirror` set both SA caches to 0/1/2/3/4 while keeping
+the other frozen gates. `off` forces every cache linear for CG-10. Files use
+those target names plus the platform library suffix (Android additionally
+`_android.so`). Run each with the runner from this revision and the unchanged
+frozen recipe. Selection on 031, warm and ldm-stm8, and fresh confirmation ABBA,
+belong to Fable; selection evidence is never reused for confirmation. Default
+measurement/shipping identity excludes these deliberate variant cores.
+
+Counter ABI revision 3 uses versioned snapshot symbols plus revision/size
+arguments. A runner/core pair must come from one revision; compare the base
+with its own runner and the candidate with its own runner. JSON remains schema
+2 with scalar names appended and histogram offsets changed in the binary ABI.
+
+For local correctness, `ARCDROID_RPC_L1_TEST_GATE=0|1|2|3|4` changes test cores only;
+`ARCDROID_RPC_L1_POISON=ON` poisons test hints only. Default measurement and
+shipping cores ignore both options. `rpc-l1-corpus` constructs isolated test
+cores for default/linear/hint/mirror/way0-hint/way0-mirror and hint-poison variants, with the retained reference enabled,
+and runs 25 immutable goldens, all calibration intervals and observation plans.
+`tests/rpc_l1_corpus_test.py BUILD --variants 2 poison` selects a smaller rerun.
+
+
+The primary sanitizer suite uses its actual Debug cores. The secondary full
+L1 gate corpus also exercises sanitized RPC objects and the unchanged firmware hash helper at -O2, retaining every
+preprocessor, ABI and sanitizer flag and all assertions. This supplies a second
+optimization level while avoiding five repetitions of the 485-million-attempt
+Debug SA calibration. These temporary correctness cores are never measurement
+cores and never decide benefit.
+
 ## M2b lockstep core and v1 driver
 
 The opt-in `ARCDROID_RPC_LOCKSTEP=ON` builds the non-installed host core

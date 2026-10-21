@@ -220,6 +220,12 @@ static ArcRpcPreparation *begin(const ArcRpcPreparationRequest *r,
         r->fingerprint->os!=r->selection.os || !r->hard_disc || !r->populate))) {
         if(e&&n)snprintf(e,n,"Invalid resolved RiscPC preparation request");return NULL;
     }
+    /* AY-1 L-2: reject the requested clock before acquiring stores or seeding
+     * a new record. START's conversion still supplies the actual patch year. */
+    unsigned year;
+    if(!arc_engine_rpc_calendar_year(r->epoch,&year)){
+        if(e&&n)snprintf(e,n,"RiscPC session clock is outside the supported range");return NULL;
+    }
 #if defined(ARCDROID_TEST_FAULTS)
     arc_riscpc_helper_failure=false;
 #endif

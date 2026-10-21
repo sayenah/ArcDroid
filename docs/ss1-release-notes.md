@@ -58,3 +58,5 @@ required; output spare capacity is zeroed (R-SS4d).
 
 Distinct copies are identified when the frontend supplies GET_LIBRETRO_PATH.
 Legitimate content switches unload first; outgoing CMOS publication is preserved.
+
+A state taken before the session’s first frame cannot be loaded; rewinding to the very start of a session is refused with a notice.

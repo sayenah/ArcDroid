@@ -2,6 +2,9 @@
 #include "arc_state.h"
 void arc_state_visit_engine_arculator_src_cmos(ArcState *s)
 {
+   arc_state_region(s,"engine/arculator/src/cmos.c:year_original",&year_original,sizeof(year_original));
+   arc_state_region(s,"engine/arculator/src/cmos.c:year_written",&year_written,sizeof(year_written));
+   arc_state_region(s,"engine/arculator/src/cmos.c:year_overlay",&year_overlay,sizeof(year_overlay));
    arc_state_region(s,"engine/arculator/src/cmos.c:cmos_changed",&cmos_changed,sizeof(cmos_changed));
    arc_state_region(s,"engine/arculator/src/cmos.c:i2c_clock",&i2c_clock,sizeof(i2c_clock));
    arc_state_region(s,"engine/arculator/src/cmos.c:i2c_data",&i2c_data,sizeof(i2c_data));
@@ -10,6 +13,12 @@ void arc_state_visit_engine_arculator_src_cmos(ArcState *s)
    arc_state_region(s,"engine/arculator/src/cmos.c:systemtime",&systemtime,sizeof(systemtime));
    arc_state_target(s,&cmos.timer,ARC_STATE_REFERENCE_TIMER);
    if (!arc_state_pass(s)) return;
+   arc_state_object(s,"engine/arculator/src/cmos.c:year_original");
+   arc_state_value(s,&year_original,sizeof(year_original));
+   arc_state_object(s,"engine/arculator/src/cmos.c:year_written");
+   arc_state_value(s,&year_written,sizeof(year_written));
+   arc_state_object(s,"engine/arculator/src/cmos.c:year_overlay");
+   arc_state_value(s,&year_overlay,sizeof(year_overlay));
    arc_state_object(s,"engine/arculator/src/cmos.c:cmos_changed");
    arc_state_value(s,&(cmos_changed),sizeof(cmos_changed));
    arc_state_object(s,"engine/arculator/src/cmos.c:i2c_clock");
@@ -43,6 +52,8 @@ void arc_state_visit_engine_arculator_src_cmos(ArcState *s)
    arc_state_value(s,&((systemtime).mon),sizeof((systemtime).mon));
    arc_state_value(s,&((systemtime).year),sizeof((systemtime).year));
    if(arc_state_loading(s)) {
-      ARC_STATE_BOUND(s,i2c.pos,0,8);ARC_STATE_BOUND(s,cmos.addr,0,255);ARC_STATE_BOUND(s,systemtime.mon,1,12);ARC_STATE_BOUND(s,systemtime.day,1,31);ARC_STATE_BOUND(s,systemtime.msec,0,999);ARC_STATE_BOUND(s,systemtime.sec,0,60);ARC_STATE_BOUND(s,systemtime.min,0,59);ARC_STATE_BOUND(s,systemtime.hour,0,23);
+      ARC_STATE_BOUND(s,year_written,0,7);ARC_STATE_BOUND(s,year_overlay,0,1);
+      ARC_STATE_BOUND(s,i2c.pos,0,8);/* Sequential transfers increment the int cursor past 255; RAM accesses mask it. */
+      if(cmos.addr<0)arc_state_fail(s,"cmos.addr range");ARC_STATE_BOUND(s,systemtime.mon,1,12);ARC_STATE_BOUND(s,systemtime.day,1,31);ARC_STATE_BOUND(s,systemtime.msec,0,999);ARC_STATE_BOUND(s,systemtime.sec,0,60);ARC_STATE_BOUND(s,systemtime.min,0,59);ARC_STATE_BOUND(s,systemtime.hour,0,23);
    }
 }
