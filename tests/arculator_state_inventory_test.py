@@ -151,6 +151,17 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unclassified'):
             GUARD.verify(ROOT, bad)
 
+    def test_serialized_field_omission(self):
+        self.mutate('engine/state-generated/cmos_state.inc', lambda s:
+                    s.replace('   arc_state_value(s,&((cmos).addr),sizeof((cmos).addr));\n', ''),
+                    'unreviewed generated payload fields')
+
+    def test_serialized_wrong_variable(self):
+        self.mutate('engine/state-generated/cmos_state.inc', lambda s:
+                    s.replace('arc_state_value(s,&year_written,sizeof(year_written));',
+                              'arc_state_value(s,&year_overlay,sizeof(year_overlay));'),
+                    'unreviewed generated payload fields')
+
 
 if __name__ == '__main__':
     unittest.main()

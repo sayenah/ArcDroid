@@ -1103,61 +1103,93 @@ remain active. Linux sanitizer jobs and every non-ASan build still execute
 the full image unload/reload sequence. The separate secondary-route test is
 unchanged. No production loader behavior or sanitizer memory check is changed.
 
-## SS-1b: session follow-ups
+## SS-1b: session follow-ups (run B, R-SS1b-2)
 
 Capture's unsupported-mode, media-budget and pending-log notices each have a
-host-only, once-per-content-session latch. Rewind and reset retain them;
-session release clears them. Explicit failed load requests still give their
-ordinary notice. A session closing with Preemptive Frames' null poll installed
-does not supply the next session's real-poll identity: release clears that
-identity, and the next primary callback installation captures it. Frontends
-that retain callbacks across loads capture the current poll on their first
-run or save instead. Run O's distinct restoration-pointer normalization and
-the speculative/failed-rollback publication latches are unchanged.
+host-only per-cause latch. Save and load share the media-budget latch. Invalid
+state loads have a separate session latch, covering the initial pre-first-frame
+capture too. Held rewind repeats the oldest state on every frame even after
+reaching the end of the ring; it must not repeat any refusal notice or its
+associated diagnostic. Rewind and reset do not restore these host latches.
+A successful load clears the media-budget and pending-log latches because it
+recovers those causes; a subsequent failure may announce that cause once again.
+Session release clears every latch. The core cannot distinguish a manual load
+from a rewind load, so both obey the same notice rules.
+
+A session closing with Preemptive Frames' null poll installed does not supply
+the next session's real-poll identity: release clears that identity, and the
+next primary callback installation captures it. Frontends retaining callbacks
+across loads capture the current poll on their first run or save instead.
+Public harness cases exercise both fallback paths independently. Run O's
+restoration-pointer normalization and speculative/failed-rollback publication
+latches are unchanged.
 
 States captured before the first frame still fail transactional load validation.
-The public regression checks direct load and rewind to that first capture,
-one notice per failed load, unchanged canonical guest state and stores, and
-exact subsequent guest continuation. The CMOS cursor accepts 0..65,535,
-including sequential cursors above 255, and refuses larger signed values
-before commit. The declaration inventory also cross-checks serialized generated
-owners against their payload visitors; omitting either frontend calendar cache
-visitor now fails the guard. The five handwritten pending-I/O queue roots
-continue through their existing bounded blob codec and its tests.
-The disposable inventory fixture includes skipped boundary headers, checks an
-unchanged copied tree, and requires the missing-visitor diagnostic for omissions;
-an unresolved include cannot count as a detected visitor mutation.
+The public regression checks direct load and held rewind to that first capture,
+one notice in the session, unchanged canonical guest state and stores, and exact
+subsequent continuation. The CMOS cursor load check accepts every non-negative
+`int`, including values above 65,535, without masking or canonicalization. RAM
+accesses mask its index, but the engine's unmasked `cmos.addr < 0x10` comparison
+in `cmos.c:333` makes masking the cursor itself observably different. The engine
+can produce large cursors through sequential transfers, so a load-only ceiling
+would reject its own captured states. The upstream engine's signed cursor
+increment still has a residual overflow after about 2^31 sequential bytes in
+one transaction (unreachable in play); this slice does not change that engine
+property. Forged-record tests restore 0, 256, 65,535, 65,536 and INT_MAX exactly
+without executing an increment from INT_MAX, and reject negative cursors.
 
-The fixed capacity now reserves metadata for the media slots admitted at load,
-instead of all 32 potential slots. Slot additions beyond that admission refuse
-save and load before snapshot work; removing the added slot recovers capture.
-Same-slot replacements remain usable, and larger payload envelopes retain the
-existing refusal. The advertised size never grows, including across reset.
-Raw media still reserve every possible dirty byte and sector index across the
-largest admitted writable image, JFD still reserves every eligible replacement
-byte and every allowed 1,024-byte creation (not just existing mutations), and
-native IDE still reserves its full image and sector indexes. These reservations
-cannot safely shrink to current dirty bytes: normal guest writes can fill them.
-Only one mutable floppy graph is live; inactive JFD envelopes remain reserved.
+The declaration inventory cross-checks serialized generated owners against
+payload visitors. Reviewed fingerprints of object/payload calls also catch a
+single dropped field or a visit of the wrong variable, without pinning unrelated
+validation or function bodies. Explicit omission/wrong-variable mutants verify
+both checks. The five handwritten pending-I/O queue roots retain their bounded
+blob codec and its tests. The disposable inventory fixture includes skipped
+boundary headers and checks an unchanged copied tree before precise omissions.
 
-This is required by RetroArch 1.22.2's fixed allocations:
-[rewind initialization and ring](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L353-L505)
-allocate two full blocks and the configured ring once. Each push reserves its
-worst-case reverse-patch size before eviction and can wrap early, so dividing
-20,000,000 by a typical patch is not the history depth. The
-[rewind wrapper](https://github.com/libretro/RetroArch/blob/v1.22.2/tasks/task_save.c#L318-L440)
-adds 24 bytes and rounds core bytes to eight-byte alignment; achievements add
-their own block. It refuses growth beyond the allocated rewind buffer.
-[Run-ahead creation](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L837-L983)
-queries the special core size once, allocates a single primary state, and reuses
-that stored length; failed saves disable run-ahead. Neither path grants the
-core permission to grow its bound after replacement or guest writes.
+Item (6)'s admitted-slot tightening is withdrawn. The fixed session capacity
+again reserves metadata for all 32 slots, exactly as SS-1 did. RetroArch's Load
+New Disc appends a slot; it need not remove slots or reload content to recover
+state features. Raw media still reserve every possible dirty byte and sector
+index across the largest admitted writable image, JFD every eligible replacement
+byte and allowed 1,024-byte creation, and native IDE its full image and indexes.
+These envelopes cannot shrink to current dirty bytes: normal guest writes can
+fill them. Only one mutable floppy graph is live; inactive JFD envelopes remain
+reserved. Larger replacement/append envelopes retain the existing refusal;
+the advertised capacity never grows, including across reset.
 
-`arculator-state-capacity` checks the tighter bound, canonical restore and
-slot-growth refusal. The existing media/dirty/creation, default-buffer rewind,
-guest-state differential and run-ahead mode suites remain. The authored depth
-probe uses public captures and independently models the tagged 16-bit patch
-sizes, ring reservation, links, early wrapping and eviction at granularity one;
-depth is workload-dependent and excludes optional achievements. It reports
-history over the last 1,200 of 2,400 frames and the ring-wrap count, not a
-universal gameplay guarantee.
+RetroArch 1.22.2's [held-rewind sequence](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L615-L734)
+deserializes both on a successful pop and at the oldest entry. Failed captures
+do not stop its subsequent push. Its [append sequence](https://github.com/libretro/RetroArch/blob/v1.22.2/disk_control_interface.c#L535-L607)
+ejects, adds a slot, fills it, selects it and closes the tray. The public tests
+model these orders; appended in-envelope states support repeated rewind loads,
+exact forward replay and a speculative run-ahead/rollback cycle.
+
+The [rewind allocation](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L353-L505)
+fixes two full blocks and a ring, reserving a worst-case patch before each push.
+The [wrapper](https://github.com/libretro/RetroArch/blob/v1.22.2/tasks/task_save.c#L318-L440)
+adds 24 bytes plus eight-byte core alignment and optional achievements; later
+growth refuses. [Run-ahead](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L837-L983)
+queries the size once and reuses that buffer. The core retains its fixed bound
+and full writable growth reservation for the session.
+
+The default-buffer depth probe uses public captures and independently models
+the tagged 16-bit patches, links, reservation, wrapping and eviction with the
+**32-slot bound**. It reports history over the last 1,200 of 2,400 frames after
+96 warmup frames, at granularity one in a 20,000,000-byte ring, without
+achievements. Depth depends on the authored workload; it is not a universal
+minimum. The per-profile measurement table is retained in the Sol report; run
+A's admitted-slot column is withdrawn, and run B records the restored bound.
+
+Measured host arm64 default-buffer depth with the restored **32-slot bound**:
+
+| Profile | Read-only ADF bound, bytes | Read-only history, frames | Writable ADF history, frames |
+| --- | ---: | ---: | ---: |
+| A3000 | 7,356,582 | 246–606 | 161–558 |
+| A3010 | 7,356,582 | 253–636 | 176–582 |
+| A3020 | 7,356,582 | 245–602 | 161–557 |
+| A4000 | 7,356,582 | 245–602 | 161–557 |
+
+All ranges use the authored probe above. Writable high-density floppy bounds are
+9,020,582 bytes on A3010/A3020/A4000; the conservative full-set maximum is
+16,638,330 bytes. Native IDE bounds remain above the default ring's admission
+limit and retain zero history there. The report retains all 25 measured cells.

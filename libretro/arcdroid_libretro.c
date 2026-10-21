@@ -418,7 +418,6 @@ static ArcMediaEntry arc_rpc_helper_entry;
 static unsigned arc_media_count;
 static bool arc_state_inside_run;
 static size_t arc_state_capacity,arc_state_media_budget;
-static unsigned arc_state_media_slots;
 static bool arc_secondary_instance;
 static bool arc_state_publication_noticed;
 static ArcDigest arc_state_firmware_digest;
@@ -428,6 +427,7 @@ static bool arc_state_boundary_armed;
 static bool arc_state_speculation,arc_state_rollback_failed;
 static bool arc_state_mode_noticed;
 static bool arc_state_media_noticed,arc_state_pending_noticed;
+static bool arc_state_load_noticed;
 static uint64_t arc_state_committed_hd[2],arc_state_committed_jfd[ARC_PLAYLIST_MAX_ENTRIES];
 
 #if defined(ARCDROID_TEST_FAULTS)
@@ -9339,7 +9339,6 @@ static size_t arc_snapshot_media_bound(void)
 }
 static size_t arc_snapshot_session_bound(const ArcMachineDescriptor *machine)
 {
-   arc_state_media_slots=arc_media_count;
    size_t bytes=arc_state_static_bound(arc_snapshot_static_visit);
    if(!bytes)return 0;
    bytes+=16u+(size_t)machine->memory_kib*1024u;
@@ -9387,7 +9386,7 @@ RETRO_API bool retro_serialize(void *data,size_t size)
    /* Restored callbacks do not make the still-speculative guest/queue a
     * real snapshot. Only rollback can release its provenance latch. */
    if(arc_state_speculation)return false;
-   if(arc_media_count>arc_state_media_slots||arc_snapshot_media_bound()>arc_state_media_budget){
+   if(arc_snapshot_media_bound()>arc_state_media_budget){
       if(!arc_state_media_noticed) {
          arc_state_media_noticed=true;
          arc_message("The replacement disc needs a larger save-state buffer. Reload the content to use save states.",RETRO_LOG_WARN);
@@ -9418,8 +9417,12 @@ RETRO_API bool retro_unserialize(const void *data,size_t size)
    /* Pessimistic until commit, including every early refusal path. */
    if(arc_state_speculation)arc_state_rollback_failed=true;
    if(!arc_snapshot_available()||!data||!size)return false;
-   if(arc_media_count>arc_state_media_slots||arc_snapshot_media_bound()>arc_state_media_budget){
-      arc_message("The replacement disc needs a larger save-state buffer. Reload the content to use save states.",RETRO_LOG_WARN);return false;
+   if(arc_snapshot_media_bound()>arc_state_media_budget){
+      if(!arc_state_media_noticed) {
+         arc_state_media_noticed=true;
+         arc_message("The replacement disc needs a larger save-state buffer. Reload the content to use save states.",RETRO_LOG_WARN);
+      }
+      return false;
    }
    arc_state_note_committed();
    unsigned old_width=arc_video_width,old_height=arc_video_height;double old_rate=arc_video_rate;
@@ -9435,6 +9438,9 @@ RETRO_API bool retro_unserialize(const void *data,size_t size)
       arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
    }
    if(okay) {
+      /* A successful rollback recovers media/queued changes. Permit one new
+       * warning if either recoverable cause occurs again after that load. */
+      arc_state_media_noticed=arc_state_pending_noticed=false;
       arc_state_speculation=arc_state_rollback_failed=false;
       arc_platform_video_rebuild();
       memset(arc_frame,0,sizeof(arc_frame));memset(arc_audio_frame,0,sizeof(arc_audio_frame));
@@ -9461,8 +9467,11 @@ RETRO_API bool retro_unserialize(const void *data,size_t size)
    }
    if(!okay) {
       if(arc_state_speculation)arc_state_rollback_failed=true;
-      if(arc_log)arc_log(RETRO_LOG_WARN,"Save state refused: %s\n",arc_state_error(s));
-      arc_message("This save state does not match the running session or saved disc changes.",RETRO_LOG_WARN);
+      if(!arc_state_load_noticed) {
+         arc_state_load_noticed=true;
+         if(arc_log)arc_log(RETRO_LOG_WARN,"Save state refused: %s\n",arc_state_error(s));
+         arc_message("This save state does not match the running session or saved disc changes.",RETRO_LOG_WARN);
+      }
    }
    arc_state_io_speculate(okay&&arc_state_boundary_armed?
       arc_input_poll!=arc_state_real_poll:(speculative||arc_state_speculation));
@@ -9612,7 +9621,7 @@ static void arc_snapshot_static_visit(ArcState *s)
    arc_state_visit_libretro_arcdroid_libretro(s);arc_arculator_static_visit(s);
    if(arc_state_measuring(s)){
       arc_state_object(s,"libretro/arcdroid_libretro.c:arc_media");
-      for(unsigned i=0;i<arc_media_count;++i)arc_state_media_entry_values(s,&arc_media[i]);
+      for(unsigned i=0;i<ARC_PLAYLIST_MAX_ENTRIES;++i)arc_state_media_entry_values(s,&arc_media[i]);
    }
 }
 static void arc_snapshot_visit(ArcState *s)

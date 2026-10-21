@@ -80,11 +80,20 @@ if(!strcmp(argv[5],"--ss1-notices")) {
       assert(ss1_native_mutations==native);
       for(size_t i=0;i<n;++i)assert(buffer[i]==0x69);
       assert(retro_unserialize(saved,n));
+      /* A successful load recovers the queue and rearms its notice (F-4). */
+      speculate(true);
+      for(unsigned i=0;i<300u;++i){assert(write_cmos(216u,(uint8_t)i));persist();}
+      notices=total_osd_calls;
+      for(unsigned call=0;call<32u;++call)assert(!retro_serialize(buffer,n));
+      assert(total_osd_calls==notices+1u&&strstr(last_message,"pending disc changes"));
+      assert(retro_unserialize(saved,n));
       char larger[4096];assert(snprintf(larger,sizeof(larger),"%s",argv[3])<(int)sizeof(larger));
       char *slash=strrchr(larger,'/');assert(slash);*slash=0;size_t prefix=strlen(larger);
       assert(snprintf(larger+prefix,sizeof(larger)-prefix,"/hd-family/valid-f.adf")<(int)(sizeof(larger)-prefix));
+      char recovery[4096];assert(snprintf(recovery,sizeof(recovery),"%s/recovery.adf",data_root)<(int)sizeof(recovery));copy_file(argv[3],recovery);
+      unsigned extra=disk_control.get_num_images();assert(disk_control.add_image_index());
       struct retro_game_info replacement={.path=larger};
-      assert(disk_control.set_eject_state(true)&&disk_control.replace_image_index(0,&replacement)&&disk_control.set_eject_state(false));
+      assert(disk_control.set_eject_state(true)&&disk_control.replace_image_index(extra,&replacement)&&disk_control.set_eject_state(false));
       notices=total_osd_calls;memset(buffer,0x69,n);
       uint8_t before[1024],after[1024];size_t cpu_n=cpu_snapshot(before,sizeof(before));
       for(unsigned frame=0;frame<32u;++frame) {
@@ -96,9 +105,24 @@ if(!strcmp(argv[5],"--ss1-notices")) {
          retro_run();
       }
       assert(cpu_snapshot(after,sizeof(after))==cpu_n&&memcmp(before,after,cpu_n));
+      /* Recover the extra media envelope without replacing the mounted store. */
+      replacement.path=recovery;
+      assert(disk_control.set_eject_state(true)&&disk_control.replace_image_index(extra,&replacement)&&disk_control.set_eject_state(false));
+      /* The reopened store has a new native frontier. Capture that frontier;
+       * a save alone must not rearm the media notice. */
+      assert(retro_serialize(saved,n));replacement.path=larger;
+      assert(disk_control.set_eject_state(true)&&disk_control.replace_image_index(extra,&replacement)&&disk_control.set_eject_state(false));
+      notices=total_osd_calls;assert(!retro_serialize(buffer,n)&&total_osd_calls==notices);
+      replacement.path=recovery;
+      assert(disk_control.set_eject_state(true)&&disk_control.replace_image_index(extra,&replacement)&&disk_control.set_eject_state(false));
+      assert(retro_serialize(saved,n)&&retro_unserialize(saved,n));replacement.path=larger;
+      assert(disk_control.set_eject_state(true)&&disk_control.replace_image_index(extra,&replacement)&&disk_control.set_eject_state(false));
+      notices=total_osd_calls;
+      for(unsigned call=0;call<32u;++call)assert(!retro_serialize(buffer,n));
+      assert(total_osd_calls==notices+1u&&strstr(last_message,"larger save-state buffer"));
       free(saved);free(buffer);retro_unload_game();
    }
-   puts("SS1b notices: every capture refusal once per cause; rewind/reset retain latches; unload and deinit reopen reset them");
+   puts("SS1b notices: capture causes deduplicated; successful loads rearm media/pending; new sessions reset notices");
    continue;
 }
 if(!strcmp(argv[5],"--ss1-session-poll")) {
@@ -129,11 +153,27 @@ if(!strcmp(argv[5],"--ss1-first-frame")) {
    retro_run();assert(retro_serialize(before,n));
    retro_run();assert(retro_serialize(latest,n)&&retro_unserialize(before,n));
    notices=total_osd_calls;native=ss1_native_mutations;
-   assert(!retro_unserialize(initial,n)&&total_osd_calls==notices+1u&&ss1_native_mutations==native);
+   assert(!retro_unserialize(initial,n)&&total_osd_calls==notices&&ss1_native_mutations==native);
    assert(retro_serialize(after,n)&&!memcmp(before,after,n));
    retro_run();assert(retro_serialize(after,n)&&!memcmp(latest,after,n));
+   /* 1.22.2 pops its oldest block again on every held frame, even when
+    * pop reports end-of-buffer. It still executes the ensuing core frame. */
+   for(unsigned held=0;held<32u;++held) {
+      assert(retro_serialize(before,n));notices=total_osd_calls;native=ss1_native_mutations;
+      assert(!retro_unserialize(initial,n)&&total_osd_calls==notices&&ss1_native_mutations==native);
+      assert(retro_serialize(after,n)&&!memcmp(before,after,n));retro_run();
+   }
+   /* A new content session gets its own first refusal, even in this library. */
+   retro_unload_game();phase=PHASE_LOAD;assert(retro_load_game(&game));phase=PHASE_RUN;
+   assert(retro_serialize(initial,n));
+   for(unsigned held=0;held<32u;++held) {
+      notices=total_osd_calls;native=ss1_native_mutations;
+      assert(!retro_unserialize(initial,n)&&total_osd_calls==notices+(held==0u));
+      assert(ss1_native_mutations==native&&retro_serialize(after,n));
+      if(!held)assert(!memcmp(initial,after,n));retro_run();
+   }
    free(initial);free(before);free(after);free(latest);retro_unload_game();
-   puts("SS1b first-frame: initial load and rewind to start refuse once without mutation; exact forward continuation");continue;
+   puts("SS1b first-frame: held rewind at oldest capture refuses once per session, unchanged guest/stores and exact continuation");continue;
 }
 if(!strcmp(argv[5],"--ss1-cmos-cursor")) {
    retro_run();size_t n=retro_serialize_size();uint8_t *saved=malloc(n),*edited=malloc(n),*again=malloc(n);
@@ -146,12 +186,12 @@ if(!strcmp(argv[5],"--ss1-cmos-cursor")) {
    for(unsigned i=0;i<sizeof(field);++i)key=(key^field[i])*UINT64_C(1099511628211);
    size_t at=40;while(at<ss1_get64(saved+16)&&ss1_get64(saved+at)!=key)at+=24u+(size_t)ss1_get64(saved+at+16);
    assert(at<ss1_get64(saved+16)&&ss1_get64(saved+at+16)==sizeof(int));
-   const int cursors[]={-1,65536,INT_MAX,256,65535};
+   const int cursors[]={-1,INT_MIN,0,256,65535,65536,INT_MAX};
    for(unsigned i=0;i<sizeof(cursors)/sizeof(cursors[0]);++i) {
       memcpy(edited,saved,n);memcpy(edited+at+24,&cursors[i],sizeof(int));ss1_checksum(edited);
       uint64_t native=ss1_native_mutations;unsigned notices=total_osd_calls;
-      if(i<3u) {
-         assert(!retro_unserialize(edited,n)&&total_osd_calls==notices+1u);
+      if(i<2u) {
+         assert(!retro_unserialize(edited,n)&&total_osd_calls==notices+(i==0u));
          assert(retro_serialize(again,n)&&!memcmp(saved,again,n));
       } else {
          assert(retro_unserialize(edited,n)&&total_osd_calls==notices);
@@ -161,7 +201,7 @@ if(!strcmp(argv[5],"--ss1-cmos-cursor")) {
       assert(ss1_native_mutations==native);
    }
    free(saved);free(edited);free(again);retro_unload_game();
-   puts("SS1b CMOS: -1/65536/INT_MAX refused transactionally; 256/65535 canonical");continue;
+   puts("SS1b CMOS: negative cursors refused; 0/256/65535/65536/INT_MAX restore without masking");continue;
 }
 if(!strcmp(argv[5],"--ss1-capacity-set")) {
    size_t n=retro_serialize_size();assert(disk_control.get_num_images()==ARC_PLAYLIST_MAX_ENTRIES);
@@ -175,18 +215,97 @@ if(!strcmp(argv[5],"--ss1-capacity-set")) {
    free(saved);free(again);retro_unload_game();continue;
 }
 if(!strcmp(argv[5],"--ss1-capacity")) {
-   size_t n=retro_serialize_size();
-   /* All four shipping profiles have 4 MiB; the former all-32-slot read-only
-    * reservation was 7,356,582. A one-slot session must shed unused metadata. */
-   assert(n<7356582u);retro_run();uint8_t *saved=malloc(n),*again=malloc(n);assert(saved&&again&&retro_serialize(saved,n));
+   size_t n=retro_serialize_size();assert(n&&n<=16u*1024u*1024u);
+   retro_run();uint8_t *saved=malloc(n),*again=malloc(n),*next=malloc(n);assert(saved&&again&&next);
+   assert(retro_serialize(saved,n)&&retro_unserialize(saved,n));
+   /* 1.22.2 Load New Disc: eject, append, replace the new slot, select, close.
+    * The appended authored image fits the already reserved raw envelope. */
+   char path[4096];assert(snprintf(path,sizeof(path),"%s/appended.adf",data_root)<(int)sizeof(path));copy_file(argv[3],path);
+   struct retro_game_info appended={.path=path};unsigned slot=disk_control.get_num_images();assert(slot==1u);
+   assert(disk_control.set_eject_state(true)&&disk_control.add_image_index());
+   assert(disk_control.replace_image_index(slot,&appended)&&disk_control.set_image_index(slot)&&disk_control.set_eject_state(false));
+   assert(disk_control.get_num_images()==2u&&disk_control.get_image_index()==slot&&retro_serialize_size()==n);
+   /* Old one-disc rewind entries still fail the unchanged ordered-media
+    * identity check. Holding at that entry announces this cause only once.
+    * The extra captures below observe canonical state, not frontend pushes. */
+   for(unsigned held=0;held<32u;++held) {
+      assert(retro_serialize(again,n));unsigned notice=total_osd_calls;uint64_t native=ss1_native_mutations;
+      assert(!retro_unserialize(saved,n)&&total_osd_calls==notice+(held==0u));
+      assert(ss1_native_mutations==native&&retro_serialize(next,n)&&!memcmp(again,next,n));retro_run();
+   }
+   retro_run();unsigned notices=total_osd_calls;
+   assert(retro_serialize(saved,n)&&total_osd_calls==notices);
+   retro_run();notices=total_osd_calls;assert(retro_serialize(next,n)&&total_osd_calls==notices);
+   /* Rewind post-append states, then replay their exact forward continuation. */
+   for(unsigned held=0;held<32u;++held) {
+      notices=total_osd_calls;
+      assert(retro_unserialize(saved,n)&&retro_serialize(again,n)&&!memcmp(saved,again,n)&&total_osd_calls==notices);
+      retro_run();notices=total_osd_calls;
+      assert(retro_serialize(again,n)&&!memcmp(next,again,n)&&total_osd_calls==notices);
+   }
+   /* A one-frame run-ahead cycle must still roll back after append. */
+   notices=total_osd_calls;assert(retro_unserialize(saved,n)&&total_osd_calls==notices);
+   retro_set_input_poll(ss1_fake_poll);retro_set_input_state(ss1_fake_input);retro_run();
+   retro_set_input_poll(poll);retro_set_input_state(ss1_logged_input);
+   notices=total_osd_calls;
+   assert(retro_unserialize(saved,n)&&retro_serialize(again,n)&&!memcmp(saved,again,n)&&total_osd_calls==notices);
+   assert(retro_serialize_size()==n);
+   free(saved);free(again);free(next);retro_unload_game();
+   printf("SS1b capacity: machine=%s bound=%zu reserves 32 slots; append, held rewind and run-ahead remain usable\n",option_machine,n);continue;
+}
+if(!strcmp(argv[5],"--ss1-held-media")) {
+   size_t n=retro_serialize_size();uint8_t *states[3],*scratch=malloc(n);assert(scratch);
+   for(unsigned frame=0;frame<3u;++frame){states[frame]=malloc(n);assert(states[frame]&&retro_serialize(states[frame],n));retro_run();}
+   char larger[4096];assert(snprintf(larger,sizeof(larger),"%s",argv[3])<(int)sizeof(larger));
+   char *slash=strrchr(larger,'/');assert(slash);*slash=0;size_t prefix=strlen(larger);
+   assert(snprintf(larger+prefix,sizeof(larger)-prefix,"/hd-family/valid-f.adf")<(int)(sizeof(larger)-prefix));
+   struct retro_game_info image={.path=larger};unsigned slot=disk_control.get_num_images();
+   assert(disk_control.set_eject_state(true)&&disk_control.add_image_index()&&disk_control.replace_image_index(slot,&image));
+   assert(disk_control.set_image_index(slot)&&disk_control.set_eject_state(false));
+   const uint8_t *history[32]={states[0],states[1],states[2]};
+   unsigned entries=3u;
+   for(unsigned burst=0;burst<2u;++burst) {
+      /* Held means deserialize then run, never a rewind capture. Past the
+       * final pop, state_manager_pop returns its same oldest block forever. */
+      for(unsigned held=0;held<64u;++held) {
+         const uint8_t *oldest=history[held<entries?entries-1u-held:0u];
+         unsigned notices=total_osd_calls;uint64_t native=ss1_native_mutations;
+         uint8_t before[1024],after[1024];size_t cpu_n=cpu_snapshot(before,sizeof(before));
+         assert(!retro_unserialize(oldest,n)&&total_osd_calls==notices+(burst==0u&&held==0u));
+         assert(ss1_native_mutations==native&&cpu_snapshot(after,sizeof(after))==cpu_n&&!memcmp(before,after,cpu_n));
+         if(!burst&&!held)assert(strstr(last_message,"larger save-state buffer"));
+         retro_run();
+      }
+      if(!burst) {
+         /* Release rewind: 1.22.2 ignores false capture and still pushes the
+          * alternating stale nextblock/thisblock pair. Model those 32 entries,
+          * then hold again and exhaust them in the second burst. */
+         entries=0u; /* The previous held burst popped every old entry. */
+         for(unsigned frame=0;frame<32u;++frame) {
+            const uint8_t *stale=states[frame&1u?0u:1u];memcpy(scratch,stale,n);
+            unsigned notices=total_osd_calls;uint64_t native=ss1_native_mutations;
+            assert(!retro_serialize(scratch,n)&&retro_serialize_size()==n&&total_osd_calls==notices);
+            assert(ss1_native_mutations==native&&!memcmp(scratch,stale,n));history[entries++]=stale;retro_run();
+         }
+      }
+   }
+   for(unsigned i=0;i<3u;++i)free(states[i]);free(scratch);retro_unload_game();
+   puts("SS1b held media: oversized appended image, failed captures and repeated oldest loads share one cause notice");continue;
+}
+if(!strcmp(argv[5],"--ss1-retained-poll")) {
+   size_t n=retro_serialize_size();uint8_t *saved=malloc(n),*again=malloc(n);assert(saved&&again);
+   /* Retain both callbacks across reload: no setters after either load. */
+   retro_unload_game();phase=PHASE_LOAD;assert(retro_load_game(&game));phase=PHASE_RUN;
+   unsigned notices=total_osd_calls;
+   assert(retro_serialize(saved,n)&&total_osd_calls==notices); /* serialize fallback */
+   retro_run();assert(retro_serialize(saved,n));retro_run();
    assert(retro_unserialize(saved,n)&&retro_serialize(again,n)&&!memcmp(saved,again,n));
-   assert(disk_control.set_eject_state(true));
-   unsigned slots=disk_control.get_num_images();assert(slots==1u&&disk_control.add_image_index());
-   assert(retro_serialize_size()==n);memset(again,0x69,n);unsigned notices=total_osd_calls;uint64_t native=ss1_native_mutations;
-   assert(!retro_serialize(again,n)&&total_osd_calls==notices+1u&&ss1_native_mutations==native);
-   for(size_t i=0;i<n;++i)assert(again[i]==0x69);
-   assert(!retro_unserialize(saved,n)&&ss1_native_mutations==native);
-   assert(disk_control.replace_image_index(slots,NULL));assert(retro_serialize_size()==n);
-   assert(retro_serialize(again,n));free(saved);free(again);retro_unload_game();
-   printf("SS1b capacity: machine=%s old=7356582 new=%zu; slot growth refuses before output; removing extra slot recovers\n",option_machine,n);continue;
+   retro_unload_game();phase=PHASE_LOAD;assert(retro_load_game(&game));phase=PHASE_RUN;
+   retro_run(); /* boundary_frame fallback, before any serialization or setter */
+   notices=total_osd_calls;retro_set_input_poll(ss1_fake_poll);
+   assert(!retro_serialize(again,n)&&total_osd_calls==notices+1u&&strstr(last_message,"Preemptive Frames"));
+   retro_set_input_poll(poll);assert(retro_serialize(saved,n));retro_run();
+   assert(retro_unserialize(saved,n)&&retro_serialize(again,n)&&!memcmp(saved,again,n));
+   free(saved);free(again);retro_unload_game();
+   puts("SS1b retained callbacks: serialize and frame fallback bind primary poll independently; later preempt still refuses");continue;
 }

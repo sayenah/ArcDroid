@@ -23440,12 +23440,6 @@
       },
       {
         "kind": "declaration",
-        "declaration": "static unsigned arc_state_media_slots ;",
-        "classification": "host-only",
-        "reason": "Load-time admitted media-slot count bounds generated metadata in the fixed frontend capacity; later slot growth refuses states before capture/load; host authority, never rewound."
-      },
-      {
-        "kind": "declaration",
         "declaration": "static bool arc_secondary_instance ;",
         "classification": "host-only",
         "reason": "Run-H process-local loaded-module identity and publication boundary authority; copied modules are refused before frontend registration; borrowed loader identity and balanced NOLOAD references never enter a state."
@@ -23496,7 +23490,13 @@
         "kind": "declaration",
         "declaration": "static bool arc_state_media_noticed , arc_state_pending_noticed ;",
         "classification": "host-only",
-        "reason": "SS-1b per-cause capture refusal notices; once per content session, retained across rewind and reset, cleared on session release; host notification state only."
+        "reason": "R-SS1b-2: host-only per-cause recoverable refusal latches; shared by save/load, cleared on successful load or session release; never serialized."
+      },
+      {
+        "kind": "declaration",
+        "declaration": "static bool arc_state_load_noticed ;",
+        "classification": "host-only",
+        "reason": "R-SS1b-2: host-only session latch for failed state validation, including held rewind at the oldest capture; never rewound; reset on session release."
       },
       {
         "kind": "declaration",
@@ -37631,24 +37631,24 @@
     },
     {
       "source": "libretro/arcdroid_libretro.c",
-      "symbol": "arc_state_media_slots",
-      "type": "unsigned",
-      "classification": "host-only",
-      "reason": "Load-time admitted media-slot count bounds generated metadata in the fixed frontend capacity; later slot growth refuses states before capture/load; host authority, never rewound."
-    },
-    {
-      "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_state_media_noticed",
       "type": "bool",
       "classification": "host-only",
-      "reason": "SS-1b per-cause capture refusal notices; once per content session, retained across rewind and reset, cleared on session release; host notification state only."
+      "reason": "R-SS1b-2: host-only per-cause recoverable refusal latch; shared by save/load, cleared on successful load or session release; never serialized."
     },
     {
       "source": "libretro/arcdroid_libretro.c",
       "symbol": "arc_state_pending_noticed",
       "type": "bool",
       "classification": "host-only",
-      "reason": "SS-1b per-cause capture refusal notices; once per content session, retained across rewind and reset, cleared on session release; host notification state only."
+      "reason": "R-SS1b-2: host-only per-cause recoverable refusal latch; shared by save/load, cleared on successful load or session release; never serialized."
+    },
+    {
+      "source": "libretro/arcdroid_libretro.c",
+      "symbol": "arc_state_load_noticed",
+      "type": "bool",
+      "classification": "host-only",
+      "reason": "R-SS1b-2: host-only session latch for failed state validation, including held rewind at the oldest capture; never rewound; reset on session release."
     }
   ],
   "reachable_storage": [
@@ -39563,5 +39563,40 @@
       "classification": "derived-on-load",
       "reason": "Allocation belongs to the retained ownership graph in reachable_storage (or transfers into it); preserve guest bytes separately and recreate native addresses."
     }
-  ]
+  ],
+  "generated_payloads": {
+    "engine/state-generated/82c711_fdc_state.inc": "ee7618e415579c81affd61fb2211244752b63043b6bfd1b149f0967e270e7db6",
+    "engine/state-generated/82c711_state.inc": "dfc0de6ec82f166c6ae77d7870e34107fed41da5d1a9cc532e7260f78ee493e7",
+    "engine/state-generated/arcdroid_input_state.inc": "c57d80b2ccb5be3fd23f994416d54e2b38e575427bc652d04be3816fb2c2b62f",
+    "engine/state-generated/arcdroid_joystick_state.inc": "a6b75b4a8faf0a1a6ba06a9cfec0938c294a616f429ec2b9e3474693e7afdd4b",
+    "engine/state-generated/arcdroid_libretro_state.inc": "026a38218ec0095ca14cd0b5946f1e319a25b4bcf3a5973f5104935d8db44759",
+    "engine/state-generated/arcdroid_sound_state.inc": "b276a299ea19976e2d49879c996b77e6806fdf6d23bc2938e4821d28c2a26132",
+    "engine/state-generated/arcdroid_video_state.inc": "7b63ce4263b20d6ff4ed10a3046f2d7a51d5057f8749169083b577ac7b38e11e",
+    "engine/state-generated/arculator_backend_state.inc": "acd56cfffb8e6fa3e409cbe7ecbfb99091a2dc354a14a43184c5a1782042a938",
+    "engine/state-generated/arm_state.inc": "f7fd92c1e8ca261deda25589cc4d1028852e8cef8ea7f23d5b7abd7f1eae3173",
+    "engine/state-generated/cmos_state.inc": "d0ebf59fd23db4c791028ea2735976c18e33e827e1603365225f40baf340fbf3",
+    "engine/state-generated/cp15_state.inc": "b39cb537d1b4b075bddf49ed7fa4980469746f0691aaf76ed6bf04f8dfd58cd0",
+    "engine/state-generated/cpu_extra.inc": "8a81fe1b513007c6999e87255e90f5bc9ebd23c929985fc5a007a268a5a363ad",
+    "engine/state-generated/disc_adf_state.inc": "47ceb29cc9f8ef132dd61b39116174668dc86a2f8804548b19fc65d48c446742",
+    "engine/state-generated/disc_jfd_state.inc": "d0461d9a7fc281409e1c42f9fa4fa924accf88cca70502b500b2a6cea45ebaca",
+    "engine/state-generated/disc_state.inc": "8134b50808e7bcc5c9d339a455b7259d4641dbf9215ba84ebb400248ee278bcc",
+    "engine/state-generated/ds2401_state.inc": "997ba9262069fccb91a39a60f7be230da30289db2b887aadc48e0b9e089f4849",
+    "engine/state-generated/fpa_state.inc": "b743a920688163db01bfcc3e83b23b1756b729e21ffda30198e9d4961aaa8341",
+    "engine/state-generated/frontend_extra.inc": "4f4bbab2070e730ee1ddffc27126e23848ab84969e13f8bcf0c6a78fd1530b18",
+    "engine/state-generated/ide_state.inc": "2eb907a7cd9dda96895ae6dcbc3e7db6dd00b64dee8ba567c4b0e2ed549cc69a",
+    "engine/state-generated/ioc_state.inc": "061f175397e45afd0a4872ae535cef64b6b6e7923808c2ffd3d3f2b72f0e8f09",
+    "engine/state-generated/ioeb_state.inc": "4b6eb4c155b72549dd72e3ebc7ce861aa6f09b417babfce0524133d470662f54",
+    "engine/state-generated/joystick_state.inc": "b8fec8fdec63cb51fd1408d916d6c7692a520015bef511a9f9693489b0ccbfc5",
+    "engine/state-generated/keyboard_state.inc": "5c63cdd840ffb531165755daf33a95a6804672fe38c43b031916e35fb7ffd7ef",
+    "engine/state-generated/lc_state.inc": "3b1dbd8e0fac9726ab447cfae1030aab1b398e49faebaf66ad19cdea1a25ea78",
+    "engine/state-generated/mem_state.inc": "cb0df7294d39aaa1e4499f51a9e4dcaf6e77e2a95430298ed9659299736b00bf",
+    "engine/state-generated/memc_state.inc": "1b43dc53f2d0b119031e04c029670283cd5802d35572837d12715b4f3e3d71f5",
+    "engine/state-generated/memory_extra.inc": "b05a5b1e4e436e42467585eaea05c91bee99a6eb7927bdbd2b278ca357145b62",
+    "engine/state-generated/printer_state.inc": "9eaead5db8f279562fcd2e9c696ab8874b9f48c93ceb7db9416dbc9877e70892",
+    "engine/state-generated/raw_cache.inc": "89da13cf87fbd2b443f20d176aa8e01b70df50487e6ba02d0bb5a910ee320109",
+    "engine/state-generated/sound_state.inc": "8bcb5becfc985b7ae7bb853995e4b95355681b24df8266391ecb63f564bbdddd",
+    "engine/state-generated/timer_state.inc": "e82f3c917a5f0100b227332274d9c2ebd85228d2a2706079bbb505bb43329444",
+    "engine/state-generated/vidc_state.inc": "f20f5e8c7fe78c649b5fcdc6e7ee20d205ebba2bab9c1155281947840936d37e",
+    "engine/state-generated/wd1770_state.inc": "11fa16dcf0f404d7ad5e45849f9d5b71a9ae53e3ce1464353da81d5f4681078b"
+  }
 }

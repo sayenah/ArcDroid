@@ -15,7 +15,7 @@ static void arc_state_boundary_reset(void)
    arc_state_speculation=arc_state_rollback_failed=false;
    arc_state_mode_noticed=false;
    arc_state_media_noticed=arc_state_pending_noticed=false;
-   arc_state_media_slots=0;
+   arc_state_load_noticed=false;
    /* A closing session may still have Preemptive Frames' null poll installed.
     * Capture the next primary installation, never that outgoing callback. */
    arc_state_real_poll=NULL;

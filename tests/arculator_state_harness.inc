@@ -321,7 +321,7 @@ if(ss1_mode) {
             assert(disk_control.set_eject_state(false));retro_run();assert(retro_serialize_size()==bound&&retro_serialize(buffer,bound));
             writer.file=raw_file(0);assert(writer.file);uint8_t byte=(uint8_t)(cycle^0xa5u);
             assert(writer.seek(writer.file,101u*1024u,RETRO_VFS_SEEK_POSITION_START)>=0&&writer.write(writer.file,&byte,1u)==1u&&writer.flush(writer.file));
-            unsigned notices=total_osd_calls;assert(!retro_unserialize(buffer,bound)&&total_osd_calls>notices);
+            unsigned notices=total_osd_calls;assert(!retro_unserialize(buffer,bound)&&total_osd_calls==notices+(cycle==0u));
             assert(!remove(path));
          }
          assert(disk_control.set_eject_state(true));char larger[4096];
@@ -330,7 +330,7 @@ if(ss1_mode) {
          struct retro_game_info replacement={.path=larger};assert(disk_control.replace_image_index(0,&replacement));
          assert(disk_control.set_eject_state(false));retro_run();unsigned notices=total_osd_calls;
          assert(retro_serialize_size()==bound&&!retro_serialize(buffer,bound)&&total_osd_calls>notices);
-         notices=total_osd_calls;assert(!retro_unserialize(buffer,bound)&&total_osd_calls>notices);
+         notices=total_osd_calls;assert(!retro_unserialize(buffer,bound)&&total_osd_calls==notices);
          retro_run();assert(retro_serialize_size()==bound);free(buffer);retro_unload_game();
          puts("SS1 replacement: 72 swaps retain write frontiers; larger media runs with a stable bound and notice-refused states");continue;
       }
@@ -609,7 +609,7 @@ if(ss1_mode) {
          for(unsigned attempt=0;attempt<2u;++attempt) {
             unsigned notices=total_osd_calls;uint64_t mutations=ss1_native_mutations;assert(!retro_unserialize(saved,bytes));
             assert(mutations==ss1_native_mutations);
-            assert(total_osd_calls>notices&&strstr(last_message,"save state"));
+            assert(total_osd_calls==notices+(attempt==0u)&&strstr(last_message,"save state"));
             assert(retro_serialize(again,current_bytes));assert(!memcmp(current,again,current_bytes));
          }
          free(current);retro_run();
@@ -659,7 +659,8 @@ if(ss1_mode) {
             }
             unsigned notices=total_osd_calls;last_message[0]=0;uint64_t mutations=ss1_native_mutations;
             assert(!retro_unserialize(again,length));assert(mutations==ss1_native_mutations);
-            assert(total_osd_calls>notices&&strstr(last_message,"save state"));
+            assert(total_osd_calls==notices+(test==0u));
+            if(!test)assert(strstr(last_message,"save state"));
             assert(retro_serialize(again,bytes));assert(!memcmp(saved,again,bytes));++refused;
          }
          printf("SS1 refusal matrix: %u rejected, notice and unchanged canonical session verified\n",refused);

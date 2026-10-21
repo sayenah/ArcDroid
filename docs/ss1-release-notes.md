@@ -3,11 +3,11 @@
 # SS-1 compatibility and frontend settings
 
 Run K implements D-215: guest state remains exact and host picture histories
-are rebuilt after load. SS-1b reserves metadata for the session's admitted media
-slots. Authored single-disc floppy bounds are 7,150,215–8,814,215 bytes across
-the four 4 MiB profiles, including writable media. The conservative 32-slot
-all-floppy bound is 16,638,330 bytes, below 16 MiB and small enough for
-RetroArch 1.22.2's default 20,000,000-byte rewind-buffer initialization.
+are rebuilt after load. SS-1b run B retains SS-1's reservation for all 32 media
+slots: measured host arm64 floppy-session bounds are 7,356,582–9,020,582 bytes across the
+four 4 MiB profiles, including writable media. The conservative all-floppy bound
+is 16,638,330 bytes, below 16 MiB and small enough for RetroArch 1.22.2's default
+20,000,000-byte rewind-buffer initialization.
 Native hard-disc sessions reserve a larger buffer and require a larger rewind
 setting. Local tests are evidence, not approval to ship.
 Run L integrates R3d-4's R-1a lifecycle guard in both gate states and every
@@ -17,12 +17,15 @@ replaces the proposed Android version restriction; no API-level switch is used.
 
 Arculator save/load and single-instance run-ahead use a fixed session buffer.
 RiscPC states remain unavailable. The launch chooser reports the admitted bound
-but refuses save/load until guest execution begins. A replacement exceeding the
-session's media reservation keeps running while state operations refuse with a
-timed notice. Adding disc slots beyond the initial reservation also refuses
-state operations until those
-slots are removed or the content is reloaded. Capture notices appear at most
-once per cause per session; explicit failed loads still show their usual notice.
+but refuses save/load until guest execution begins. Load New Disc may append
+slots up to the 32-disc limit without changing the fixed buffer. Save/load,
+rewind and single-instance run-ahead remain available when the appended image
+fits the session's media envelope; the existing ordered-media identity checks
+still apply. A replacement or appended image exceeding that envelope keeps
+running while state operations refuse with a timed notice. Save- and load-side
+notices are deduplicated per cause, including while rewind is held. A successful
+load rearms the recoverable media and pending-change notices; other state
+refusal latches reset only with a new content session.
 
 States require the same core build, platform/ABI, machine, firmware, ordered
 media and options. Cross-version migration is unsupported. Mismatches preserve

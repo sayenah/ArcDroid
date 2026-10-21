@@ -6599,12 +6599,6 @@
         "classification": "host-only/excluded",
         "reason": "Nested RetroArch environment/init/unload/deinit suppression for an aliased secondary while the primary remains loaded; never guest state."
       },
-      "::arc_state_media_slots": {
-        "declaration": "static unsigned arc_state_media_slots",
-        "classification": "host-only/excluded",
-        "citation": "docs/arculator-save-states.md:SS-1b",
-        "reason": "Arculator load-time metadata reservation; RPC states remain unavailable and no RPC path consumes this capacity guard."
-      },
       "::arc_state_media_noticed": {
         "declaration": "static bool arc_state_media_noticed,arc_state_pending_noticed",
         "classification": "host-only/excluded",
@@ -6616,6 +6610,12 @@
         "classification": "host-only/excluded",
         "citation": "docs/arculator-save-states.md:SS-1b",
         "reason": "Host-only Arculator capture pending-log warning latch; RPC serialization refuses before access."
+      },
+      "::arc_state_load_noticed": {
+        "declaration": "static bool arc_state_load_noticed",
+        "citation": "docs/handoff.md:R-SS1b-2",
+        "classification": "host-only/excluded",
+        "reason": "R-SS1b-2: host-only session latch for failed state validation, including held rewind at the oldest capture; never rewound; reset on session release."
       }
     },
     "tests/arc_test_plan.c": {
