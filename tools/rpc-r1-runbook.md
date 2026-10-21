@@ -767,10 +767,26 @@ with its own runner and the candidate with its own runner. JSON remains schema
 
 For local correctness, `ARCDROID_RPC_L1_TEST_GATE=0|1|2|3|4` changes test cores only;
 `ARCDROID_RPC_L1_POISON=ON` poisons test hints only. Default measurement and
-shipping cores ignore both options. `rpc-l1-corpus` constructs isolated test
+shipping cores ignore both options. `rpc-l1-corpus-<variant>` constructs isolated test
 cores for default/linear/hint/mirror/way0-hint/way0-mirror and hint-poison variants, with the retained reference enabled,
 and runs 25 immutable goldens, all calibration intervals and observation plans.
 `tests/rpc_l1_corpus_test.py BUILD --variants 2 poison` selects a smaller rerun.
+CTest registers all nine variants independently so correctness comparisons run
+in parallel, with unique temporary objects, libraries, depfiles and save roots.
+Every variant retains the `slow` label (full PR coverage on `host`, full nightly
+coverage, excluded on push). `rpc-l1-corpus-count` pins the complete partition;
+`tests/rpc_l1_corpus_count_test.py BUILD --results BUILD/Testing/Temporary/LastTest.log`
+also checks the completed comparisons and counts from a full run.
+The PR `host` job partitions its ordinary CTest selection across four runners,
+with two or three corpus variants per runner. Run
+`tools/check-host-pr-shards.py --build BUILD --self-test` to check exact-once
+placement and workflow failure propagation. The
+existing emitter, profiling and ordinary-route legs run once; push and nightly
+retain their unpartitioned selections. The final check remains named `host`. The sanitizer PR selection uses three
+runners with the same exact-once guard (`--suite sanitizers`); its final check
+remains named `host-sanitizers`. Native profiling/emitter steps run on PR shard 0 and the dependent route/baseline
+steps on shard 3; sanitizer integration steps run on shard 2. Both suites use a
+single unpartitioned runner for push and nightly.
 
 
 The primary sanitizer suite uses its actual Debug cores. The secondary full

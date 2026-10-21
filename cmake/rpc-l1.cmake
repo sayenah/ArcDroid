@@ -81,6 +81,9 @@ if(TARGET rpc_endpoint_test)
   endif()
 endif()
 if(TARGET rpc_l1_crosscheck_test AND CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS AND NOT ANDROID)
+  add_test(NAME rpc-l1-compile-database COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_l1_compile_database_test.py" "${CMAKE_CURRENT_BINARY_DIR}")
+  set_tests_properties(rpc-l1-compile-database PROPERTIES TIMEOUT 60)
   add_test(NAME rpc-l1-mutants COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_l1_mutants.py" "${CMAKE_CURRENT_BINARY_DIR}")
   set_tests_properties(rpc-l1-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
@@ -92,10 +95,24 @@ if(TARGET rpc-profile-tests AND TARGET rpc_counter_abi_test)
   set_tests_properties(rpc-profile-counter-abi PROPERTIES TIMEOUT 60)
 endif()
 if(TARGET rpc_l1_crosscheck_test AND CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ANDROID)
-  add_test(NAME rpc-l1-corpus COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_l1_corpus_test.py" "${CMAKE_CURRENT_BINARY_DIR}")
-  # Run B's five configurations: local 2492 s / sanitizer subset sum 2558.37 s.
-  # Run C adds two gates and their poison legs (nine configurations); scale
-  # the established twice-observed allowance. Native Windows awaits CI.
-  set_tests_properties(rpc-l1-corpus PROPERTIES TIMEOUT 12960 RUN_SERIAL TRUE LABELS slow)
+  # W4: worst native -j4 leg 317.724 s, projected CI at 2.7x = 857.855 s;
+  # twice that, rounded up to whole minutes, is 1740 s for every native leg.
+  # Other configurations retain the prior full-matrix allowance until their
+  # own per-leg CI durations are available; no platform margin is reduced.
+  set(l1_corpus_timeout 1740)
+  if(WIN32 OR ARCDROID_SANITIZERS)
+    set(l1_corpus_timeout 12960)
+  endif()
+  foreach(variant IN ITEMS default 0 1 2 3 4 poison poison3 poison4)
+    add_test(NAME rpc-l1-corpus-${variant} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_l1_corpus_test.py"
+      "${CMAKE_CURRENT_BINARY_DIR}" --variants ${variant})
+    # Each leg owns its disposable objects, libraries, depfiles and save roots;
+    # shared build products and fixtures are read-only. These are correctness
+    # comparisons, with no elapsed-time assertions requiring RUN_SERIAL.
+    set_tests_properties(rpc-l1-corpus-${variant} PROPERTIES TIMEOUT ${l1_corpus_timeout} LABELS slow)
+  endforeach()
+  add_test(NAME rpc-l1-corpus-count COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_l1_corpus_count_test.py" "${CMAKE_CURRENT_BINARY_DIR}")
+  set_tests_properties(rpc-l1-corpus-count PROPERTIES TIMEOUT 60)
 endif()
