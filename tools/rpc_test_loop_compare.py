@@ -17,7 +17,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
-from rpc_ninja_commands import split_command
+from rpc_ninja_commands import split_command,compile_entry
 
 LOOPS = tuple('arc_rpc_arm_exec_' + path for path in ('observed', 'cheap', 'unobserved'))
 TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|\w+|[^\s]')
@@ -71,8 +71,7 @@ def source_check(base, candidate):
 
 def preprocess(build):
     commands = json.loads((build / 'compile_commands.json').read_text(encoding='utf-8'))
-    entry = next(c for c in commands if 'arcdroid_libretro_test_rpc.dir/' in c['command']
-                 and c['file'].endswith('/arm.c'))
+    entry = compile_entry(commands, 'arcdroid_libretro_test_rpc', 'arm.c')
     argv = split_command(entry['command'], os.name == 'nt')
     if '-DARCDROID_TEST_FAULTS=1' not in argv or any('ARCDROID_RPC_MEASUREMENT' in x for x in argv):
         raise RuntimeError('loop comparison requires the endpoint-containing TEST_FAULTS core')

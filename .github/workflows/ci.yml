@@ -24,7 +24,14 @@ permissions:
 
 jobs:
   host:
+    name: host tests (${{ matrix.shard }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # PR coverage is the union of four host runners. Push/nightly retain
+        # the original single host runner and their existing tier selections.
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0,1,2,3]' || '[0]') }}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
@@ -32,6 +39,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: github.event_name != 'pull_request' || matrix.shard == 3
         with:
           persist-credentials: false
           # SS-1 Run M is the accepted ACFR3 frontier baseline. Preserve exact
@@ -43,7 +51,7 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
           restore-keys: |
             ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: RPCEmu import guard
@@ -58,19 +66,26 @@ jobs:
         run: cmake --build build/host --verbose
       - name: Shipping source I/O guard self-test
         run: tools/check-shipping-io.sh --self-test
+      - name: Host PR partition guard
+        run: python3 -B tools/check-host-pr-shards.py --build build/host --self-test
       - name: Unit tests and harness
-        run: ctest -j "$(nproc)" --test-dir build/host --output-on-failure -LE '${{ github.event_name == 'push' && '^rpc-lockstep-emitter-ci$|slow' || '^rpc-lockstep-emitter-ci$' }}'
+        run: ctest -j "$(nproc)" --test-dir build/host --output-on-failure -LE '${{ github.event_name == 'push' && '^rpc-lockstep-emitter-ci$|slow' || '^rpc-lockstep-emitter-ci$' }}' ${{ github.event_name == 'pull_request' && format('-L ^rpc-host-pr-{0}$', matrix.shard) || '' }}
       - name: Lockstep emitter CI subset
+        if: github.event_name != 'pull_request' || matrix.shard == 0
         run: ctest -j "$(nproc)" --test-dir build/host --output-on-failure -L '^rpc-lockstep-emitter-ci$' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
       - name: Export guard
         run: tools/check-exports.sh build/host/arcdroid_libretro.so
       - name: Configure profiling test build
+        if: github.event_name != 'pull_request' || matrix.shard == 0
         run: cmake -S . -B build/profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DARCDROID_RPC_PROFILE=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache
       - name: Build profiling tests
+        if: github.event_name != 'pull_request' || matrix.shard == 0
         run: cmake --build build/profile --target rpc-profile-tests
       - name: Profiling counts, transparency and mutants
+        if: github.event_name != 'pull_request' || matrix.shard == 0
         run: ctest -j "$(nproc)" --test-dir build/profile --output-on-failure -R '^rpc-profile-' ${{ github.event_name == 'push' && '-LE slow' || '' }}
       - name: Both gate states and authored ordinary route
+        if: github.event_name != 'pull_request' || matrix.shard == 3
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
@@ -79,6 +94,7 @@ jobs:
           tools/check-exports.sh build/ordinary-open/arcdroid_rpcroute_libretro.so
           python3 tools/check-rpc-lock-object.py --build build/host --platform ofd
       - name: Closed baseline and allowed open Archimedes projections
+        if: github.event_name != 'pull_request' || matrix.shard == 3
         run: |
           cmake -S build/r3d4-base-source -B build/r3d4-base -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
           cmake --build build/r3d4-base --target arcdroid_libretro -j "$(nproc)"
@@ -90,6 +106,17 @@ jobs:
         if: always()
         run: ccache -s
 
+  # Preserve the original required-check name across the PR matrix: success
+  # means every host shard, including the extra integration steps, succeeded.
+  host-result:
+    name: host
+    needs: host
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.host.result }}" = success
+
   host-lockstep-local:
     # W10b C: maximum observed durations; one golden at a time per runner.
     # Ordinary host tests and the emitter CI subset stay in the host job.
@@ -98,9 +125,9 @@ jobs:
     timeout-minutes: 295
     strategy:
       fail-fast: false
-      # Six other jobs + at most fourteen shard jobs stays within twenty,
+      # Eight other jobs + at most twelve shard jobs stays within twenty,
       # even without relying on the Windows -> RetroArch dependency.
-      max-parallel: 14
+      max-parallel: 12
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     env:
@@ -196,6 +223,11 @@ jobs:
         run: ccache -s
 
   host-sanitizers:
+    name: host sanitizer tests (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0,1,2]' || '[0]') }}
     runs-on: ubuntu-24.04
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -208,19 +240,22 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
           restore-keys: |
             ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: Configure ASan and UBSan
         run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON -DARCDROID_RPC_PROFILE=ON -DARCDROID_RPC_CROSSCHECK=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build ASan and UBSan
         run: cmake --build build/sanitize --verbose
+      - name: Sanitizer PR partition guard
+        run: python3 -B tools/check-host-pr-shards.py --build build/sanitize --suite sanitizers --self-test
       - name: Host tests under ASan and UBSan
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest -j "$(nproc)" --test-dir build/sanitize --output-on-failure -R '${{ github.event_name != 'pull_request' && '.*' || '^(arculator-state-.*|rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-session-calendar|cmos-calendar-launch|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$' }}' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}
+        run: ctest -j "$(nproc)" --test-dir build/sanitize --output-on-failure -R '${{ github.event_name != 'pull_request' && '.*' || '^(arculator-state-.*|rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-session-calendar|cmos-calendar-launch|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$' }}' ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }} ${{ github.event_name == 'pull_request' && format('-L ^rpc-sanitizer-pr-{0}$', matrix.shard) || '' }}
       - name: Both gate states and authored ordinary route
+        if: github.event_name != 'pull_request' || matrix.shard == 2
         run: |
           cmake -S . -B build/ordinary-open -G Ninja -DCMAKE_BUILD_TYPE=Release -DARCDROID_RPC_ORDINARY_LOAD=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON -DARCDROID_SANITIZERS=ON
           cmake --build build/ordinary-open --target arcdroid_libretro arcdroid_rpcroute_libretro arcdroid_rpcroute_fault_libretro rpc_route_harness rpc_route_policy_test rpc_staging_test rpc_session_test -j "$(nproc)"
@@ -231,6 +266,15 @@ jobs:
       - name: ccache statistics
         if: always()
         run: ccache -s
+
+  host-sanitizers-result:
+    name: host-sanitizers
+    needs: host-sanitizers
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.host-sanitizers.result }}" = success
 
   windows:
     runs-on: windows-latest

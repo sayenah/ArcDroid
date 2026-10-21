@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 sys.dont_write_bytecode=True
-from rpc_ninja_commands import rebuild_commands,split_command
+from rpc_ninja_commands import rebuild_commands,split_command,compile_entry
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('build',type=Path);a=p.parse_args()
 build=a.build.resolve();root=Path(__file__).resolve().parents[1]
 cache=(build/'CMakeCache.txt').read_text();ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
@@ -78,7 +78,7 @@ kill('reference-counts',replace(ref,'        if (t->valid && t->va == line) { AR
 kill('wrong-slot',replace('            result = &c->tags[base+way];','            result = &c->tags[base+way+1];'),'rpc_l1_crosscheck_test','lookup.cache_slot')
 # Preprocess with the measurement core's real flags: TEST_FAULTS is stripped.
 rows=json.loads((build/'compile_commands.json').read_text())
-entry=next(x for x in rows if 'arcdroid_rpcmeasure_libretro_rpc.dir/' in x['command'] and x['file'].endswith('/rpc_mem_timing.c'))
+entry=compile_entry(rows,'arcdroid_rpcmeasure_libretro_rpc','rpc_mem_timing.c')
 def reset_present(source):
     with tempfile.TemporaryDirectory(prefix='arcdroid-l1-reset-',dir=build) as tmp:
         src=Path(tmp)/'timing.c';out=Path(tmp)/'timing.i';src.write_text(source)

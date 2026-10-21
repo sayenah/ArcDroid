@@ -8,6 +8,15 @@ import ntpath
 from pathlib import Path
 import shlex
 
+def compile_entry(rows, target, source_name):
+    """Select one compile DB row regardless of Windows path separators."""
+    matches = [row for row in rows
+               if f'{target}.dir/' in row['command'].replace('\\', '/')
+               and row['file'].replace('\\', '/').rsplit('/', 1)[-1] == source_name]
+    if len(matches) != 1:
+        raise RuntimeError(f'Expected one {target}/{source_name} compile entry, got {len(matches)}')
+    return matches[0]
+
 def same_path(a, b, build, windows=False):
     if windows:
         def canonical(p):

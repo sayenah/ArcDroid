@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tests"))
-from rpc_ninja_commands import split_command
+from rpc_ninja_commands import split_command,compile_entry
 from rpc_test_loop_compare import compare as compare_test_loops
 
 
@@ -116,7 +116,7 @@ for typename,members in (
 
 def layout(build,target,readobj,temp,header_only=False):
     commands=json.loads((build/'compile_commands.json').read_text(encoding='utf-8'))
-    entry=next(c for c in commands if f'{target}.dir/' in c['command'] and c['file'].endswith('/arcdroid_engine.c' if header_only else '/rpc_mem_timing.c'))
+    entry=compile_entry(commands,target,'arcdroid_engine.c' if header_only else 'rpc_mem_timing.c')
     command=split_command(entry['command'],os.name=='nt')
     # Build a constant layout vector with precisely the source object's flags.
     source=Path(entry['file']);probe=temp/(target+'.c');obj=temp/(target+'.o')
@@ -152,7 +152,7 @@ def main():
     commands=json.loads((args.candidate/'compile_commands.json').read_text(encoding='utf-8'))
     flags=[]
     for target in ('arcdroid_libretro_rpc','arcdroid_rpcmeasure_libretro_rpc'):
-        entry=next(c for c in commands if f'{target}.dir/' in c['command'] and c['file'].endswith('/arm.c'))
+        entry=compile_entry(commands,target,'arm.c')
         argv=split_command(entry['command'],os.name=='nt')
         flags.append((argv[0],[x for x in argv if x.startswith(('-O','-fvisibility=','--target=','-fno-strict-aliasing','-fno-common','-std='))]))
     if flags[0]!=flags[1]:raise RuntimeError('measurement/shipping compiler, optimisation, target or visibility flags differ')

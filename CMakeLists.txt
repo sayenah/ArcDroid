@@ -3983,3 +3983,5 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
   set_tests_properties(rpc-core-info PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()
+
+include(cmake/rpc-host-pr-shards.cmake)

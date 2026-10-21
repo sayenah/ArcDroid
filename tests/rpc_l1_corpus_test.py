@@ -89,15 +89,24 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
                     at=next(i for i,x in enumerate(link) if Path(x).name=='libarcdroid_core_test.a')
                     link[at:at]=common_hash
                 link[link.index('-o')+1]=str(binary);
+                # MinGW also writes an import library. Keep it private just
+                # like the binary/depfile when nightly gate legs overlap.
+                link=['-Wl,--out-implib,'+str(folder/(target+'.dll.a'))
+                      if x.startswith('-Wl,--out-implib,') else x for x in link]
                 if target!='rpc_cpu_test':link.append(str(cross))
                 run(link)
                 replacements[str((build/original_binary).resolve())]=str(binary)
-            totals=[0]*173;comparisons=0
+            totals=[0]*173;comparisons=0;intervals=0;completed=[]
             for test in selected:
                 cmd=[replacements.get(str((build/x).resolve()),x) for x in test['command']]
                 if test['name'].startswith('rpc-memory-timing-'):print(variant+' '+test['name']+': begin',flush=True)
+                leg_started=time.monotonic()
                 r=run(cmd)
+                completed.append(test['name'])
                 if test['name'].startswith('rpc-memory-timing-'):
+                    count=re.search(r'^rpc timing: (\d+) authored workloads matched exact independent rational durations$',r.stdout,re.M)
+                    if not count:raise RuntimeError('missing interval count')
+                    intervals+=int(count[1])
                     values=re.search(r'^calibration counters model=\S+ (.+)$',r.stderr,re.M)
                     if not values:raise RuntimeError('missing calibration counters')
                     row=list(map(int,values[1].split()))
@@ -106,15 +115,18 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
                     match=re.search(r'L1 crosscheck comparisons=(\d+) mismatches=0',r.stderr)
                     if not match:raise RuntimeError('missing per-interval cross-check evidence')
                     comparisons+=int(match[1]);print(f'{variant} {test["name"]} counters '+values[1],flush=True)
-                print(variant+' '+test['name']+': exact',flush=True)
+                print(variant+' '+test['name']+f': exact elapsed_seconds={time.monotonic()-leg_started:.2f}',flush=True)
             if a.goldens_only:
                 print(f'{variant}: 25 immutable goldens exact',flush=True)
                 continue
             if comparisons==0:raise RuntimeError('cross-check never exercised')
+            if intervals!=4677:raise RuntimeError(('interval count drift',intervals))
             if variant not in ['default','0'] and (totals[40]==0 or totals[41]==0):raise RuntimeError('hint accepted/rejected floor')
             if variant in ['poison','poison4'] and totals[42]==0:raise RuntimeError('poison mirror fallback floor')
             if variant=='poison3' and totals[44]==0:raise RuntimeError('poison linear fallback floor')
             if totals[43]:raise RuntimeError('exact mirror recheck failures')
             print(f'{variant}: 25 immutable goldens, 4677 intrusive/endpoint intervals, observation quota/mode matrix exact; crosscheck={comparisons} mismatches=0',flush=True)
+            print('L1 corpus counts '+json.dumps(dict(variant=variant,tests=completed,
+                intervals=intervals,crosscheck=comparisons),sort_keys=True),flush=True)
 
 print(f"L1 corpus elapsed_seconds={time.monotonic()-started:.2f}",flush=True)
