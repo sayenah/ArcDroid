@@ -3898,3 +3898,5 @@ foreach(target IN LISTS rpc_artifact_targets)
   endif()
 endforeach()
 file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/rpc-artifact-targets.json" CONTENT "{\"targets\":[${rpc_artifact_rows}]}\n")
+
+include(cmake/rpc-host-pr-shards.cmake)
