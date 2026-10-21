@@ -2049,6 +2049,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       set_tests_properties(arculator-state-${state_check} PROPERTIES TIMEOUT 1800
         LABELS "savestate" ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endforeach()
+    foreach(state_followup IN ITEMS notices session-poll first-frame cmos-cursor capacity held-media retained-poll load-rearm)
+      add_test(NAME arculator-state-${state_followup}
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_followups.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ss1-${state_followup}" --mode ${state_followup})
+      set_tests_properties(arculator-state-${state_followup} PROPERTIES TIMEOUT 900 LABELS "savestate")
+    endforeach()
     foreach(state_mode IN ITEMS video rewind-buffer)
       add_test(NAME arculator-state-${state_mode}
         COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_state_features.py"

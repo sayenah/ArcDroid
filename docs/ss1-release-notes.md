@@ -3,10 +3,11 @@
 # SS-1 compatibility and frontend settings
 
 Run K implements D-215: guest state remains exact and host picture histories
-are rebuilt after load. Authored floppy-session bounds are 7,356,448–9,020,448
-bytes across the four 4 MiB profiles, including writable media. The conservative
-all-floppy bound is 16,638,196 bytes, below 16 MiB and small enough for
-RetroArch 1.22.2's default 20,000,000-byte rewind-buffer initialization.
+are rebuilt after load. SS-1b run B retains SS-1's reservation for all 32 media
+slots: measured host arm64 floppy-session bounds are 7,356,582–9,020,582 bytes across the
+four 4 MiB profiles, including writable media. The conservative all-floppy bound
+is 16,638,330 bytes, below 16 MiB and small enough for RetroArch 1.22.2's default
+20,000,000-byte rewind-buffer initialization.
 Native hard-disc sessions reserve a larger buffer and require a larger rewind
 setting. Local tests are evidence, not approval to ship.
 Run L integrates R3d-4's R-1a lifecycle guard in both gate states and every
@@ -16,8 +17,18 @@ replaces the proposed Android version restriction; no API-level switch is used.
 
 Arculator save/load and single-instance run-ahead use a fixed session buffer.
 RiscPC states remain unavailable. The launch chooser reports the admitted bound
-but refuses save/load until guest execution begins. A larger replacement disc
-keeps running while state operations refuse with a timed notice.
+but refuses save/load until guest execution begins. Load New Disc may append
+slots up to the 32-disc limit without changing the fixed buffer. Save/load,
+rewind and single-instance run-ahead remain available when the appended image
+fits the session's media envelope. Save states and rewind history from before
+"Load New Disc" do not load after it, because the ordered media set has changed
+(the existing SS-1 behavior). A replacement or appended image exceeding that
+envelope keeps running while state operations refuse with a timed notice. Save-
+and load-side notices are deduplicated per cause, including while rewind is held. A successful
+load rearms the media, pending-change and mismatching-state notices, so a later
+mismatching manual load gets its notice and log reason. Repeated failures while
+rewind is held give one notice until a successful load. Other refusal latches
+reset with a new content session.
 
 States require the same core build, platform/ABI, machine, firmware, ordered
 media and options. Cross-version migration is unsupported. Mismatches preserve

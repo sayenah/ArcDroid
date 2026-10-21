@@ -22,23 +22,38 @@ class InventoryTests(unittest.TestCase):
     def setUpClass(cls):
         cls.manifest = json.loads((ROOT / 'tests/arculator_state_inventory.json').read_text())
 
-    def mutate(self, source, change):
+    def copy_closure(self, root):
+        # sources() resolves an include before deciding that RPC/external/test
+        # headers are outside SS-1. Keep those boundary headers present too;
+        # otherwise every mutant could falsely pass on an unresolved include.
+        names = ['CMakeLists.txt', *self.manifest['surfaces']]
+        for directory in ('engine/rpc', 'engine/rpcemu', 'third_party', 'tests'):
+            names.extend(p.relative_to(ROOT).as_posix() for p in (ROOT / directory).rglob('*.h'))
+        for name in names:
+            dest = root / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, dest)
+
+    def mutate(self, source, change, message=None):
         with tempfile.TemporaryDirectory(prefix='arcdroid-ss1-inventory-') as directory:
             root = Path(directory)
-            for name in ['CMakeLists.txt', *self.manifest['surfaces']]:
-                dest = root / name
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(ROOT / name, dest)
+            self.copy_closure(root)
             path = root / source
             original = path.read_text()
             updated = change(original)
             self.assertNotEqual(original, updated)
             path.write_text(updated)
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, message or '.'):
                 GUARD.verify(root, self.manifest)
 
     def test_live_tree(self):
         GUARD.verify(ROOT, self.manifest)
+
+    def test_disposable_tree(self):
+        with tempfile.TemporaryDirectory(prefix='arcdroid-ss1-inventory-') as directory:
+            root = Path(directory)
+            self.copy_closure(root)
+            GUARD.verify(root, self.manifest)
 
     def test_unused_writable_globals(self):
         for declaration in ('int ss1_uncensused;', 'static int ss1_uncensused;',
@@ -111,6 +126,21 @@ class InventoryTests(unittest.TestCase):
         after = '/* comment */ unsigned state;\nvoid step(void) { state += 2; }\n'
         self.assertEqual(GUARD.census(before), GUARD.census(after))
 
+    def test_serialized_visitor_omission(self):
+        for symbol, value in (('arc_cmos_session_year_valid', '&arc_cmos_session_year_valid'),
+                              ('arc_cmos_session_year', '&arc_cmos_session_year'),
+                              ('year_written', '&year_written')):
+            name = ('engine/state-generated/arcdroid_libretro_state.inc' if symbol.startswith('arc_')
+                    else 'engine/state-generated/cmos_state.inc')
+            source = ('libretro/arcdroid_libretro.c' if symbol.startswith('arc_')
+                      else 'engine/arculator/src/cmos.c')
+            selection = f'   arc_state_object(s,"{source}:{symbol}");\n'
+            payload = f'   arc_state_value(s,{value},sizeof({symbol}));\n'
+            with self.subTest(symbol=symbol):
+                message = 'serialized object lacks a generated payload visitor'
+                self.mutate(name, lambda s: s.replace(selection + payload, ''), message)
+                self.mutate(name, lambda s: s.replace(payload, ''), message)
+
     def test_allocation_classification_required(self):
         bad = copy.deepcopy(self.manifest)
         bad['allocation_review'].pop()
@@ -120,6 +150,17 @@ class InventoryTests(unittest.TestCase):
         bad['reachable_storage'][0]['reason'] = ''
         with self.assertRaisesRegex(ValueError, 'unclassified'):
             GUARD.verify(ROOT, bad)
+
+    def test_serialized_field_omission(self):
+        self.mutate('engine/state-generated/cmos_state.inc', lambda s:
+                    s.replace('   arc_state_value(s,&((cmos).addr),sizeof((cmos).addr));\n', ''),
+                    'unreviewed generated payload fields')
+
+    def test_serialized_wrong_variable(self):
+        self.mutate('engine/state-generated/cmos_state.inc', lambda s:
+                    s.replace('arc_state_value(s,&year_written,sizeof(year_written));',
+                              'arc_state_value(s,&year_overlay,sizeof(year_overlay));'),
+                    'unreviewed generated payload fields')
 
 
 if __name__ == '__main__':

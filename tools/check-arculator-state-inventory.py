@@ -8,6 +8,7 @@ new declaration or allocation automatically. See docs/arculator-save-states.md.
 """
 import argparse
 import difflib
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -179,6 +180,25 @@ def cmake_source_commands(root):
     return result
 
 
+def generated_payloads(root, names):
+    # Pin just reviewed object/payload calls, not validation or other function
+    # bodies. This preserves each selected owner's exact field expressions.
+    result = {}
+    for name in names:
+        if not (name.startswith('engine/state-generated/') and name.endswith('.inc')):
+            continue
+        ts = tokens((root / name).read_text())
+        calls = []
+        for i, token in enumerate(ts[:-1]):
+            if ts[i + 1] == '(' and re.fullmatch(
+                    r'arc_state_(?:object|value|boolean|reference|typed_reference|memory_reference|'
+                    r'string_bounded|raw_cache|media_entry_values|raster|heap|blob)\w*', token):
+                calls.append(' '.join(ts[i:closing(ts, i + 1) + 1]))
+        if calls:
+            result[name] = hashlib.sha256('\n'.join(calls).encode()).hexdigest()
+    return result
+
+
 def verify(root, manifest):
     if manifest.get('version') != 1:
         raise ValueError('unsupported inventory schema')
@@ -215,6 +235,32 @@ def verify(root, manifest):
     identities = [(r['source'], r['symbol']) for r in manifest['objects']]
     if len(identities) != len(set(identities)):
         raise ValueError('duplicate static object identity')
+    # Declaration coverage alone cannot detect a removed codec in a function
+    # body. Every serialized generated owner also needs its object selection
+    # and a payload visitor before the next selection. arc_state_io's five
+    # queue roots use the handwritten, bounded io.pending blob instead.
+    visitors = {}
+    for name in names:
+        if name.startswith('engine/state-generated/') and name.endswith('.inc'):
+            source = ' '.join(tokens((root / name).read_text()))
+            selections = list(re.finditer(r'arc_state_object \( s , "([^"]+)" \)', source))
+            for i, selection in enumerate(selections):
+                end = selections[i + 1].start() if i + 1 < len(selections) else len(source)
+                body = source[selection.end():end]
+                if re.search(r'arc_state_(?:value|boolean|reference|typed_reference|memory_reference|'
+                             r'string_bounded|raw_cache|media_entry_values|raster|heap|blob)\w* \(', body):
+                    visitors[selection[1]] = True
+    for row in manifest['objects']:
+        if row['classification'] == 'serialized' and row['source'] != 'libretro/arc_state_io.c':
+            identity = row['source'] + ':' + row['symbol']
+            if identity not in visitors:
+                raise ValueError('serialized object lacks a generated payload visitor: ' + identity)
+    actual_payloads = generated_payloads(root, names)
+    reviewed_payloads = manifest['generated_payloads']
+    if actual_payloads != reviewed_payloads:
+        changed = sorted(name for name in actual_payloads.keys() | reviewed_payloads.keys()
+                         if actual_payloads.get(name) != reviewed_payloads.get(name))
+        raise ValueError('unreviewed generated payload fields: ' + ', '.join(changed))
     return len(names), total
 
 

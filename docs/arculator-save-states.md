@@ -951,8 +951,10 @@ The AY-1 overlay has three additional serialized CMOS objects:
 `year_written` retains the three guest-write bits (even an equal-value write
 changes persistence), and `year_overlay` retains activation. None is recoverable
 from the live CMOS image alone. The frontend's `arc_cmos_session_year_valid`
-and `arc_cmos_session_year[2]` are serialized too: stopped-engine reset/recovery
-uses that historical cache, and canonical saves must preserve its exact bytes.
+and `arc_cmos_session_year[2]` remain serialized conservatively for canonical
+save/load/save identity. `arc_sync_cmos` re-derives them from the engine on
+frame persistence, before reset construction, and after construction. Loads
+require an active engine, so no post-load consumer precedes that refresh.
 These five objects add 14 payload bytes plus five 24-byte record headers,
 so the advertised bound grows by 134 bytes.
 
@@ -1100,3 +1102,100 @@ counts, notice and command assertions, primary teardown and memory/UB checks
 remain active. Linux sanitizer jobs and every non-ASan build still execute
 the full image unload/reload sequence. The separate secondary-route test is
 unchanged. No production loader behavior or sanitizer memory check is changed.
+
+## SS-1b: session follow-ups (runs B/C, R-SS1b-2/R-SS1b-3)
+
+Capture's unsupported-mode, media-budget and pending-log notices each have a
+host-only per-cause latch. Save and load share the media-budget latch. Invalid
+state loads have a separate host latch, covering the initial pre-first-frame
+capture too. Held rewind repeats the oldest state on every frame even after
+reaching the end of the ring; it must not repeat any refusal notice or its
+associated diagnostic. Rewind and reset do not restore these host latches.
+A successful load clears the media-budget, pending-log and invalid-load latches;
+a subsequent failure may announce its cause and log reason once again. Thus an
+early held rewind does not silence a later mismatching manual load after a
+successful restore. Repeated failed loads at the oldest entry have no successful
+load between them, and still give only one notice during that hold.
+Session release clears every latch. The core cannot distinguish a manual load
+from a rewind load, so both obey the same notice rules.
+
+A session closing with Preemptive Frames' null poll installed does not supply
+the next session's real-poll identity: release clears that identity, and the
+next primary callback installation captures it. Frontends retaining callbacks
+across loads capture the current poll on their first run or save instead.
+Public harness cases exercise both fallback paths independently. Run O's
+restoration-pointer normalization and speculative/failed-rollback publication
+latches are unchanged.
+
+States captured before the first frame still fail transactional load validation.
+The public regression checks direct load and held rewind to that first capture,
+one notice until a successful load, unchanged canonical guest state and stores,
+and exact subsequent continuation. The CMOS cursor load check accepts every
+non-negative `int`, including values above 65,535, without masking or canonicalization. RAM
+accesses mask its index, but the engine's unmasked `cmos.addr < 0x10` comparison
+in `cmos.c:333` makes masking the cursor itself observably different. The engine
+can produce large cursors through sequential transfers, so a load-only ceiling
+would reject its own captured states. The upstream engine's signed cursor
+increment still has a residual overflow after about 2^31 sequential bytes in
+one transaction (unreachable in play); this slice does not change that engine
+property. Forged-record tests restore 0, 256, 65,535, 65,536 and INT_MAX exactly
+without executing an increment from INT_MAX, and reject negative cursors.
+
+The declaration inventory cross-checks serialized generated owners against
+payload visitors. Reviewed fingerprints of object/payload calls also catch a
+single dropped field or a visit of the wrong variable, without pinning unrelated
+validation or function bodies. Explicit omission/wrong-variable mutants verify
+both checks. The five handwritten pending-I/O queue roots retain their bounded
+blob codec and its tests. The disposable inventory fixture includes skipped
+boundary headers and checks an unchanged copied tree before precise omissions.
+
+Item (6)'s admitted-slot tightening is withdrawn. The fixed session capacity
+again reserves metadata for all 32 slots, exactly as SS-1 did. RetroArch's Load
+New Disc appends a slot; it need not remove slots or reload content to recover
+state features. Save states and rewind history from before "Load New Disc" do
+not load after it: the ordered media set has changed, as in SS-1. Fresh captures
+of the expanded media set remain usable within the existing envelope.
+Raw media still reserve every possible dirty byte and sector index across the
+largest admitted writable image, JFD every eligible replacement
+byte and allowed 1,024-byte creation, and native IDE its full image and indexes.
+These envelopes cannot shrink to current dirty bytes: normal guest writes can
+fill them. Only one mutable floppy graph is live; inactive JFD envelopes remain
+reserved. Larger replacement/append envelopes retain the existing refusal;
+the advertised capacity never grows, including across reset.
+
+RetroArch 1.22.2's [held-rewind sequence](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L615-L734)
+deserializes both on a successful pop and at the oldest entry. Failed captures
+do not stop its subsequent push. Its [append sequence](https://github.com/libretro/RetroArch/blob/v1.22.2/disk_control_interface.c#L535-L607)
+ejects, adds a slot, fills it, selects it and closes the tray. The public tests
+model these orders; appended in-envelope states support repeated rewind loads,
+exact forward replay and a speculative run-ahead/rollback cycle.
+
+The [rewind allocation](https://github.com/libretro/RetroArch/blob/v1.22.2/state_manager.c#L353-L505)
+fixes two full blocks and a ring, reserving a worst-case patch before each push.
+The [wrapper](https://github.com/libretro/RetroArch/blob/v1.22.2/tasks/task_save.c#L318-L440)
+adds 24 bytes plus eight-byte core alignment and optional achievements; later
+growth refuses. [Run-ahead](https://github.com/libretro/RetroArch/blob/v1.22.2/runahead.c#L837-L983)
+queries the size once and reuses that buffer. The core retains its fixed bound
+and full writable growth reservation for the session.
+
+The default-buffer depth probe uses public captures and independently models
+the tagged 16-bit patches, links, reservation, wrapping and eviction with the
+**32-slot bound**. It reports history over the last 1,200 of 2,400 frames after
+96 warmup frames, at granularity one in a 20,000,000-byte ring, without
+achievements. Depth depends on the authored workload; it is not a universal
+minimum. The per-profile measurement table is retained in the Sol report; run
+A's admitted-slot column is withdrawn, and run B records the restored bound.
+
+Measured host arm64 default-buffer depth with the restored **32-slot bound**:
+
+| Profile | Read-only ADF bound, bytes | Read-only history, frames | Writable ADF history, frames |
+| --- | ---: | ---: | ---: |
+| A3000 | 7,356,582 | 246–606 | 161–558 |
+| A3010 | 7,356,582 | 253–636 | 176–582 |
+| A3020 | 7,356,582 | 245–602 | 161–557 |
+| A4000 | 7,356,582 | 245–602 | 161–557 |
+
+All ranges use the authored probe above. Writable high-density floppy bounds are
+9,020,582 bytes on A3010/A3020/A4000; the conservative full-set maximum is
+16,638,330 bytes. Native IDE bounds remain above the default ring's admission
+limit and retain zero history there. The report retains all 25 measured cells.

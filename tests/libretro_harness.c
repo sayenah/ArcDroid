@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__GLIBC__)
@@ -110,6 +111,8 @@ static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
 static const char *ss1_primary_path;
 static unsigned ss1_context_queries,ss1_secondary_calls,ss1_secondary_log_queries;
+static unsigned ss1_state_refusal_logs;
+static char ss1_state_refusal_reason[256];
 static bool ss1_context_capability=true;
 static uint64_t ss1_quirks;
 static unsigned ss1_quirks_calls;
@@ -834,7 +837,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
          (void)sscanf(cmos_summary, "cmos_locked_attempts=%u cmos_locked_changes=%u",
                       &cmos_summary_attempts, &cmos_summary_changes);
    }
-   if(strstr(message,"Save state refused:")) fputs(message,stderr);
+   if(strstr(message,"Save state refused:")) {
+      ++ss1_state_refusal_logs;
+      snprintf(ss1_state_refusal_reason,sizeof(ss1_state_refusal_reason),"%s",message);
+      fputs(message,stderr);
+   }
    if (evidence_log)
    {
       fputs(message, evidence_log);
