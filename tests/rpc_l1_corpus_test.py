@@ -103,7 +103,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-l1-corpus-common-',dir=build) 
                     row=list(map(int,values[1].split()))
                     if len(row)!=174:raise RuntimeError(('counter ABI drift',len(row)))
                     totals=[x+y for x,y in zip(totals,row)]
-                    match=re.search(r'L1 crosscheck comparisons=(\d+) mismatches=0',r.stderr)
+                    match=re.search(r'L1(?:/S1)? crosscheck comparisons=(\d+) mismatches=0',r.stderr)
                     if not match:raise RuntimeError('missing per-interval cross-check evidence')
                     comparisons+=int(match[1]);print(f'{variant} {test["name"]} counters '+values[1],flush=True)
                 print(variant+' '+test['name']+': exact',flush=True)

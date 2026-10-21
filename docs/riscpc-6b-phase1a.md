@@ -257,6 +257,6 @@ rows retain main's historical M2b anchors.
 | A1 accesses | `engine/rpcemu/src/mem.c:704`, `engine/rpcemu/src/mem.c:722` |
 | D1 / D2 | `engine/rpcemu/src/arm.c:619`, `engine/rpcemu/src/arm.c:620` |
 
-S1 Run B anchors (2026-10-21): service `rpc_mem_timing.c:1195`, commands
+S1 Run C anchors (2026-10-21): service `rpc_mem_timing.c:1197`, commands
 `:975`, resumable run `:1009`, integer flush `:844`, access `:670`.
 The historical merge-base/Run D rows above remain historical citations.

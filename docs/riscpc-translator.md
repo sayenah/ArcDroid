@@ -643,6 +643,31 @@ exercise roots. Only inventory metadata changes; wire compatibility stays fixed.
 Projection/materialisation at quotas 1/7/200, stale-representation mutants and
 lockstep against L1's merge are required after the service-entry flush move.
 Cumulative correctness evidence against the post-P0i anchor remains required.
-Private benefit legs follow the frozen 1a-0 rule and D-201 bands, and report
-p50/p95/p99, guest MIPS, ns/instruction on both cores and the hot/031 budget
-line (p95 <=0.80T, max<=T). MinGW carries D-199(4)'s emitted-loop caveat.
+Private rule-4 benefit confirmation (AC-8) and D-180 legs (AC-9) wait for a
+fresh A/A baseline on the Android test device (R-S1-B1(4), D-217/D-218).
+The Odin3 is retired; its D-201 bands cannot judge another device. The frozen
+1a-0 benefit rule still governs, using the new device's measured bands.
+S1 merges only after those private legs. Report p50/p95/p99, guest MIPS and
+ns/instruction on both cores and the hot/031 budget line (p95 <=0.80T, max<=T).
+Windows retains its applicable D-202/D-207 bands; pre-W8 Windows timings
+cannot be compared with later timings. MinGW carries D-199(4)'s emitted-loop
+caveat.
+
+Run C's PR tests `rpc-s1-stream-arm710` and `rpc-s1-stream-sa110` run the
+authored streaming programs through 4,096 functional instructions with the
+skip on/off. They require identical output and existing scalar exercise counters,
+positive on counts and zero off counts. This bounds the S1 cross-check cost
+on two additional models without putting the long calibrations into the
+non-slow tier. Forced-off calibrations follow their on counterparts' tier:
+models 0–2 are slow; model 3 remains in the PR tier. The plan-lifecycle test
+also checks force-off after preparation restart on a streaming workload.
+
+### S1 evidence
+
+CTest registers `tests/rpc_s1_stream_test.py` for the two streaming legs and
+through the plan-lifecycle restart mode. `tests/rpc_s1_mutants.py` supplies
+`rpc-s1-mutants` and `rpc-s1-crosscheck-defect`. The four unregistered Run B
+evidence helpers were removed under R-S1-C1(L-4); their historical versions
+remain at `d449398`. Goldens, observation plans and the CI lockstep corpus
+have structurally zero S1 takes; the streaming tests provide positive
+real-code coverage alongside the calibrations and directed matrix.

@@ -3774,7 +3774,7 @@ if(BUILD_TESTING)
         # The Run B mutant matrix is covered by the mutants rule above.
         test MATCHES "^(rpc-hd-retroarch-guest|rpc-production-host-state-matrix)$" OR
         test MATCHES "^rpc-lockstep-(consistency-.*|emitter-(reach|mutants)|compare-mutants-[0-3]|cache(-.*)?|corpus-[0-3]|golden-.*)$" OR
-        test MATCHES "^(native-hd-(guest|stress)-process|native-hard-disc-store|power-on-shift-harness|jfd-tab-.*-process|libretro-harness|rpc-memory-long-.*|rpc-session-frontend-switch|rpc-endpoint-late-arm|rpc-floppy-guest|rpc-hot-throughput|rpc-memory-timing-[012]|rpc-hash-identity|rpc-boot-packages|rpc-hd-store-(process-.*|bounds))$")
+        test MATCHES "^(native-hd-(guest|stress)-process|native-hard-disc-store|power-on-shift-harness|jfd-tab-.*-process|libretro-harness|rpc-memory-long-.*|rpc-session-frontend-switch|rpc-endpoint-late-arm|rpc-floppy-guest|rpc-hot-throughput|rpc-memory-timing-(s1-off-)?[012]|rpc-hash-identity|rpc-boot-packages|rpc-hd-store-(process-.*|bounds))$")
       set_property(TEST ${test} APPEND PROPERTY LABELS slow)
     endif()
   endforeach()
@@ -3945,6 +3945,18 @@ file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/rpc-artifact-targets.json" CONTENT "{\
 # S1: golden replays with the skip explicitly forced off. CPU/CMOS standalone
 # traces have no timing binding or batch service, so are structural S1 zeros.
 if(TARGET rpc_video_test AND TARGET rpc_d2_test AND TARGET rpc_runner)
+  # R-S1-C1: real streaming code reaches the S1 differential on ARM710 and
+  # SA-110 in every PR tier. Bound instructions, rather than full calibrations.
+  foreach(kind IN ITEMS stream-arm710 stream-sa110)
+    add_test(NAME rpc-s1-${kind} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_s1_stream_test.py" $<TARGET_FILE:rpc_runner>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> ${kind})
+    set_tests_properties(rpc-s1-${kind} PROPERTIES TIMEOUT 120)
+  endforeach()
+  add_test(NAME rpc-s1-plan-lifecycle COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_lifecycle_test.py" $<TARGET_FILE:rpc_runner>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}" s1-restart)
+  set_tests_properties(rpc-s1-plan-lifecycle PROPERTIES TIMEOUT 120)
   foreach(model RANGE 0 3)
     add_test(NAME rpc-s1-off-video-${model} COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_trace_test.py" $<TARGET_FILE:rpc_video_test>

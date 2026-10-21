@@ -1098,7 +1098,9 @@ bool arc_rpc_mem_ready(bool idle)
 /* R-s1-9: append sets pending before count; both clearing sites require an
  * empty queue. start_cycle follows packet selection and video retirement and
  * clears restart. run recomputes bus_busy before returning. Only bind writes
- * denominator. These invariants justify the S1 write set below. */
+ * denominator. With !pending the active cycle is BUFFERED; cycle() clears
+ * rom_sequential for every non-ROM word and every non-fetch ROM word, so it
+ * is already false here. These invariants justify the S1 write set below. */
 #if defined(ARCDROID_RPC_CROSSCHECK)
 static void s1_invariants(void)
 {

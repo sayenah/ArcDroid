@@ -5,8 +5,9 @@
 Status: Accepted as the item 6b Phase-0 basis (D-146) after the S59 Astra check (ACCEPT WITH CHANGES, all incorporated). Not an implementation authorisation.
 
 Phase-0 findings were grounded at `ee364d9` and challenged at `6cde473`.
-Explicit rpc_mem_timing.c citations below are refreshed for the L1 working
-tree (2026-10-17); S1 will shift them again. The D-195 endpoint section
+S1 service, retained-loop and G-8 citations below are refreshed for the S1
+working tree (2026-10-21); other explicit rpc_mem_timing.c citations retain
+their L1 grounding (2026-10-17). The D-195 endpoint section
 supersedes intrusive-only coverage claims.
 Historical decision/prototype citations retain their stated baselines.
 Governing documents:
@@ -59,9 +60,9 @@ Paths:
 | What came before j | s | Code |
 |---|---|---|
 | j−1 collected no requests | issue time of j−1 | non-integer `rpc_mem_timing.h:143-147`; integer `rpc_mem_timing.h:136-140` |
-| j−1 collected requests | completion time of j−1's service, applied when `commands()` empties the queue | `next_base(m.cursor)`, `rpc_mem_timing.c:988-993`; fast path `rpc_mem_timing.c:1140-1159` |
-| j is the first instruction after bind | 0 | `next_base(0)`, `rpc_mem_timing.c:556` |
-| j is the first instruction after idle wake | now | `next_base(ticks(now))`, `rpc_mem_timing.c:1201` |
+| j−1 collected requests | completion time of j−1's service, applied when `commands()` empties the queue | `next_base(m.cursor)`, `rpc_mem_timing.c:992-997`; fast path `rpc_mem_timing.c:1291-1302` |
+| j is the first instruction after bind | 0 | `next_base(0)`, `rpc_mem_timing.c:560` |
+| j is the first instruction after idle wake | now | `next_base(ticks(now))`, `rpc_mem_timing.c:1339` |
 
 While requests are pending, `cpu_due_*` is **unresolved**. No reader uses it until service completes:
 - `arc_rpc_mem_next` reads it only when not pending (`rpc_mem_timing.c:1076`);
@@ -145,7 +146,7 @@ All of these are [C].
 
 **Continuation inside a batch** (`rpc_mem_timing.h:164-184`).
 - It returns false on idle or on a test stop.
-- With `pending||bus_busy`, it delegates to `arc_rpc_mem_batch_service`, which flushes integer mode at entry (`rpc_mem_timing.c:1195`). The retained loop can **advance `now_ns` and partially service work before returning false** (`rpc_mem_timing.c:1309`); the demand-only shortcut commits at `rpc_mem_timing.c:1289-1300` or rolls back ROM history at `rpc_mem_timing.c:1303-1304`. S1 only advances to a due strictly below visible finish and both boundaries.
+- With `pending||bus_busy`, it delegates to `arc_rpc_mem_batch_service`, which flushes integer mode at entry (`rpc_mem_timing.c:1197`). The retained loop can **advance `now_ns` and partially service work before returning false** (`rpc_mem_timing.c:1308-1320`); the demand-only shortcut commits at `rpc_mem_timing.c:1291-1302` or rolls back ROM history at `rpc_mem_timing.c:1305-1306`. S1 only advances to a due strictly below visible finish and both boundaries.
 - Otherwise it requires `cpu_due_ns < boundary`. `next_ns` is re-read on every call, so an MMIO-armed delay-0 deadline (`fdc.c:529`) stops the batch. [C]
 
 **Integer batch.** It is active only when all of these hold (`rpc_mem_timing.h:103-113`):
@@ -163,7 +164,7 @@ All of these are [C].
   - pending writes keep draining through `arc_rpc_mem_run`;
   - a video hold does not push CPU due (`rpc_mem_timing.c:1037`);
   - `idle_ns` accrues (`rpc_session.c:449`).
-- **Wake.** `arc_rpc_mem_idle(false)` sets due to now + base (`rpc_mem_timing.c:1197-1202`). [C]
+- **Wake.** `arc_rpc_mem_idle(false)` sets due to now + base (`rpc_mem_timing.c:1335-1340`). [C]
 
 **Quota transparency.** That splitting the work at 200 instructions leaves chronology unchanged is an inference [I] (§5 Q-7).
 
@@ -257,7 +258,7 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
 | **P0(k)** | `arm.c:600`, before k. Reached after continuation returned true, or by a driver issue through `arc_rpc_mem_ready`. The command queue is empty; older work has run to `now`. | `now_ns` = visible issue time of k. `issue_*` = issue of k and `cpu_due_*` = the same values (`rpc_mem_timing.h:182-185`; `rpc_mem_timing.c:1073-1075`). In integer mode, `issue_floor/ticks` are derived with the flush **formulas** (`rpc_mem_timing.c:836-837`) **without** `next_base`. Calling `batch_flush` here would set `cpu_due=issue+base` and so add a base: forbidden as a canonicaliser. |
 | **P1(k)** | Mid-k: data-access entry and exit, successful fetch after opcode capture/before condition, SWI/CP15/exception entry, and each changed-mode observation (§6). | As P0, plus k's collected requests in program order and `recording=true`. Data entry retains the previous `arc_rpc_attributes`; exit retains the value left by translation, including abort paths. `opcode` is set after a successful fetch; a prefetch-abort mode report retains the prior value. Temporary LDRT/STRT `memmode` is compared raw. |
 | **P2(k)** | Just after `instruction_end(k)` (`arm.c:1963`), before continuation. | No requests: `cpu_due_*` = issue + base. Here a flush is equivalent (`rpc_mem_timing.c:838`). With requests: `pending`, `cursor=issue_ticks`, `cpu_due_*` unresolved and excluded from comparison (§1.2). |
-| **P3(k)** | After the continuation step returned false, or the quota/`NULL`-batch return, and the final flush (`arm.c:1966-1978`). | `now_ns` and the bus may have **advanced past P2** through batch service (`rpc_mem_timing.c:1154-1166`). The state is whatever service left; the resumer is the driver at `rpc_session.c:411`. |
+| **P3(k)** | After the continuation step returned false, or the quota/`NULL`-batch return, and the final flush (`arm.c:1966-1978`). | `now_ns` and the bus may have **advanced past P2** through batch service (`rpc_mem_timing.c:1308-1320`). The state is whatever service left; the resumer is the driver at `rpc_session.c:440`. |
 
 ### 2.2 Canonical comparison contract (Astra 6)
 
@@ -424,7 +425,10 @@ Any `updatemode` ends the block (E4).
 clear sites require count==0. cycle_active implies active_valid, !video_active
 and !restart: start_cycle is called only after packet selection and after
 video retirement, and clears restart. Outside run(), cycle_active implies
-bus_busy, recomputed at every run exit. The denominator is fixed at bind.
+bus_busy, recomputed at every run exit. With !pending the active cycle is
+BUFFERED; cycle() clears rom_sequential for every non-ROM word and every
+non-fetch ROM word, so cycle_active && !pending implies !rom_sequential.
+The denominator is fixed at bind.
 S1 computes the exact visible finish on demand; it stores no finish memo.
 The TEST_FAULTS force-off switch is excluded and reset before bind/unbind's
 early return; raw snapshots remain unmasked. The required taken counter shares
@@ -442,8 +446,8 @@ excluded exercise arrays each contain 174 scalars/histogram bins.
 
   "Older work" is the buffer ring, the active packet and queued video (§1.2).
 - **Never service k's own collected requests before k's remaining functional effects.** The ROMCR example: k's queued fetch must be costed with the value k writes (§1.2).
-- **Equal-ns order:** events → `arc_rpc_mem_run` (completion, release, grant: video, then buffer FIFO, then CPU demand last) → CPU issue (`rpc_session.c:417-429`; `rpc_mem_timing.c:1005-1054`).
-- **What equivalence must show:** identical word start, finish and release ticks, `buffer_wait_ticks`, hold placement (`rpc_mem_timing.c:1033-1041`) and `restart`. Bulk subtraction of elapsed time is not a proof.
+- **Equal-ns order:** events → `arc_rpc_mem_run` (completion, release, grant: video, then buffer FIFO, then CPU demand last) → CPU issue (`rpc_session.c:445-474`; `rpc_mem_timing.c:1009-1063`).
+- **What equivalence must show:** identical word start, finish and release ticks, `buffer_wait_ticks`, hold placement (`rpc_mem_timing.c:1037-1046`) and `restart`. Bulk subtraction of elapsed time is not a proof.
 
 **G-9 Self-modifying code.**
 - **Key.** Dependencies are keyed by (allocation, offset) from the `code` pointer (`cp15.c:433,479`). For example `0x10000100` and `0x12000100` are the same `ram00` bytes. `0x11000100` and `0x13000100` alias each other at offset `0x1000100`, which is a **different** offset from `0x10000100`.

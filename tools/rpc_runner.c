@@ -553,7 +553,8 @@ int main(int argc, char **argv)
             reset();
             if(s1_force_off && !s1_force_off(true)){fprintf(stderr,"Core refuses S1 force-off after reset\n");return 2;}
         }
-        if (f == preparation_reset_at) preparation_restart();
+        bool preparation_restarted=false;
+        if (f == preparation_reset_at) {preparation_restart();preparation_restarted=true;}
         if(reset_stage && f==reset_stage_frame){
             /* Test-only instruction-boundary reset. Existing engine advance
              * respects this virtual deadline; no CPU/observer hook or guest
@@ -566,11 +567,13 @@ int main(int argc, char **argv)
                     (!strcmp(reset_stage,"dispatch") && a.delivery==ARC_RPC_DELIVERY_DISPATCH && !a.start_returned) ||
                     (!strcmp(reset_stage,"handoff") && a.start_returned);
                 if(hit){fprintf(stderr,"preparation reset at stage=%s delivery=%u outcome=%u\n",reset_stage,a.delivery,a.outcome);
-                    preparation_restart();break;}
+                    preparation_restart();preparation_restarted=true;break;}
                 if(!a.live || a.delivery==ARC_RPC_DELIVERY_INTERRUPTED || !advance(100))break;
             }
             if(!hit){fprintf(stderr,"Requested preparation reset stage was not reached\n");result=1;break;}
         }
+        if(preparation_restarted && s1_force_off && !s1_force_off(true)){
+            fprintf(stderr,"Core refuses S1 force-off after preparation restart\n");return 2;}
         if (f == fault_at) fault_next();
         if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());result=2;break;}
         uint64_t frontend_start = arc_test_clock_ns();

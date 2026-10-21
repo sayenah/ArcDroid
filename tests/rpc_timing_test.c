@@ -166,7 +166,7 @@ int main(int argc,char **argv)
         snapshot(&armed);assert(t.done && armed.executed==1);
         fprintf(stderr,"endpoint driver: one functional instruction exactly at the 10 ns limit, no extra issue\n");
     }
-    if(crosscheck)fprintf(stderr,"L1 crosscheck comparisons=%" PRIu64 " mismatches=0\n",crosscheck_calls);
+    if(crosscheck)fprintf(stderr,"L1/S1 crosscheck comparisons=%" PRIu64 " mismatches=0\n",crosscheck_calls);
     fprintf(stderr,"calibration counters model=%s",argc>2?argv[2]:"all");
     for(unsigned j=0;j<ARC_RPC_COUNT_TOTAL;++j)fprintf(stderr," %" PRIu64,counter_totals[j]);
     fputc('\n',stderr);
