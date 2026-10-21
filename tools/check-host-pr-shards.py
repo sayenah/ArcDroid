@@ -17,8 +17,8 @@ VARIANTS = ('default', '0', '1', '2', '3', '4', 'poison', 'poison3', 'poison4')
 MATRIX = "shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0,1,2,3]' || '[0]') }}"
 SELECTION = "${{ github.event_name == 'pull_request' && format('-L ^rpc-host-pr-{0}$', matrix.shard) || '' }}"
 EXTRA = "github.event_name != 'pull_request' || matrix.shard == 0"
-ROUTE_SELECTION = "ctest --test-dir build/ordinary-open --output-on-failure -R '^rpc-(route-|shipping-route|artifact-classifier|lock-object)'"
-SANITIZER_REGEX = '^(rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-session-calendar|cmos-calendar-launch|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
+ROUTE_SELECTION = "ctest --test-dir build/ordinary-open --output-on-failure -R '^(arculator-state-(secondary-routes|runahead-modes)$|rpc-(route-|shipping-route|artifact-classifier|lock-object))'"
+SANITIZER_REGEX = '^(arculator-state-.*|rpc-.*|left-stick-unit|left-stick-.*-harness|left-stick-input-trace|left-stick-equivalence-process|disc-request-unit|disc-resolver-unit|disc-request-.*-rom|disc-request-.*-process|disc-request-idle-trace|disc-request-commit-checks|disc-request-preflight-real-.*|error-box-unit|error-box-rom|error-box-x-rom|error-box-arbitration-.*|launch-outcome|launch-outcome-rom|hd-product-process|hd-started-process|hd-chooser-process|adf-refusal-rom|hard-disc-scope|hard-disc-program|power-on-chooser-harness|power-on-cmos|power-on-cmos-guest|power-on-shift-harness|power-on-recovery-harness|power-on-input-cancel-harness|boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-harness|boot-observation-hd|boot-observation-.*-harness|cmos-device-bus|cmos-session-calendar|cmos-calendar-launch|cmos-guest-exerciser|hard-disc-formatter|install-ide-registers|native-hard-disc-store|native-hd-guest-process|native-hd-stress-process|zip-content|core-services|launch-ramdisc-unit|launch-ramdisc-harness|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-file-data|jfd-file-data-store|jfd-file-data-newio|jfd-file-data-process|jfd-file-data-set-process|jfd-file-data-unavailable-process|jfd-file-data-reasons-process|jfd-file-data-recovery-process|jfd-file-data-gzip-process|jfd-file-data-zip-process|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-tab-store|jfd-tab-(guest|routing|set|evidence)-process|jfd-store|jfd-guard-store|jfd-guard-wd|jfd-guard-newio|jfd-guard-process|native-writable-layout|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|helper-stress-harness|input-layout-harness|input-source-retirement|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
 SANITIZER_TIERS = "${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '-LE slow' || '' }}"
 ONCE = ('Lockstep emitter CI subset', 'Configure profiling test build',
         'Build profiling tests', 'Profiling counts, transparency and mutants',
@@ -58,11 +58,13 @@ def verify(tests, workflow):
             f'    name: {JOB}\n', f'    needs: {JOB}\n', '    if: always()\n',
             '      - run: test "${{ needs.' + JOB + '.result }}" = success\n')):
         errors.append('missing stable host check or matrix failure propagation')
+    if sum(line.strip() == ROUTE_SELECTION for line in workflow.splitlines()) != 4:
+        errors.append('changed one of the four full ordinary-route selections')
     if job:
         if job[1].count(ROUTE_SELECTION) != 1:
             errors.append('missing or repeated full route selection')
         if SUITE == 'host' and ("-LE '${{ github.event_name == 'push' && '^rpc-lockstep-emitter-ci$|slow' || '^rpc-lockstep-emitter-ci$' }}'" not in job[1]
-                or "if: github.event_name != 'pull_request' || matrix.shard == 3\n        with:\n          persist-credentials: false\n          ref: 3eec7e68c43f57b89fe2560d4eb16b93d0dc67bf" not in job[1]):
+                or "if: github.event_name != 'pull_request' || matrix.shard == 3\n        with:\n          persist-credentials: false\n          # SS-1 Run M is the accepted ACFR3 frontier baseline. Preserve exact\n          # save-tree identity across this integration; lifecycle has its own tests.\n          ref: 3c6175889c738b21789b1264ec2cf7426de63d49" not in job[1]):
             errors.append('changed host tier or baseline checkout placement')
         if SUITE == 'sanitizers' and (SANITIZER_REGEX not in job[1] or SANITIZER_TIERS not in job[1]):
             errors.append('changed sanitizer PR or push/nightly coverage')
@@ -124,6 +126,15 @@ def self_test(tests, workflow):
             continue
         raise RuntimeError('surviving route selection mutant')
     print(f'{SUITE} PR shard guard: route omission, duplication and slow exclusion mutants rejected')
+    for match in re.finditer(re.escape(ROUTE_SELECTION), workflow):
+        changed = (workflow[:match.start()] + ROUTE_SELECTION.replace('|runahead-modes', '')
+                   + workflow[match.end():])
+        try:
+            verify(tests, changed)
+        except RuntimeError:
+            continue
+        raise RuntimeError('surviving run-ahead selection mutant')
+    print(f'{SUITE} PR shard guard: four independent run-ahead omission mutants rejected')
     if SUITE == 'host':
         for changed in (workflow.replace('^rpc-lockstep-emitter-ci$|slow', '^rpc-lockstep-emitter-ci$'),
                         workflow.replace('matrix.shard == 3\n        with:', 'matrix.shard == 2\n        with:')):
