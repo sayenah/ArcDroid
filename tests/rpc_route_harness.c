@@ -37,6 +37,10 @@ static void option_notice(const char *text)
     if(!strcmp(text,"An unrecognised RiscPC option value was received. Auto is used for that option."))++option_seen[5];
     if(!strcmp(text,"An Archimedes Machine, CPU or Operating System is selected in core options, so the RiscPC options are ignored for this load."))++option_seen[6];
     for(unsigned i=0;i<5;++i){char expected[128];snprintf(expected,sizeof(expected),"%s takes effect after reloading the content.",option_labels[i]);if(!strcmp(text,expected))++option_seen[i];}
+    for(unsigned i=0;i<2;++i)for(unsigned j=2;j<5;++j){
+        char expected[192];snprintf(expected,sizeof(expected),"%s has no effect while the Archimedes %s option is set.",option_labels[i],option_labels[j]);
+        if(!strcmp(text,expected))++option_seen[i];
+    }
 }
 static unsigned package_stats,guest_fields;
 static bool tracing,allow_arculator,raw_expected,metadata_only;
@@ -122,7 +126,7 @@ static void log_capture(enum retro_log_level level,const char *format,...)
         if(!strncmp(text,"RPC selection:",14))inventory_opens=firmware_opens;
         if(!strncmp(text,"N-22:",5))++option_conflict;
         if(!strncmp(text,"N-23:",5))++option_unknown;
-        if(!strncmp(text,"N-24:",5))for(unsigned i=0;i<5;++i)if(strstr(text,option_labels[i]))++option_reload[i];
+        if(!strncmp(text,"N-24:",5))for(unsigned i=0;i<5;++i)if(!strncmp(text+6,option_labels[i],strlen(option_labels[i])))++option_reload[i];
         printf("options-log:%u:%s%s",(unsigned)level,text,*text && text[strlen(text)-1]!='\n'?"\n":"");
     }
     if(trace_logs){fprintf(stderr,"route-log: level=%u formatted-length=%d format=[%s] text=[%s]\n",(unsigned)level,length,format,text);fflush(stderr);}

@@ -74,6 +74,65 @@ def pair(model,os):
     return [f'probe 1 {model}',f'probe 2 {os}',f'probe 3 {model-1}',f'probe 4 {1 if os==1 else 2 if os==2 else 3}']
 
 
+
+def manual_refusal(c):
+    # The remedy must really restore Arculator through the public load path.
+    for cpu,os,values,label in ((4,2,{MODEL:'arm610'},'RiscPC model'),
+            (3,2,{MODEL:'arm610'},'RiscPC model'),
+            (1,8,{OS:'371'},'RiscPC operating system'),
+            (3,2,{OS:'371'},'RiscPC operating system')):
+        w,s,v,d,r=c.fixture('manual-refusal',cpu,os)
+        run=c.run(w,s,v,options(values)+[f'load-fail {d}','check arc 0','check private 0',
+                  'clear',f'load {d}','probe 0 1','check arc 1','unload'])
+        expected=f'N-25: The {label} option prevents this title from starting. Set it to Auto to play this title on the Archimedes.'
+        assert expected in run.stdout,'missing option-specific N-25 Auto remedy'
+        assert 'N-3:' not in run.stdout
+    # Unflagged does not itself mean an Archimedes-compatible remaining hint.
+    # A RISC OS 4+ or ARMv5+ requirement retains the genuine N-3 refusal.
+    for cpu,os,values in ((0,16,{MODEL:'arm610'}),(32,0,{OS:'371'})):
+        w,s,v,d,r=c.fixture('unflagged-unsupported',cpu,os)
+        run=c.run(w,s,v,options(values)+[f'load-fail {d}'])
+        assert 'N-3: This title asks for hardware ArcDroid does not emulate (unsupported CPU or RISC OS requirement).' in run.stdout,'missing N-3 for genuinely unsupported hint'
+        assert 'N-25:' not in run.stdout
+    # Auto would still request RPC here: never promise an Archimedes remedy.
+    for values in ({},{MODEL:'arm610'},{OS:'371'}):
+        w,s,v,d,r=c.fixture('automatic-unsupported',32,16)
+        run=c.run(w,s,v,options(values)+[f'load-fail {d}'])
+        assert 'N-3: This title asks for hardware ArcDroid does not emulate (unsupported CPU or RISC OS requirement).' in run.stdout,'missing N-3 for genuinely unsupported hint'
+        assert 'N-25:' not in run.stdout
+
+
+def suppressed_diagnostic(c):
+    expected='RPC selection: diagnostic-only reason=legacy model=none os=none needed=none inventory=skipped'
+    for key,value in zip(ARCH,('A3000','ARM2','RISC OS 2.00')):
+        for values in ({MODEL:'arm610'},{OS:'371'},{MODEL:'arm610',OS:'371'}):
+            w,s,v,d,r=c.fixture('suppressed-diagnostic')
+            if key==ARCH[2]:shutil.copyfile(legacy/'arcdroid-unsupported-launch-test.rom',s/'arcdroid/firmware/control.rom')
+            control=c.run(w,s,v,options({key:value})+[f'load {r}','check scan 0','unload'])
+            run=c.run(w,s,v,options({key:value,**values})+[f'load {r}','probe 0 1','check scan 0','check conflict 1','run 1','reset','check scan 0','unload'])
+            diagnostics=lambda result:[line for line in result.stdout.splitlines() if 'RPC selection:' in line]
+            assert diagnostics(run)==diagnostics(control),'manual RiscPC values changed the diagnostic-only selection'
+            assert any(expected in line for line in diagnostics(run)),'missing legacy inventory=skipped diagnostic'
+
+
+def suppressed_advisories(c):
+    for key,value,label in zip(ARCH,('A3000','ARM2','RISC OS 2.00'),('Machine','CPU','Operating System')):
+        for legacy_api in (False,True):
+            w,s,v,d,r=c.fixture('suppressed-advisories')
+            if key==ARCH[2]:shutil.copyfile(legacy/'arcdroid-unsupported-launch-test.rom',s/'arcdroid/firmware/control.rom')
+            commands=(['legacy'] if legacy_api else [])+options({key:value})+[f'load {r}']
+            commands+=options({MODEL:'arm610',OS:'350'})+['reset','run 1','reset','check reload0 1','check reload1 1','check seen0 1','check seen1 1']
+            commands+=options({MODEL:'arm710',OS:'371'})+['run 1','check reload0 1','check reload1 1','unload']
+            # Reload remains suppressed; it cannot make either RPC axis apply.
+            commands+=[f'load {r}','probe 0 1','check conflict 1','unload']
+            run=c.run(w,s,v,commands)
+            for axis in ('RiscPC model','RiscPC operating system'):
+                text=f'{axis} has no effect while the Archimedes {label} option is set.'
+                assert run.stdout.count('N-24: '+text)==1,'missing suppressed RiscPC-axis advisory'
+                assert text in run.stdout # also delivered via either message API
+                assert axis+' takes effect after reloading' not in run.stdout
+
+
 def selection(c):
     # Both axes independently, all literal tokens, Auto ranking and both axes.
     for values,expected in [({MODEL:'arm610'},(1,1)),({MODEL:'arm710'},(2,4)),
@@ -101,10 +160,10 @@ def selection(c):
         if key==ARCH[2]:shutil.copyfile(legacy/'arcdroid-unsupported-launch-test.rom',s/'arcdroid/firmware/control.rom');value='RISC OS 2.00'
         run=c.run(w,s,v,options({key:value,MODEL:'arm610',OS:'371'})+[f'load {d}','probe 0 1','check conflict 1','check seen6 1','run 1','reset','check conflict 1','check seen6 1','unload'])
         assert 'N-9:' in run.stdout and 'N-2:' not in run.stdout
-    # Independent hint axes: a model choice cannot erase an Archimedes OS hint.
-    for cpu,os,values,reason in [(4,2,{MODEL:'arm610'},'N-3'),
-            (1,8,{OS:'371'},'N-3'),
-            (16,8,{MODEL:'arm610',OS:'371'},'N-2'),
+    manual_refusal(c)
+    suppressed_diagnostic(c)
+    # Independent axes still cannot bypass qualification.
+    for cpu,os,values,reason in [(16,8,{MODEL:'arm610',OS:'371'},'N-2'),
             (16,8,{MODEL:'sa110',OS:'350'},'N-2')]:
         w,s,v,d,r=c.fixture('refusal',cpu,os)
         run=c.run(w,s,v,options(values)+[f'load-fail {d}','check arc 0','check private 0'])
@@ -193,6 +252,7 @@ def compatibility(c):
 
 
 def meaning(c):
+    suppressed_advisories(c)
     metadata=subprocess.run([exe,c.library,c.temp,c.temp,'unused','metadata-fault','unused'],capture_output=True,text=True,check=True)
     keys=[line.split('|')[1] for line in metadata.stdout.splitlines() if line.startswith('option|')]
     matrix=[f'arcdroid_{key}' for group in MEANING_MATRIX.values() for key in group]
@@ -254,8 +314,16 @@ def persistence(c):
         snapshot=save_snapshot(v)
         records={name:data for name,data in snapshot.items() if name.startswith('arcdroid/cmos-riscpc/') and '/defaults/' not in name}
         if index==0:history.append(records)
+        if index==1:
+            b_records={name:data for name,data in records.items() if '-m4-' in name}
+            assert b_records,'pair B never received its own CMOS record'
+            assert not set(b_records).intersection(history[0]),'A and B share a record path'
+            assert all(records[name]==data for name,data in history[0].items()),'B wrote A CMOS'
+            assert all(struct.unpack_from('<I',data,16)[0]==4 for data in b_records.values())
+            history.append(b_records)
         if index==2:
             assert all(records[name]==data for name,data in history[0].items()),'A CMOS record changed across B'
+            assert all(records[name]==data for name,data in history[1].items()),'returning to A wrote B CMOS'
         hd=[p for p in (v/'arcdroid/hd-riscpc').iterdir() if p.is_dir()];assert len(hd)==1
         sidecars=list((v/'arcdroid/rpc-pairs').glob('*.pair.[01]'))
         wire=max((p.read_bytes() for p in sidecars),key=lambda b:struct.unpack_from('<Q',b,8)[0])
@@ -332,6 +400,34 @@ def mutants(c,builder):
         if run.returncode==0:raise RuntimeError('surviving R6 mutant: '+name)
         print('R6 mutant killed: '+name,flush=True)
         builder.compile(front);c.library=builder.library()
+    # QA R6-12 survivors, plus both notice regressions: run the identical new
+    # observable checks on a passing baseline and a successfully linked mutant.
+    for name,source,before,after,check in (
+        ('manual-refusal-auto-remedy',front,
+         'if(rpc_selection.reason==ARC_RPC_SELECTION_UNSUPPORTED &&',
+         'if(false && rpc_selection.reason==ARC_RPC_SELECTION_UNSUPPORTED &&',manual_refusal),
+        ('unsupported-hint-auto-remedy',front,
+         '(manual_model || manual_os) && arch_hint && automatic.reason==ARC_RPC_SELECTION_LEGACY',
+         '(manual_model || manual_os) && automatic.reason==ARC_RPC_SELECTION_LEGACY',manual_refusal),
+        ('cmos-one-record','libretro/rpc_preparation.c',
+         'if(arc_riscpc_cmos_store_begin(&p->record,p->save,&p->request.key,',
+         'ArcRpcCmosKey shared=p->request.key;shared.model=1; if(arc_riscpc_cmos_store_begin(&p->record,p->save,&shared,',persistence),
+        ('scan-under-archimedes-override',front,
+         'if(ordinary && (arc_core_options.rpc_model || arc_core_options.rpc_os))',
+         'if((arc_core_options.rpc_model || arc_core_options.rpc_os))',suppressed_diagnostic),
+        ('manual-diagnostic-under-archimedes-override',front,
+         'if(ordinary){manual_model=arc_core_options.rpc_model;',
+         'if(true){manual_model=arc_core_options.rpc_model;',suppressed_diagnostic),
+        ('reload-advisory-under-archimedes-override',front,
+         'if(i<2 && arc_kind==ARC_SESSION_KIND_ARCULATOR && arch_option)',
+         'if(false && i<2 && arc_kind==ARC_SESSION_KIND_ARCULATOR && arch_option)',suppressed_advisories)):
+        check(c)
+        builder.compile(source,(before,after));c.library=builder.library()
+        try:check(c)
+        except (AssertionError,RuntimeError) as error:
+            print('R6 mutant killed: '+name+' ('+(str(error).strip().splitlines() or [type(error).__name__])[-1][:160]+')',flush=True)
+        else:raise RuntimeError('surviving R6-12 mutant: '+name)
+        builder.compile(source);c.library=builder.library()
     # Full golden bytes and paths must also detect wire-only changes which
     # preserve the in-memory selection. Use actual configured unit binaries.
     for relative,target,changes in (

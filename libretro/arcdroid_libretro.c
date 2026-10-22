@@ -1546,7 +1546,11 @@ static void arc_read_rpc_options(ArcCoreOptions *options)
    for(unsigned i=0;i<5;++i){
       if(i>=2 && arc_kind!=ARC_SESSION_KIND_RISCPC)continue;
       if(current[i]==arc_rpc_selection_options.initial[i] || arc_rpc_selection_options.reload_noticed[i])continue;
-      char text[128];snprintf(text,sizeof(text),"%s takes effect after reloading the content.",labels[i]);
+      char text[192];
+      const char *arch_option=!options->machine_auto?"Machine":!options->cpu_auto?"CPU":options->requested_os!=ARC_OS_UNKNOWN?"Operating System":NULL;
+      if(i<2 && arc_kind==ARC_SESSION_KIND_ARCULATOR && arch_option)
+         snprintf(text,sizeof(text),"%s has no effect while the Archimedes %s option is set.",labels[i],arch_option);
+      else snprintf(text,sizeof(text),"%s takes effect after reloading the content.",labels[i]);
       arc_rpc_option_advisory("N-24",text);arc_rpc_selection_options.reload_noticed[i]=true;
    }
 }
@@ -7800,6 +7804,21 @@ static int arc_rpc_check_selection(const char *firmware_dir,bool ordinary,const 
       arc_kind=ARC_SESSION_KIND_RISCPC;ops.kind=arc_kind;
       if(rpc_selection.reason!=ARC_RPC_SELECTION_SELECTED){
          const char *id=arc_riscpc_route_notice(&rpc_selection,&rpc_inventory,error,sizeof(error));
+         /* A manual-only route can reject an Archimedes hint. Auto restores
+          * Arculator only if no disc independently requests the RPC route. */
+         ArcRpcSelection automatic=arc_riscpc_select(rpc_discs,arc_media_count,
+            &rpc_inventory,ARC_RPC_SELECT_AUTO,ARC_RPC_OS_AUTO);
+         unsigned arch_hint=3u;
+         for(unsigned i=0;i<arc_media_count;++i){
+            unsigned hint=manual_model?rpc_discs[i].os:rpc_discs[i].cpu;
+            if(hint)arch_hint&=hint;
+         }
+         if(rpc_selection.reason==ARC_RPC_SELECTION_UNSUPPORTED &&
+            (manual_model || manual_os) && arch_hint && automatic.reason==ARC_RPC_SELECTION_LEGACY){
+            id="N-25";
+            snprintf(error,sizeof(error),"The %s option prevents this title from starting. Set it to Auto to play this title on the Archimedes.",
+               manual_model?"RiscPC model":"RiscPC operating system");
+         }
          arc_release_session();arc_riscpc_host_load_failure(&ops,id,error);return -1;
       }
       void *firmware=NULL;size_t firmware_size=0;

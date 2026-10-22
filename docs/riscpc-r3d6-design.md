@@ -2,7 +2,7 @@
 
 # R3d-6 option contract
 
-2026-10-21. Implements the adopted R6-1–R6-10 work order at `b69390c`.
+2026-10-21. Implements the adopted R6-1–R6-12 work order at `b69390c`.
 This note extends R3d-4's allowed open-gate differences. Closed builds retain
 their complete metadata and behaviour. No recognition, qualification, ranking,
 engine, record version or path changes are required.
@@ -33,7 +33,7 @@ frontend can produce N-23.
 
 ## Notice catalogue additions and replacements
 
-All text is fixed except the allowlisted option label in N-24. No delivered
+All text is fixed except the allowlisted option labels in N-24 and N-25. No delivered
 option value or content name is interpolated. Advisories deduplicate for the
 whole loaded session, across Restart, preparation recovery and guest start.
 
@@ -42,7 +42,7 @@ whole loaded session, across Restart, preparation recovery and guest start.
 | N-2 (replacement) | This RiscPC model and RISC OS combination is not supported yet. Choose another RiscPC combination, or try an Archimedes in core options. | Existing class A refusal |
 | N-22 | An Archimedes Machine, CPU or Operating System is selected in core options, so the RiscPC options are ignored for this load. | Once on a conflicting load |
 | N-23 | An unrecognised RiscPC option value was received. Auto is used for that option. | Once per session, either or both new keys |
-| N-24 | {RiscPC model / RiscPC operating system / Machine / CPU / Operating System} takes effect after reloading the content. | Once per changed option per session |
+| N-24 | {RiscPC model / RiscPC operating system / Machine / CPU / Operating System} takes effect after reloading the content. Suppressed Archimedes case: Run C below. | Once per changed option per session |
 | pair-changed (replacement) | The RiscPC model or operating system changed. This combination has separate RiscPC settings; the content's hard disc is kept. | Existing successful-admission sidecar rule |
 
 Selection baselines are sampled on load, separate from mutable input/media
@@ -117,3 +117,39 @@ keys only; a per-game file replaces the global file rather than overlaying it.
 Absent RiscPC keys therefore default to Auto. Tests model that storage boundary
 explicitly and deliver the resulting values through `retro_*`; native frontend
 save/reopen and visibility evidence remains Fable's private leg.
+
+## Run C: R6-12 notice and regression contract (2026-10-21)
+
+N-25 replaces N-3 only when selection is unsupported, a RiscPC axis is
+manual, its unoverridden hint intersection admits an Archimedes CPU or OS
+(category bits 0–1), and clearing the RiscPC axes restores the legacy Archimedes route
+(no disc requires the automatic RiscPC route). The sole manual axis is named:
+
+- Model: "The RiscPC model option prevents this title from starting. Set it to Auto to play this title on the Archimedes."
+- OS: "The RiscPC operating system option prevents this title from starting. Set it to Auto to play this title on the Archimedes."
+
+This describes the restored route; firmware and the normal Archimedes load
+checks still apply. Both manual axes clear both hint constraints, so they cannot
+produce this unsupported-hint refusal. N-3 remains unchanged for its existing
+automatic RiscPC cases and genuinely unsupported remaining hints (including
+unflagged ARMv5+ or RISC OS 4+ cases). Qualification and other refusal classes retain their
+existing notices. Tests exercise the stated Auto remedy through a second load,
+and pin automatic unsupported refusals to N-3.
+
+N-24 has an alternative fixed template for a changed RiscPC axis in an
+Archimedes session while an explicit Archimedes selector is in effect:
+"{RiscPC model / RiscPC operating system} has no effect while the Archimedes
+{Machine / CPU / Operating System} option is set."
+If several Archimedes axes are explicit, name the first in Machine, CPU,
+Operating System order. Existing per-option once-per-session deduplication
+applies. The normal reload template remains for an Archimedes session without
+an explicit selector, and for the frozen kind and pair in a RiscPC session.
+Thus the Archimedes `rpc_model`, `rpc_os` meaning row's runtime cell means
+this suppressed advisory when an explicit Archimedes selector is in effect.
+
+Regression evidence requires a distinct model-tagged CMOS record for B, A's
+bytes unchanged across B, and B's bytes unchanged when returning to A. Under
+each explicit Archimedes axis, unflagged media must log exactly the Auto
+legacy diagnostic (`inventory=skipped`) and perform zero inventory opens,
+regardless of either manual RiscPC axis. Flagged media keeps its pre-existing
+diagnostic scan; RiscPC manual values remain excluded from that diagnostic.
