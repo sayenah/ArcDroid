@@ -90,7 +90,7 @@ const char *arc_riscpc_route_notice(const ArcRpcSelection *s,const ArcRpcFirmwar
     switch(s->reason){
     case ARC_RPC_SELECTION_CONFLICTING_DISCS:id="N-4";text="The discs in this set ask for different machines. Load them separately, or choose a machine in core options.";break;
     case ARC_RPC_SELECTION_UNSUPPORTED:id="N-3";text="This title asks for hardware ArcDroid does not emulate (unsupported CPU or RISC OS requirement).";break;
-    case ARC_RPC_SELECTION_UNQUALIFIED:id="N-2";text="This title needs StrongARM with RISC OS 3.50 or 3.60, which ArcDroid does not support yet. You can choose an Archimedes in core options to try it anyway.";break;
+    case ARC_RPC_SELECTION_UNQUALIFIED:id="N-2";text="This RiscPC model and RISC OS combination is not supported yet. Choose another RiscPC combination, or try an Archimedes in core options.";break;
     case ARC_RPC_SELECTION_INCOMPLETE_SCAN:id="N-5 incomplete-scan";text="The firmware check reached its entry, byte, depth or path limit. Reduce files or nesting in <system>/arcdroid/firmware/, then close and reload this content.";break;
     default:
         if(i && !i->bounded && i->resource_failure){id="N-1 resource";text="ArcDroid ran out of memory while checking RiscPC firmware. Close other apps, then close and reload this content.";}

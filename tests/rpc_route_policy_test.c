@@ -57,7 +57,7 @@ int main(int argc,char **argv)
     inventory=(ArcRpcFirmwareInventory){0};selection.reason=ARC_RPC_SELECTION_UNREADABLE_INVENTORY;
     assert(!strcmp(arc_riscpc_route_notice(&selection,&inventory,notice,sizeof(notice)),"N-5"));
     assert(!strcmp(notice,"ArcDroid cannot find or read <system>/arcdroid/firmware/. Create that folder and add your RiscPC firmware, or check that it is readable."));
-    selection.reason=ARC_RPC_SELECTION_UNQUALIFIED;assert(!strcmp(arc_riscpc_route_notice(&selection,&inventory,notice,sizeof(notice)),"N-2") && strstr(notice,"StrongARM with RISC OS 3.50 or 3.60"));
+    selection.reason=ARC_RPC_SELECTION_UNQUALIFIED;assert(!strcmp(arc_riscpc_route_notice(&selection,&inventory,notice,sizeof(notice)),"N-2") && !strcmp(notice,"This RiscPC model and RISC OS combination is not supported yet. Choose another RiscPC combination, or try an Archimedes in core options."));
     selection.reason=ARC_RPC_SELECTION_UNSUPPORTED;assert(!strcmp(arc_riscpc_route_notice(&selection,&inventory,notice,sizeof(notice)),"N-3"));
     assert(!strcmp(notice,"This title asks for hardware ArcDroid does not emulate (unsupported CPU or RISC OS requirement)."));
     selection.reason=ARC_RPC_SELECTION_CONFLICTING_DISCS;assert(!strcmp(arc_riscpc_route_notice(&selection,&inventory,notice,sizeof(notice)),"N-4"));
@@ -70,6 +70,12 @@ int main(int argc,char **argv)
     while(arc_lock_next_namespace(&owner))assert(arc_lock_acquire(&owner)==ARC_LOCK_TRANSIENT);
     assert(arc_lock_acquire(&owner)==ARC_LOCK_HELD);
     assert(!arc_riscpc_pair_admitted(save_directory,content,0,1,&owner));
+    /* Independent full wire golden: magic/version, LE generation, zero-based
+     * engine model and one-based selection OS, reserved bytes and CRC. */
+    char golden_path[4096];snprintf(golden_path,sizeof(golden_path),"%s/arcdroid/rpc-pairs/%s.pair.0",save_directory,content);
+    static const unsigned char golden[]={0x41,0x52,0x43,0x50,0x41,0x49,0x52,0x01,0x01,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0x74,0x25,0xe1,0x57};
+    void *wire=NULL;size_t wire_size=0;assert(arc_io_read_all_limit(golden_path,&wire,&wire_size,32,NULL));
+    assert(wire_size==sizeof(golden) && !memcmp(wire,golden,sizeof(golden)));free(wire);
     assert(!arc_riscpc_pair_admitted(save_directory,content,0,1,&owner));
     assert(arc_riscpc_pair_admitted(save_directory,content,2,4,&owner));
     assert(!arc_riscpc_pair_admitted(save_directory,content,2,4,&owner));

@@ -150,12 +150,25 @@ int main(void)
         memcpy(files,baseline,sizeof(files));fresh();int i=index_of(parity_path,false);assert(i>=0);files[i].bytes[offset]=1;crc(&files[i]);
         assert(arc_riscpc_cmos_store_load(&t,"/save",&key,rpc_store_test_owner(),error,sizeof(error))==ARC_RPC_CMOS_FOUND&&t.refused);
     }
-    for(unsigned cpu=0;cpu<4;++cpu){
-        memset(files,0,sizeof(files));fresh();ArcRpcCmosKey other=key;other.model=cpu;
+    /* R6-8: literal full-record SHA-256 goldens cover every stored model
+     * tag/layout, envelope version, content/firmware bytes, payload and CRC. */
+    static const char *const golden_records[4][3]={
+        {"dd68cc79131793cb10a01a350524545a1707ce72ed6667dc2d22ae08ed58b83b","47d85f799f31e3e920872b8ff27e9f4b853c5d6bccfccac168b6f4ccf5f55637","ca856aa3f632b967df82b46105466b3d224546672832b4e4eb72c2e9289154c0"},
+        {"7829533cb141bbd91c1cb51eac2e1f25e18fc1fead3ce86f2f3b350b58ec56c0","7add91aa5b41355fe959e19a09ea60a735e75225b1d4055bf049f0023fc4bdc6","f8ae17bf6b2d103c7b07dc344dbc67d3c78966360ed652fa3fda63a307395c44"},
+        {"2cf4ac41cce3029eb255af59f12cd3c6e307cd2fc92c1e7ba4f3110073e06896","ddf4802155509102159432fb204a1fd6ecd63beaa85e8001147abae6fed4c3d0","1237ac8c0e68076feabe626f86a614e509f65922fd58c81c85bd16824377e12d"},
+        {"2808ebfe7cdb45bc04cc77a42f22fbe023b622144d740a045e4c9308878628c2","57f1f71a5497dc755d1d4f81fa83a7db197be6a394dcf922a78d0eeaeb094736","28919e7a73c78df007d538cff35d5a158ee1949b4eee950516201846c772a344"}
+    };
+    for(unsigned cpu=0;cpu<4;++cpu)for(unsigned layout=1;layout<=3;++layout){
+        memset(files,0,sizeof(files));fresh();ArcRpcCmosKey other=key;other.model=cpu;other.layout=layout;
         assert(arc_riscpc_cmos_store_load(&t,"/save",&other,rpc_store_test_owner(),error,sizeof(error))==ARC_RPC_CMOS_MISSING);
         assert(arc_riscpc_cmos_store_put(&t,p,NULL,error,sizeof(error)));
         char name[1200];snprintf(name,sizeof(name),"%s.1",t.base);int i=index_of(name,false);assert(i>=0);
         assert(files[i].bytes[16]==cpu+1&&!files[i].bytes[17]&&!files[i].bytes[18]&&!files[i].bytes[19]);
+        char golden_hash[65],golden_path[1200];arc_sha256_hex(files[i].bytes,files[i].size,golden_hash);
+        assert(!strcmp(golden_hash,golden_records[cpu][layout-1]));
+        snprintf(golden_path,sizeof(golden_path),"/save/arcdroid/cmos-riscpc/%s-m%u-%s",key.content,cpu+1,key.firmware);
+        assert(!strcmp(t.base,golden_path));
+
     }
     /* Each byte, including reserved/header/provenance, participates in CRC. */
     for(unsigned byte=0;byte<512;++byte){memcpy(files,baseline,sizeof(files));fresh();int i=index_of(strcat(strcpy((char[1200]){0},s.base),".0"),false);assert(i>=0);files[i].bytes[byte]^=1;
