@@ -61,7 +61,7 @@ jobs:
       - name: Asset guard
         run: tools/check-assets.sh
       - name: Configure
-        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=OFF -DARCDROID_RPC_AUTHORED_ROUTE=ON
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DARCDROID_RPC_LOCKSTEP=ON -DARCDROID_RPC_LOCKSTEP_LOCAL_TESTS=OFF
       - name: Build
         run: cmake --build build/host --verbose
       - name: Shipping source I/O guard self-test
@@ -244,7 +244,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: Configure ASan and UBSan
-        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON -DARCDROID_RPC_PROFILE=ON -DARCDROID_RPC_CROSSCHECK=ON -DARCDROID_RPC_AUTHORED_ROUTE=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON -DARCDROID_RPC_PROFILE=ON -DARCDROID_RPC_CROSSCHECK=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build ASan and UBSan
         run: cmake --build build/sanitize --verbose
       - name: Sanitizer PR partition guard
