@@ -14,6 +14,9 @@ PREFIX = 'rpc-host-pr-'
 COUNT = 4
 SUITE = 'host'
 VARIANTS = ('default', '0', '1', '2', '3', '4', 'poison', 'poison3', 'poison4')
+# Independent placement pin for R6-13's measured serial tail; host is unchanged.
+SANITIZER_REBALANCED = ('rpc-session-calendar-pair-3', 'rpc-session-calendar-pair-4',
+                        'rpc-launch-preparation', 'rpc-production-host-run-b')
 MATRIX = "shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0,1,2,3]' || '[0]') }}"
 SELECTION = "${{ github.event_name == 'pull_request' && format('-L ^rpc-host-pr-{0}$', matrix.shard) || '' }}"
 EXTRA = "github.event_name != 'pull_request' || matrix.shard == 0"
@@ -27,6 +30,8 @@ ONCE = ('Lockstep emitter CI subset', 'Configure profiling test build',
 
 
 def shard_for(name):
+    if SUITE == 'sanitizers' and name in SANITIZER_REBALANCED:
+        return 0
     if SUITE == 'host' and name in ('rpc-orchestration-mutants', 'rpc-session-census-leak-mutants'):
         return 2
     variant = name.removeprefix('rpc-l1-corpus-')
@@ -145,6 +150,18 @@ def self_test(tests, workflow):
             raise RuntimeError('surviving host tier/baseline mutant')
         print('host PR shard guard: push slow-tier and baseline checkout mutants rejected')
     if SUITE == 'sanitizers':
+        for name in SANITIZER_REBALANCED:
+            changed = copy.deepcopy(tests)
+            test = next(test for test in changed if test['name'] == name)
+            labels = next(p['value'] for p in test['properties'] if p['name'] == 'LABELS')
+            labels.remove(PREFIX + '0')
+            labels.append(PREFIX + '2')
+            try:
+                verify(changed, workflow)
+            except RuntimeError:
+                continue
+            raise RuntimeError('surviving sanitizer rebalance mutant: ' + name)
+        print('sanitizers PR shard guard: four independent serial-tail placement mutants rejected')
         for changed in (workflow.replace(SANITIZER_REGEX, '.*'), workflow.replace(SANITIZER_TIERS, '')):
             try:
                 verify(tests, changed)

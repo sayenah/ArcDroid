@@ -26,6 +26,13 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING AND NOT WIN32
     if(test MATCHES "^rpc-l1-corpus-(default|0|1|2|3|4|poison|poison3|poison4)$")
       list(FIND rpc_host_l1_variants "${CMAKE_MATCH_1}" index)
       math(EXPR shard "${index} % ${rpc_pr_count}")
+    elseif(ARCDROID_SANITIZERS AND
+        (test STREQUAL "rpc-session-calendar-pair-3" OR test STREQUAL "rpc-session-calendar-pair-4" OR
+         test STREQUAL "rpc-launch-preparation" OR test STREQUAL "rpc-production-host-run-b"))
+      # R6-13: CI run 39728262577 measured 298.59 s of serial work here.
+      # Move it off the integration owner (2) to runner 0, retaining every
+      # property and test. Projected longest sanitizer job: 65.62 min.
+      set(shard 0)
     elseif(NOT ARCDROID_SANITIZERS AND
         (test STREQUAL "rpc-orchestration-mutants" OR test STREQUAL "rpc-session-census-leak-mutants"))
       # Measured serial work (239.380 s / 133.762 s) goes to the light runner.
